@@ -67,18 +67,19 @@ void drawMenu(bool updateScreen /* = true */)
                 }
                 copyStringToEntry(0, banner);
             }
-            if (getCurrentMenu()->numEntries > 10) {
-                if (HotseatCareerManager::get().numPlayers() > 1) {
-                    if (HotseatCareerManager::get().canEndTurn()) {
-                        copyStringToEntry(7, "MATCH PLAYED    ");
-                        copyStringToEntry(10, "END TURN        ");
-                    }
-                }
-            }
         } else if (offset == 496147) {
             if (getCurrentMenu()->numEntries > 1) {
                 if (HotseatCareerManager::get().numPlayers() > 1 &&
                     HotseatCareerManager::get().canEndTurn()) {
+                    // Hide entries 2..8 so Entry 1 ("END TURN") is completely unobstructed and visible
+                    for (int i = 2; i <= 8; ++i) {
+                        auto e = getMenuEntry(i);
+                        if (e) {
+                            e->hide();
+                            e->disable();
+                        }
+                    }
+
                     auto entry1 = getMenuEntry(1);
                     if (entry1) {
                         entry1->show();
@@ -89,8 +90,11 @@ void drawMenu(bool updateScreen /* = true */)
                     if (getCurrentMenu()->numEntries > 10) {
                         auto entry10 = getMenuEntry(10);
                         if (entry10) {
+                            entry10->show();
+                            entry10->enable();
                             entry10->leftEntry = 1;
                         }
+                        copyStringToEntry(10, "HUB ");
                     }
                     copyStringToEntry(1, "END TURN        ");
                     setCurrentEntry(1);
@@ -157,11 +161,17 @@ void drawMenuItem(MenuEntry *entry)
 
     if (HotseatCareerManager::get().isActive()) {
         auto packed = getCurrentPackedMenu();
-        if (packed && SwosVM::ptrToOffset(packed) == 496147 && entry->ordinal == 1) {
+        if (packed && SwosVM::ptrToOffset(packed) == 496147) {
             if (HotseatCareerManager::get().numPlayers() > 1 &&
                 HotseatCareerManager::get().canEndTurn()) {
-                entry->show();
-                entry->enable();
+                if (entry->ordinal == 1) {
+                    entry->show();
+                    entry->enable();
+                } else if (entry->ordinal >= 2 && entry->ordinal <= 8) {
+                    entry->hide();
+                    entry->disable();
+                    return;
+                }
             }
         }
     }
@@ -427,14 +437,12 @@ static void drawStringMenuItem(MenuEntry *entry, const char *string)
                          HotseatCareerManager::get().canEndTurn() ? " (PLAYED)" : "");
                 string = hotseatTextBuf;
             } else if (entry->ordinal == 7) {
-                if (HotseatCareerManager::get().numPlayers() > 1 &&
-                    HotseatCareerManager::get().canEndTurn()) {
-                    string = "MATCH PLAYED";
+                if (HotseatCareerManager::get().numPlayers() > 1) {
+                    string = HotseatCareerManager::get().canEndTurn() ? "END TURN" : "PLAY MATCH";
                 }
             } else if (entry->ordinal == 10) {
-                if (HotseatCareerManager::get().numPlayers() > 1 &&
-                    HotseatCareerManager::get().canEndTurn()) {
-                    string = "END TURN";
+                if (HotseatCareerManager::get().numPlayers() > 1) {
+                    string = HotseatCareerManager::get().canEndTurn() ? "END TURN" : "NEXT MATCH";
                 }
             }
         } else if (offset == 496147) {
@@ -448,6 +456,11 @@ static void drawStringMenuItem(MenuEntry *entry, const char *string)
                 if (HotseatCareerManager::get().numPlayers() > 1 &&
                     HotseatCareerManager::get().canEndTurn()) {
                     string = "END TURN";
+                }
+            } else if (entry->ordinal == 10) {
+                if (HotseatCareerManager::get().numPlayers() > 1 &&
+                    HotseatCareerManager::get().canEndTurn()) {
+                    string = "HUB";
                 }
             }
         }

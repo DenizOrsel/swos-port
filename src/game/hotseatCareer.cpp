@@ -586,9 +586,15 @@ void startCareerMode()
 
     swos.g_exitMenu = 0;
 
-    // Launch contestMenu cleanly in its own ShowMenu loop!
-    A6 = 482233; // contestMenu
-    SWOS::ShowMenu();
+    // Keep Career Mode session alive until user explicitly exits via Exit button.
+    while (mgr.isActive()) {
+        swos.g_exitMenu = 0;
+        A6 = 482233; // contestMenu
+        SWOS::ShowMenu();
+        if (!mgr.isActive()) {
+            break;
+        }
+    }
     CommonMenuExit();
 }
 

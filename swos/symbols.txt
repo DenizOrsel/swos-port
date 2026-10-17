@@ -434,6 +434,13 @@ InitUserTactics, function
 ApplyTeamTactics, function
 diyStatsName, dword
 
+# transfer negotiation variables
+teamOffering, word
+dseg_17A6CE, word
+offerAmount, word
+dseg_17A6DE, word
+cseg_592D5, function
+
 # select files menu
 aAbort, array const char
 aSave, array const char

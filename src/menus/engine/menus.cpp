@@ -27,6 +27,40 @@ void setEntriesVisibility(const std::vector<int>& entryIndices, bool visible)
     }
 }
 
+static void executeEndTurn(bool fromSubMenu)
+{
+    auto& mgr = HotseatCareerManager::get();
+    if (!mgr.isActive() || mgr.numPlayers() <= 1 || !mgr.canEndTurn())
+        return;
+
+    int oldIdx = mgr.activePlayerIndex();
+    bool newRound = mgr.endTurn();
+    logInfo("Hotseat: Turn ended for Player %d. Active player is now Player %d (newRound=%d)",
+            oldIdx + 1, mgr.activePlayerIndex() + 1, newRound);
+
+    if (newRound) {
+        // All human players have played! Advance calendar round.
+        extern void NextMatch();
+        save68kRegisters();
+        NextMatch();
+        restore68kRegisters();
+
+        // Switch to Player 0 to start the new week
+        mgr.switchToPlayer(0);
+        logInfo("Hotseat: Week advanced. Starting new round for Player 1 (%s)",
+                mgr.player(0).teamName.c_str());
+    }
+
+    if (fromSubMenu) {
+        // We were in a sub-menu (like DIY_leagueTournamentMenu). Exit it back to contestMenu!
+        SetExitMenuFlag();
+    } else {
+        // We are on contestMenu. Re-activate contestMenu with new player's context.
+        A6 = 482233;
+        SWOS::ActivateMenu();
+    }
+}
+
 void selectEntry(MenuEntry *entry, int controlMask /* = kShortFireMask */)
 {
     assert(entry && entry->onSelect);
@@ -132,174 +166,154 @@ void selectEntry(MenuEntry *entry, int controlMask /* = kShortFireMask */)
             uint32_t offset = packed ? SwosVM::ptrToOffset(packed) : 0;
 
             if (offset == 482233) {
-                // Entry 10 in contestMenu is NEXT MATCH / END TURN
-                if (entry->ordinal == 10) {
-                    if (HotseatCareerManager::get().numPlayers() > 1) {
-                        if (!HotseatCareerManager::get().canEndTurn()) {
-                            // Match not played yet: allow standard NEXT MATCH
-                            save68kRegisters();
-                            swos.controlMask = controlMask;
-                            A5 = entry;
-                            entry->onSelect();
-                            restore68kRegisters();
-                            return;
-                        }
-
-                        bool newRound = HotseatCareerManager::get().endTurn();
-                        logInfo("Hotseat: Turn ended. Active player is now %d (newRound=%d)",
-                                HotseatCareerManager::get().activePlayerIndex() + 1, newRound);
-                        if (newRound) {
-                            // All players completed their matches! Advance calendar round.
-                            save68kRegisters();
-                            swos.controlMask = controlMask;
-                            A5 = entry;
-                            entry->onSelect();
-                            restore68kRegisters();
-                            return;
-                        } else {
-                            // Intermediate turn: re-activate contestMenu for next player
-                            A6 = 482233;
-                            SWOS::ActivateMenu();
-                            return;
-                        }
-                    } else {
-                        // Single player mode
-                        if (HotseatCareerManager::get().canEndTurn()) {
-                            HotseatCareerManager::get().endTurn();
-                        }
-                        save68kRegisters();
-                        swos.controlMask = controlMask;
-                        A5 = entry;
-                        entry->onSelect();
-                        restore68kRegisters();
+                // contestMenu (Career Hub)
+                // Entry 7 is PLAY MATCH / END TURN
+                if (entry->ordinal == 7) {
+                    if (HotseatCareerManager::get().numPlayers() > 1 &&
+                        HotseatCareerManager::get().canEndTurn()) {
+                        executeEndTurn(false);
                         return;
                     }
                 }
 
-                // Entry 7 in contestMenu is PLAY MATCH
-                if (entry->ordinal == 7) {
-                    if (HotseatCareerManager::get().numPlayers() > 1 &&
-                        HotseatCareerManager::get().activePlayer().matchPlayedThisTurn) {
-                        logInfo("Hotseat: Match already completed this turn. Please press End Turn");
+                // Entry 10 is NEXT MATCH / END TURN
+                if (entry->ordinal == 10) {
+                    if (HotseatCareerManager::get().numPlayers() > 1) {
+                        if (HotseatCareerManager::get().canEndTurn()) {
+                            executeEndTurn(false);
+                            return;
+                        }
+                        // Match not played yet - do not simulate CPU round early
+                        logInfo("Hotseat: Please play match before ending turn");
                         return;
                     }
+                }
+
+                // Entry 9 is EXIT
+                if (entry->ordinal == 9) {
+                    logInfo("Hotseat: Player clicked EXIT from career hub. Exiting career mode.");
+                    HotseatCareerManager::get().reset();
+                    save68kRegisters();
+                    swos.controlMask = controlMask;
+                    A5 = entry;
+                    entry->onSelect();
+                    restore68kRegisters();
+                    return;
                 }
             } else if (offset == 496147) {
                 // DIY_leagueTournamentMenu (League Table / Fixtures screen)
                 if (entry->ordinal == 1) {
                     if (HotseatCareerManager::get().numPlayers() > 1 &&
                         HotseatCareerManager::get().canEndTurn()) {
-                        logInfo("Hotseat: Player %d clicked END TURN on league table",
-                                HotseatCareerManager::get().activePlayerIndex() + 1);
-                        bool newRound = HotseatCareerManager::get().endTurn();
-                        logInfo("Hotseat: Turn ended from league table. Active player is now %d (newRound=%d)",
-                                HotseatCareerManager::get().activePlayerIndex() + 1, newRound);
-                        if (newRound) {
-                            // All players completed their matches! Advance calendar round.
-                            save68kRegisters();
-                            swos.controlMask = controlMask;
-                            A5 = entry;
-                            entry->onSelect();
-                            restore68kRegisters();
-                            return;
-                        } else {
-                            // Intermediate turn: exit league table back to contestMenu for next player!
-                            SetExitMenuFlag();
-                            return;
-                        }
+                        executeEndTurn(true);
+                        return;
                     }
-                }
-            } else if (offset == 3519) {
-                // playerOffersMenu (Entry 12 is CONFIRM OFFER)
-                if (entry->ordinal == 12 && HotseatCareerManager::get().numPlayers() > 1) {
-                    uint16_t teamOffering = *reinterpret_cast<uint16_t*>(&SwosVM::g_memByte[504320]);
-                    int sellerIdx = HotseatCareerManager::get().findHotseatPlayerByTeamId(teamOffering);
-
-                    extern void GetTeamPointer();
-                    save68kRegisters();
-                    *(uint16_t *)&D0 = teamOffering;
-                    GetTeamPointer();
-                    auto sellerTeamFile = A0.as<TeamFile*>();
-                    restore68kRegisters();
-
-                    if (sellerIdx < 0 && sellerTeamFile) {
-                        sellerIdx = HotseatCareerManager::get().findHotseatPlayerByTeamName(sellerTeamFile->teamName);
-                    }
-
-                    int buyerIdx = HotseatCareerManager::get().activePlayerIndex();
-                    if (sellerIdx >= 0 && sellerIdx != buyerIdx) {
-                        uint16_t playerIdx = *reinterpret_cast<uint16_t*>(&SwosVM::g_memByte[504322]);
-                        uint16_t offerAmountK = *reinterpret_cast<uint16_t*>(&SwosVM::g_memByte[504330]);
-                        uint32_t cashAmount = static_cast<uint32_t>(offerAmountK) * 1000;
-
-                        char playerName[32] = "PLAYER";
-                        if (sellerTeamFile && playerIdx < 16) {
-                            snprintf(playerName, sizeof(playerName), "%.16s", sellerTeamFile->players[playerIdx].playerName);
-                            for (int len = (int)strlen(playerName) - 1; len >= 0 && (playerName[len] == ' ' || playerName[len] == '*'); --len) {
-                                playerName[len] = '\0';
-                            }
-                        }
-
-                        const auto& sellerPlayer = HotseatCareerManager::get().player(sellerIdx);
-                        const auto& buyerPlayer = HotseatCareerManager::get().player(buyerIdx);
-
-                        char line1[64], line2[64], line3[64], line4[64];
-                        snprintf(line1, sizeof(line1), "PLAYER %d (%s):", sellerIdx + 1, sellerPlayer.managerSurname.c_str());
-                        snprintf(line2, sizeof(line2), "BID FOR %s", playerName);
-                        snprintf(line3, sizeof(line3), "%s OFFERS", buyerPlayer.teamName.c_str());
-                        if (cashAmount >= 1000000) {
-                            snprintf(line4, sizeof(line4), "£%u.%03u,000", cashAmount / 1000000, (cashAmount % 1000000) / 1000);
-                        } else {
-                            snprintf(line4, sizeof(line4), "£%u,000", cashAmount / 1000);
-                        }
-
-                        std::vector<const char*> msgLines = { line1, line2, line3, line4 };
-                        bool accepted = showContinueAbortPrompt("TRANSFER OFFER", "ACCEPT", "REJECT", msgLines, false);
-
-                        if (accepted) {
-                            extern void cseg_592D5();
-                            save68kRegisters();
-                            cseg_592D5();
-                            restore68kRegisters();
-
-                            // Set SWOS offer accepted flag (dseg_17A6DE = 1)
-                            *reinterpret_cast<uint16_t*>(&SwosVM::g_memByte[504338]) = 1;
-
-                            // Update seller balance and sales
-                            HotseatCareerManager::get().player(sellerIdx).newBalance += cashAmount;
-                            HotseatCareerManager::get().player(sellerIdx).playerSales += cashAmount;
-
-                            // Sync seller squad in hotseat context
-                            save68kRegisters();
-                            *(uint16_t *)&D0 = teamOffering;
-                            GetTeamPointer();
-                            auto updatedSellerTf = A0.as<TeamFile*>();
-                            restore68kRegisters();
-                            if (updatedSellerTf) {
-                                std::memcpy(HotseatCareerManager::get().player(sellerIdx).careerTeam, updatedSellerTf, sizeof(TeamFile));
-                            }
-
-                            // Sync buyer squad and balances in hotseat context
-                            std::memcpy(HotseatCareerManager::get().player(buyerIdx).careerTeam,
-                                        &SwosVM::g_memByte[CareerOffsets::kCareerTeam], sizeof(TeamFile));
-                            HotseatCareerManager::get().player(buyerIdx).newBalance =
-                                *reinterpret_cast<int32_t*>(&SwosVM::g_memByte[CareerOffsets::kNewBalance]);
-                            HotseatCareerManager::get().player(buyerIdx).playerPurchases =
-                                *reinterpret_cast<int32_t*>(&SwosVM::g_memByte[CareerOffsets::kPlayerPurchases]);
-
-                            logInfo("Hotseat: Player %d accepted transfer offer of £%u from Player %d for %s",
-                                    sellerIdx + 1, cashAmount, buyerIdx + 1, playerName);
-                        } else {
-                            // Set SWOS offer rejected flag (dseg_17A6DE = 0)
-                            *reinterpret_cast<uint16_t*>(&SwosVM::g_memByte[504338]) = 0;
-
-                            logInfo("Hotseat: Player %d rejected transfer offer of £%u from Player %d for %s",
-                                    sellerIdx + 1, cashAmount, buyerIdx + 1, playerName);
-                        }
-
+                } else if (entry->ordinal == 10) {
+                    if (HotseatCareerManager::get().numPlayers() > 1 &&
+                        HotseatCareerManager::get().canEndTurn()) {
                         SetExitMenuFlag();
                         return;
                     }
+                }
+            }
+
+            // Transfer Confirmation (Entry 12 in playerOffersMenu)
+            bool isConfirmOffer = false;
+            if (entry->ordinal == 12) {
+                auto text = entry->string();
+                if (text && strstr(text, "CONFIRM OFFER")) {
+                    isConfirmOffer = true;
+                }
+            }
+
+            if (isConfirmOffer && HotseatCareerManager::get().numPlayers() > 1) {
+                uint16_t teamOffering = swos.teamOffering;
+                int sellerIdx = HotseatCareerManager::get().findHotseatPlayerByTeamId(teamOffering);
+
+                extern void GetTeamPointer();
+                save68kRegisters();
+                *(uint16_t *)&D0 = teamOffering;
+                GetTeamPointer();
+                auto sellerTeamFile = A0.as<TeamFile*>();
+                restore68kRegisters();
+
+                if (sellerIdx < 0 && sellerTeamFile) {
+                    sellerIdx = HotseatCareerManager::get().findHotseatPlayerByTeamName(sellerTeamFile->teamName);
+                }
+
+                int buyerIdx = HotseatCareerManager::get().activePlayerIndex();
+                if (sellerIdx >= 0 && sellerIdx != buyerIdx) {
+                    uint16_t playerIdx = swos.dseg_17A6CE;
+                    uint16_t offerAmountK = swos.offerAmount;
+                    uint32_t cashAmount = static_cast<uint32_t>(offerAmountK) * 1000;
+
+                    char playerName[32] = "PLAYER";
+                    if (sellerTeamFile && playerIdx < 16) {
+                        snprintf(playerName, sizeof(playerName), "%.16s", sellerTeamFile->players[playerIdx].playerName);
+                        for (int len = (int)strlen(playerName) - 1; len >= 0 && (playerName[len] == ' ' || playerName[len] == '*'); --len) {
+                            playerName[len] = '\0';
+                        }
+                    }
+
+                    const auto& sellerPlayer = HotseatCareerManager::get().player(sellerIdx);
+                    const auto& buyerPlayer = HotseatCareerManager::get().player(buyerIdx);
+
+                    char line1[64], line2[64], line3[64], line4[64];
+                    snprintf(line1, sizeof(line1), "PLAYER %d (%s):", sellerIdx + 1, sellerPlayer.managerSurname.c_str());
+                    snprintf(line2, sizeof(line2), "BID FOR %s", playerName);
+                    snprintf(line3, sizeof(line3), "%s OFFERS", buyerPlayer.teamName.c_str());
+                    if (cashAmount >= 1000000) {
+                        snprintf(line4, sizeof(line4), "£%u.%03u,000", cashAmount / 1000000, (cashAmount % 1000000) / 1000);
+                    } else {
+                        snprintf(line4, sizeof(line4), "£%u,000", cashAmount / 1000);
+                    }
+
+                    std::vector<const char*> msgLines = { line1, line2, line3, line4 };
+                    bool accepted = showContinueAbortPrompt("TRANSFER OFFER", "ACCEPT", "REJECT", msgLines, false);
+
+                    if (accepted) {
+                        extern void cseg_592D5();
+                        save68kRegisters();
+                        cseg_592D5();
+                        restore68kRegisters();
+
+                        // Set SWOS offer accepted flag (dseg_17A6DE = 1)
+                        swos.dseg_17A6DE = 1;
+
+                        // Update seller balance and sales
+                        HotseatCareerManager::get().player(sellerIdx).newBalance += cashAmount;
+                        HotseatCareerManager::get().player(sellerIdx).playerSales += cashAmount;
+
+                        // Sync seller squad in hotseat context
+                        save68kRegisters();
+                        *(uint16_t *)&D0 = teamOffering;
+                        GetTeamPointer();
+                        auto updatedSellerTf = A0.as<TeamFile*>();
+                        restore68kRegisters();
+                        if (updatedSellerTf) {
+                            std::memcpy(HotseatCareerManager::get().player(sellerIdx).careerTeam, updatedSellerTf, sizeof(TeamFile));
+                        }
+
+                        // Sync buyer squad and balances in hotseat context
+                        std::memcpy(HotseatCareerManager::get().player(buyerIdx).careerTeam,
+                                    &SwosVM::g_memByte[CareerOffsets::kCareerTeam], sizeof(TeamFile));
+                        HotseatCareerManager::get().player(buyerIdx).newBalance =
+                            *reinterpret_cast<int32_t*>(&SwosVM::g_memByte[CareerOffsets::kNewBalance]);
+                        HotseatCareerManager::get().player(buyerIdx).playerPurchases =
+                            *reinterpret_cast<int32_t*>(&SwosVM::g_memByte[CareerOffsets::kPlayerPurchases]);
+
+                        logInfo("Hotseat: Player %d accepted transfer offer of £%u from Player %d for %s",
+                                sellerIdx + 1, cashAmount, buyerIdx + 1, playerName);
+                    } else {
+                        // Set SWOS offer rejected flag (dseg_17A6DE = 0)
+                        swos.dseg_17A6DE = 0;
+
+                        logInfo("Hotseat: Player %d rejected transfer offer of £%u from Player %d for %s",
+                                sellerIdx + 1, cashAmount, buyerIdx + 1, playerName);
+                    }
+
+                    SetExitMenuFlag();
+                    return;
                 }
             }
         }
