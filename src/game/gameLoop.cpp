@@ -134,6 +134,7 @@ void gameLoop(TeamGame *topTeam, TeamGame *bottomTeam)
     } while (!gameEnded(topTeam, bottomTeam));
 
     m_playingMatch = false;
+    HotseatCareerManager::get().onMatchCompleted();
 }
 
 void showStadiumScreenAndFadeOutMusic(TeamGame *topTeam, TeamGame *bottomTeam, int maxSubstitutes)
@@ -500,6 +501,7 @@ static void processStoppedGameState()
         swos.resultTimer = -swos.resultTimer;
         swos.statsTimer = -swos.statsTimer;
         swos.playGame = 0;
+        HotseatCareerManager::get().onMatchCompleted();
         return;
 
     case GameState::kStartingGame:

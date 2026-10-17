@@ -126,51 +126,87 @@ void selectEntry(MenuEntry *entry, int controlMask /* = kShortFireMask */)
             }
         }
 
-        if (HotseatCareerManager::get().isActive() && SwosVM::ptrToOffset(getCurrentPackedMenu()) == 482233) {
-            // Entry 10 in contestMenu is NEXT MATCH / END TURN
-            if (entry->ordinal == 10) {
-                if (HotseatCareerManager::get().numPlayers() > 1) {
-                    if (!HotseatCareerManager::get().canEndTurn()) {
-                        logInfo("Hotseat: Match must be played before ending turn");
-                        return;
-                    }
+        if (HotseatCareerManager::get().isActive()) {
+            auto packed = getCurrentPackedMenu();
+            uint32_t offset = packed ? SwosVM::ptrToOffset(packed) : 0;
 
-                    bool newRound = HotseatCareerManager::get().endTurn();
-                    logInfo("Hotseat: Turn ended. Active player is now %d (newRound=%d)",
-                            HotseatCareerManager::get().activePlayerIndex(), newRound);
-                    if (newRound) {
-                        // All players completed their matches! Advance calendar round.
+            if (offset == 482233) {
+                // Entry 10 in contestMenu is NEXT MATCH / END TURN
+                if (entry->ordinal == 10) {
+                    if (HotseatCareerManager::get().numPlayers() > 1) {
+                        if (!HotseatCareerManager::get().canEndTurn()) {
+                            // Match not played yet: allow standard NEXT MATCH
+                            save68kRegisters();
+                            swos.controlMask = controlMask;
+                            A5 = entry;
+                            entry->onSelect();
+                            restore68kRegisters();
+                            return;
+                        }
+
+                        bool newRound = HotseatCareerManager::get().endTurn();
+                        logInfo("Hotseat: Turn ended. Active player is now %d (newRound=%d)",
+                                HotseatCareerManager::get().activePlayerIndex() + 1, newRound);
+                        if (newRound) {
+                            // All players completed their matches! Advance calendar round.
+                            save68kRegisters();
+                            swos.controlMask = controlMask;
+                            A5 = entry;
+                            entry->onSelect();
+                            restore68kRegisters();
+                            return;
+                        } else {
+                            // Intermediate turn: re-activate contestMenu for next player
+                            A6 = 482233;
+                            SWOS::ActivateMenu();
+                            return;
+                        }
+                    } else {
+                        // Single player mode
+                        if (HotseatCareerManager::get().canEndTurn()) {
+                            HotseatCareerManager::get().endTurn();
+                        }
                         save68kRegisters();
                         swos.controlMask = controlMask;
                         A5 = entry;
                         entry->onSelect();
                         restore68kRegisters();
                         return;
-                    } else {
-                        // Intermediate turn: re-activate contestMenu for next player
-                        A6 = 482233;
-                        SWOS::ActivateMenu();
+                    }
+                }
+
+                // Entry 7 in contestMenu is PLAY MATCH
+                if (entry->ordinal == 7) {
+                    if (HotseatCareerManager::get().numPlayers() > 1 &&
+                        HotseatCareerManager::get().activePlayer().matchPlayedThisTurn) {
+                        logInfo("Hotseat: Match already completed this turn. Please press End Turn");
                         return;
                     }
-                } else {
-                    // Single player mode
-                    if (HotseatCareerManager::get().canEndTurn()) {
-                        HotseatCareerManager::get().endTurn();
-                    }
-                    save68kRegisters();
-                    swos.controlMask = controlMask;
-                    A5 = entry;
-                    entry->onSelect();
-                    restore68kRegisters();
-                    return;
                 }
-            }
-
-            // Entry 7 in contestMenu is PLAY MATCH
-            if (entry->ordinal == 7) {
-                if (HotseatCareerManager::get().activePlayer().matchPlayedThisTurn) {
-                    logInfo("Hotseat: Match already completed this turn. Please press End Turn");
-                    return;
+            } else if (offset == 496147) {
+                // DIY_leagueTournamentMenu (League Table / Fixtures screen)
+                if (entry->ordinal == 1) {
+                    if (HotseatCareerManager::get().numPlayers() > 1 &&
+                        HotseatCareerManager::get().canEndTurn()) {
+                        logInfo("Hotseat: Player %d clicked END TURN on league table",
+                                HotseatCareerManager::get().activePlayerIndex() + 1);
+                        bool newRound = HotseatCareerManager::get().endTurn();
+                        logInfo("Hotseat: Turn ended from league table. Active player is now %d (newRound=%d)",
+                                HotseatCareerManager::get().activePlayerIndex() + 1, newRound);
+                        if (newRound) {
+                            // All players completed their matches! Advance calendar round.
+                            save68kRegisters();
+                            swos.controlMask = controlMask;
+                            A5 = entry;
+                            entry->onSelect();
+                            restore68kRegisters();
+                            return;
+                        } else {
+                            // Intermediate turn: exit league table back to contestMenu for next player!
+                            SetExitMenuFlag();
+                            return;
+                        }
+                    }
                 }
             }
         }
@@ -352,6 +388,24 @@ void saveCurrentMenuAndStartGameLoop()
     saveCurrentMenu();
     startMainGameLoop();
     restorePreviousMenu();
+
+    if (HotseatCareerManager::get().isActive()) {
+        int topP = HotseatCareerManager::get().findHotseatPlayerByTeamName(swos.topTeamInGame.teamName);
+        int botP = HotseatCareerManager::get().findHotseatPlayerByTeamName(swos.bottomTeamInGame.teamName);
+        if (topP >= 0) {
+            HotseatCareerManager::get().markPlayerMatchCompleted(topP);
+            logInfo("Hotseat: Player %d match marked completed (top team %s)", topP + 1, swos.topTeamInGame.teamName);
+        }
+        if (botP >= 0) {
+            HotseatCareerManager::get().markPlayerMatchCompleted(botP);
+            logInfo("Hotseat: Player %d match marked completed (bottom team %s)", botP + 1, swos.bottomTeamInGame.teamName);
+        }
+        HotseatCareerManager::get().onMatchCompleted();
+        logInfo("Hotseat: Match finished! Active player %d (%s), canEndTurn=%d",
+                HotseatCareerManager::get().activePlayerIndex() + 1,
+                HotseatCareerManager::get().activePlayer().teamName.c_str(),
+                HotseatCareerManager::get().canEndTurn());
+    }
 }
 
 void exitCurrentMenu()

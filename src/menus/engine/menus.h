@@ -44,9 +44,17 @@ static inline void setCurrentEntry(int ordinal)
     highlightEntry(ordinal);
 }
 
+char *copyStringToMenuBuffer(const char *str);
+
 static inline void copyStringToEntry(int entryIndex, const char *str)
 {
-    getMenuEntry(entryIndex)->copyString(str);
+    auto entry = getMenuEntry(entryIndex);
+    if (!entry) return;
+    if (entry->fg.string.isNull()) {
+        entry->setString(copyStringToMenuBuffer(str));
+    } else {
+        entry->copyString(str);
+    }
 }
 
 void setEntriesVisibility(const std::vector<int>& entryIndices, bool visible);

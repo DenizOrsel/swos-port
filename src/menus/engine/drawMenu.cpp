@@ -51,17 +51,35 @@ void drawMenu(bool updateScreen /* = true */)
     clearAllItemsDrawnFlag();
     executeMenuOnDrawFunction();
 
-    if (HotseatCareerManager::get().isActive() && SwosVM::ptrToOffset(getCurrentPackedMenu()) == 482233) {
-        if (getCurrentMenu()->numEntries > 0) {
-            int pIdx = HotseatCareerManager::get().activePlayerIndex() + 1;
-            char banner[32];
-            snprintf(banner, sizeof(banner), "P%d: %s", pIdx, HotseatCareerManager::get().activePlayer().managerName.c_str());
-            copyStringToEntry(0, banner);
-        }
-        if (getCurrentMenu()->numEntries > 10) {
-            if (HotseatCareerManager::get().numPlayers() > 1) {
+    if (HotseatCareerManager::get().isActive()) {
+        auto packed = getCurrentPackedMenu();
+        uint32_t offset = packed ? SwosVM::ptrToOffset(packed) : 0;
+        if (offset == 482233) {
+            if (getCurrentMenu()->numEntries > 0) {
+                int pIdx = HotseatCareerManager::get().activePlayerIndex() + 1;
+                char banner[32];
                 if (HotseatCareerManager::get().canEndTurn()) {
-                    copyStringToEntry(10, "END TURN        ");
+                    snprintf(banner, sizeof(banner), "P%d: %s (PLAYED)", pIdx,
+                             HotseatCareerManager::get().activePlayer().managerName.c_str());
+                } else {
+                    snprintf(banner, sizeof(banner), "P%d: %s", pIdx,
+                             HotseatCareerManager::get().activePlayer().managerName.c_str());
+                }
+                copyStringToEntry(0, banner);
+            }
+            if (getCurrentMenu()->numEntries > 10) {
+                if (HotseatCareerManager::get().numPlayers() > 1) {
+                    if (HotseatCareerManager::get().canEndTurn()) {
+                        copyStringToEntry(7, "MATCH PLAYED    ");
+                        copyStringToEntry(10, "END TURN        ");
+                    }
+                }
+            }
+        } else if (offset == 496147) {
+            if (getCurrentMenu()->numEntries > 1) {
+                if (HotseatCareerManager::get().numPlayers() > 1 &&
+                    HotseatCareerManager::get().canEndTurn()) {
+                    copyStringToEntry(1, "END TURN        ");
                 }
             }
         }
@@ -353,6 +371,7 @@ static void drawStringMenuItem(MenuEntry *entry, const char *string)
         entry->type == kEntryNumber || entry->type == kEntryBoolOption));
 
     char customTeamBuf[32];
+    char hotseatTextBuf[48];
     if (HotseatCareerManager::get().isSelectingCareerTeams() &&
         getCurrentPackedMenu() && SwosVM::ptrToOffset(getCurrentPackedMenu()) == 485019) {
         if (entry->ordinal == 76) {
@@ -367,6 +386,44 @@ static void drawStringMenuItem(MenuEntry *entry, const char *string)
                     tName.resize(11);
                 snprintf(customTeamBuf, sizeof(customTeamBuf), "%s (P%d)", tName.c_str(), slot + 1);
                 string = customTeamBuf;
+            }
+        }
+    }
+
+    if (HotseatCareerManager::get().isActive()) {
+        auto packed = getCurrentPackedMenu();
+        uint32_t offset = packed ? SwosVM::ptrToOffset(packed) : 0;
+        if (offset == 482233) {
+            if (entry->ordinal == 0) {
+                int pIdx = HotseatCareerManager::get().activePlayerIndex() + 1;
+                snprintf(hotseatTextBuf, sizeof(hotseatTextBuf), "P%d: %s%s",
+                         pIdx,
+                         HotseatCareerManager::get().activePlayer().managerName.c_str(),
+                         HotseatCareerManager::get().canEndTurn() ? " (PLAYED)" : "");
+                string = hotseatTextBuf;
+            } else if (entry->ordinal == 7) {
+                if (HotseatCareerManager::get().numPlayers() > 1 &&
+                    HotseatCareerManager::get().canEndTurn()) {
+                    string = "MATCH PLAYED";
+                }
+            } else if (entry->ordinal == 10) {
+                if (HotseatCareerManager::get().numPlayers() > 1 &&
+                    HotseatCareerManager::get().canEndTurn()) {
+                    string = "END TURN";
+                }
+            }
+        } else if (offset == 496147) {
+            if (entry->ordinal == 0 && string && *string) {
+                if (strncmp(string, "[P", 2) != 0) {
+                    int pIdx = HotseatCareerManager::get().activePlayerIndex() + 1;
+                    snprintf(hotseatTextBuf, sizeof(hotseatTextBuf), "[P%d] %s", pIdx, string);
+                    string = hotseatTextBuf;
+                }
+            } else if (entry->ordinal == 1) {
+                if (HotseatCareerManager::get().numPlayers() > 1 &&
+                    HotseatCareerManager::get().canEndTurn()) {
+                    string = "END TURN";
+                }
             }
         }
     }
