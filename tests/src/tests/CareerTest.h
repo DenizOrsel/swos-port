@@ -16,4 +16,6 @@ private:
     void testCareerLiverpool();
     void testCareerGermany();
     void testForeignMarketPlayerLookup();
+    void testHotseatInitializationAndSwapping();
+    void testHotseatInterPlayerTransferOffer();
 };
