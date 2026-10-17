@@ -11,6 +11,7 @@
 #include "init.h"
 #include "hotseatCareer.h"
 #include "drawMenu.h"
+#include "continueAbortMenu.h"
 
 #ifdef SWOS_TEST
 # include "unitTest.h"
@@ -206,6 +207,98 @@ void selectEntry(MenuEntry *entry, int controlMask /* = kShortFireMask */)
                             SetExitMenuFlag();
                             return;
                         }
+                    }
+                }
+            } else if (offset == 3519) {
+                // playerOffersMenu (Entry 12 is CONFIRM OFFER)
+                if (entry->ordinal == 12 && HotseatCareerManager::get().numPlayers() > 1) {
+                    uint16_t teamOffering = *reinterpret_cast<uint16_t*>(&SwosVM::g_memByte[504320]);
+                    int sellerIdx = HotseatCareerManager::get().findHotseatPlayerByTeamId(teamOffering);
+
+                    extern void GetTeamPointer();
+                    save68kRegisters();
+                    *(uint16_t *)&D0 = teamOffering;
+                    GetTeamPointer();
+                    auto sellerTeamFile = A0.as<TeamFile*>();
+                    restore68kRegisters();
+
+                    if (sellerIdx < 0 && sellerTeamFile) {
+                        sellerIdx = HotseatCareerManager::get().findHotseatPlayerByTeamName(sellerTeamFile->teamName);
+                    }
+
+                    int buyerIdx = HotseatCareerManager::get().activePlayerIndex();
+                    if (sellerIdx >= 0 && sellerIdx != buyerIdx) {
+                        uint16_t playerIdx = *reinterpret_cast<uint16_t*>(&SwosVM::g_memByte[504322]);
+                        uint16_t offerAmountK = *reinterpret_cast<uint16_t*>(&SwosVM::g_memByte[504330]);
+                        uint32_t cashAmount = static_cast<uint32_t>(offerAmountK) * 1000;
+
+                        char playerName[32] = "PLAYER";
+                        if (sellerTeamFile && playerIdx < 16) {
+                            snprintf(playerName, sizeof(playerName), "%.16s", sellerTeamFile->players[playerIdx].playerName);
+                            for (int len = (int)strlen(playerName) - 1; len >= 0 && (playerName[len] == ' ' || playerName[len] == '*'); --len) {
+                                playerName[len] = '\0';
+                            }
+                        }
+
+                        const auto& sellerPlayer = HotseatCareerManager::get().player(sellerIdx);
+                        const auto& buyerPlayer = HotseatCareerManager::get().player(buyerIdx);
+
+                        char line1[64], line2[64], line3[64], line4[64];
+                        snprintf(line1, sizeof(line1), "PLAYER %d (%s):", sellerIdx + 1, sellerPlayer.managerSurname.c_str());
+                        snprintf(line2, sizeof(line2), "BID FOR %s", playerName);
+                        snprintf(line3, sizeof(line3), "%s OFFERS", buyerPlayer.teamName.c_str());
+                        if (cashAmount >= 1000000) {
+                            snprintf(line4, sizeof(line4), "£%u.%03u,000", cashAmount / 1000000, (cashAmount % 1000000) / 1000);
+                        } else {
+                            snprintf(line4, sizeof(line4), "£%u,000", cashAmount / 1000);
+                        }
+
+                        std::vector<const char*> msgLines = { line1, line2, line3, line4 };
+                        bool accepted = showContinueAbortPrompt("TRANSFER OFFER", "ACCEPT", "REJECT", msgLines, false);
+
+                        if (accepted) {
+                            extern void cseg_592D5();
+                            save68kRegisters();
+                            cseg_592D5();
+                            restore68kRegisters();
+
+                            // Set SWOS offer accepted flag (dseg_17A6DE = 1)
+                            *reinterpret_cast<uint16_t*>(&SwosVM::g_memByte[504338]) = 1;
+
+                            // Update seller balance and sales
+                            HotseatCareerManager::get().player(sellerIdx).newBalance += cashAmount;
+                            HotseatCareerManager::get().player(sellerIdx).playerSales += cashAmount;
+
+                            // Sync seller squad in hotseat context
+                            save68kRegisters();
+                            *(uint16_t *)&D0 = teamOffering;
+                            GetTeamPointer();
+                            auto updatedSellerTf = A0.as<TeamFile*>();
+                            restore68kRegisters();
+                            if (updatedSellerTf) {
+                                std::memcpy(HotseatCareerManager::get().player(sellerIdx).careerTeam, updatedSellerTf, sizeof(TeamFile));
+                            }
+
+                            // Sync buyer squad and balances in hotseat context
+                            std::memcpy(HotseatCareerManager::get().player(buyerIdx).careerTeam,
+                                        &SwosVM::g_memByte[CareerOffsets::kCareerTeam], sizeof(TeamFile));
+                            HotseatCareerManager::get().player(buyerIdx).newBalance =
+                                *reinterpret_cast<int32_t*>(&SwosVM::g_memByte[CareerOffsets::kNewBalance]);
+                            HotseatCareerManager::get().player(buyerIdx).playerPurchases =
+                                *reinterpret_cast<int32_t*>(&SwosVM::g_memByte[CareerOffsets::kPlayerPurchases]);
+
+                            logInfo("Hotseat: Player %d accepted transfer offer of £%u from Player %d for %s",
+                                    sellerIdx + 1, cashAmount, buyerIdx + 1, playerName);
+                        } else {
+                            // Set SWOS offer rejected flag (dseg_17A6DE = 0)
+                            *reinterpret_cast<uint16_t*>(&SwosVM::g_memByte[504338]) = 0;
+
+                            logInfo("Hotseat: Player %d rejected transfer offer of £%u from Player %d for %s",
+                                    sellerIdx + 1, cashAmount, buyerIdx + 1, playerName);
+                        }
+
+                        SetExitMenuFlag();
+                        return;
                     }
                 }
             }

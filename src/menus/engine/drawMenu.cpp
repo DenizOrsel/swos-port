@@ -79,7 +79,21 @@ void drawMenu(bool updateScreen /* = true */)
             if (getCurrentMenu()->numEntries > 1) {
                 if (HotseatCareerManager::get().numPlayers() > 1 &&
                     HotseatCareerManager::get().canEndTurn()) {
+                    auto entry1 = getMenuEntry(1);
+                    if (entry1) {
+                        entry1->show();
+                        entry1->enable();
+                        entry1->leftEntry = -1;
+                        entry1->rightEntry = 10;
+                    }
+                    if (getCurrentMenu()->numEntries > 10) {
+                        auto entry10 = getMenuEntry(10);
+                        if (entry10) {
+                            entry10->leftEntry = 1;
+                        }
+                    }
                     copyStringToEntry(1, "END TURN        ");
+                    setCurrentEntry(1);
                 }
             }
         }
@@ -140,6 +154,17 @@ void SWOS::DrawMultipleItems()
 void drawMenuItem(MenuEntry *entry)
 {
     assert(entry);
+
+    if (HotseatCareerManager::get().isActive()) {
+        auto packed = getCurrentPackedMenu();
+        if (packed && SwosVM::ptrToOffset(packed) == 496147 && entry->ordinal == 1) {
+            if (HotseatCareerManager::get().numPlayers() > 1 &&
+                HotseatCareerManager::get().canEndTurn()) {
+                entry->show();
+                entry->enable();
+            }
+        }
+    }
 
     if (entry->invisible)
         return;

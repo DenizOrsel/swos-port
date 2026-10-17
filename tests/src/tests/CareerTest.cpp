@@ -227,6 +227,18 @@ void CareerTest::testHotseatInterPlayerTransferOffer()
 
     assertEqual(mgr.player(0).newBalance, 8'000'000);
     assertEqual(mgr.player(1).newBalance, 7'000'000);
+
+    // Player 0 offers £1,000,000 to Player 1 for player #6 (rejected)
+    HotseatCareerManager::TransferOffer offer2;
+    offer2.fromPlayerIndex = 0;
+    offer2.toPlayerIndex = 1;
+    offer2.playerOrdinal = 6;
+    offer2.offerAmount = 1'000'000;
+    mgr.queueTransferOffer(offer2);
+    mgr.resolveTransferOffer(1, false);
+
+    assertEqual(mgr.player(0).newBalance, 8'000'000);
+    assertEqual(mgr.player(1).newBalance, 7'000'000);
 }
 
 void CareerTest::testHotseatHeadToHeadFixture()
