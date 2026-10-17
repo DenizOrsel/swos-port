@@ -29,6 +29,7 @@ void HotseatCareerManager::reset()
     m_isSelectingCareerTeams = false;
     m_careerNumPlayers = 1;
     m_assignedTeamSlots.clear();
+    m_assignedSlotInfos.clear();
 }
 
 void HotseatCareerManager::initializeHotseat(const std::vector<int16_t>& teamIds)
@@ -322,19 +323,33 @@ void HotseatCareerManager::resetWizard(int totalPlayers)
     m_wizardPlayers.resize(m_wizardTotalPlayers);
 }
 
-void HotseatCareerManager::assignTeamSlot(int16_t teamId, int slot)
+void HotseatCareerManager::assignTeamSlot(int16_t teamId, int slot, const TeamFile *tf)
 {
     m_assignedTeamSlots[teamId] = slot;
+    AssignedSlotInfo info;
+    info.slot = slot;
+    info.globalTeamNumber = teamId;
+    if (tf) {
+        info.teamWord = *reinterpret_cast<const uint16_t *>(tf);
+        info.teamFile = *tf;
+    }
+    m_assignedSlotInfos[slot] = info;
 }
 
 void HotseatCareerManager::unassignTeamSlot(int16_t teamId)
 {
-    m_assignedTeamSlots.erase(teamId);
+    auto it = m_assignedTeamSlots.find(teamId);
+    if (it != m_assignedTeamSlots.end()) {
+        int slot = it->second;
+        m_assignedSlotInfos.erase(slot);
+        m_assignedTeamSlots.erase(it);
+    }
 }
 
 void HotseatCareerManager::unassignAllTeamSlots()
 {
     m_assignedTeamSlots.clear();
+    m_assignedSlotInfos.clear();
 }
 
 int HotseatCareerManager::getTeamSlot(int16_t teamId) const
@@ -352,6 +367,14 @@ int HotseatCareerManager::getTeamForSlot(int slot) const
             return pair.first;
     }
     return 0;
+}
+
+const HotseatCareerManager::AssignedSlotInfo *HotseatCareerManager::getAssignedSlotInfo(int slot) const
+{
+    auto it = m_assignedSlotInfos.find(slot);
+    if (it != m_assignedSlotInfos.end())
+        return &it->second;
+    return nullptr;
 }
 
 int HotseatCareerManager::getNextAvailableSlot() const
@@ -464,33 +487,45 @@ void startCareerMode()
     std::vector<TeamFile> orderedTeams(numPlayers);
 
     for (int i = 0; i < numPlayers; ++i) {
-        int16_t tid = mgr.getTeamForSlot(i);
-        orderedTeamIds[i] = tid;
+        auto slotInfo = mgr.getAssignedSlotInfo(i);
+        if (slotInfo && slotInfo->teamWord != 0) {
+            orderedTeamIds[i] = static_cast<int16_t>(slotInfo->teamWord);
+            orderedTeams[i] = slotInfo->teamFile;
+        } else {
+            int16_t tid = mgr.getTeamForSlot(i);
+            bool found = false;
+            int count = swos.g_numSelectedTeams;
+            if (count <= 0 || count > 100) count = 100;
 
-        bool found = false;
-        int count = swos.g_numSelectedTeams;
-        if (count <= 0 || count > 100) count = 100;
-
-        for (int t = 0; t < count; ++t) {
-            auto tf = reinterpret_cast<const TeamFile *>(&swos.g_selectedTeams[t * sizeof(TeamFile)]);
-            if (tf->globalTeamNumber == tid) {
-                orderedTeams[i] = *tf;
-                found = true;
-                break;
+            for (int t = 0; t < count; ++t) {
+                auto tf = reinterpret_cast<const TeamFile *>(&swos.g_selectedTeams[t * sizeof(TeamFile)]);
+                if (tf->globalTeamNumber == tid) {
+                    orderedTeams[i] = *tf;
+                    orderedTeamIds[i] = *reinterpret_cast<const int16_t *>(tf);
+                    found = true;
+                    break;
+                }
             }
-        }
-        if (!found && swos.selTeamsPtr) {
-            auto selTeams = reinterpret_cast<const TeamFile *>(SwosVM::offsetToPtr(swos.selTeamsPtr));
-            if (selTeams) {
-                for (int t = 0; t < count; ++t) {
-                    if (selTeams[t].globalTeamNumber == tid) {
-                        orderedTeams[i] = selTeams[t];
-                        found = true;
-                        break;
+            if (!found && swos.selTeamsPtr) {
+                auto selTeams = reinterpret_cast<const TeamFile *>(SwosVM::offsetToPtr(swos.selTeamsPtr));
+                if (selTeams) {
+                    for (int t = 0; t < count; ++t) {
+                        if (selTeams[t].globalTeamNumber == tid) {
+                            orderedTeams[i] = selTeams[t];
+                            orderedTeamIds[i] = *reinterpret_cast<const int16_t *>(&selTeams[t]);
+                            found = true;
+                            break;
+                        }
                     }
                 }
             }
         }
+
+        logInfo("Player %d assigned: %.*s (teamWord=0x%04x, countryFile=%d, ordinal=%d, globalId=%d)",
+                i + 1, 17, orderedTeams[i].teamName,
+                static_cast<uint16_t>(orderedTeamIds[i]),
+                orderedTeams[i].teamFileNo, orderedTeams[i].teamOrdinal,
+                orderedTeams[i].globalTeamNumber);
     }
 
     mgr.initializeHotseat(orderedTeamIds);
@@ -510,7 +545,24 @@ void startCareerMode()
         std::memcpy(p.careerTeam, &orderedTeams[i], sizeof(TeamFile));
     }
 
-    // Initialize division career with Player 0's team ID
+    // Restore Player 0's manager details into SWOS memory before InitCareer()
+    const auto& wp0 = mgr.wizardPlayer(0);
+    swos.coachOrPlayer = wp0.coachOrPlayer;
+    swos.plNationality = wp0.nationality;
+    SwosVM::g_memByte[CareerOffsets::kMrOrMs] = static_cast<uint8_t>(wp0.mrOrMs);
+
+    std::memset(&SwosVM::g_memByte[CareerOffsets::kManagerNameBuffer], 0, 9);
+    size_t nlen = std::min(wp0.name.size(), size_t{8});
+    std::memcpy(&SwosVM::g_memByte[CareerOffsets::kManagerNameBuffer], wp0.name.data(), nlen);
+
+    std::memset(&SwosVM::g_memByte[CareerOffsets::kManagerSurnameBuffer], 0, 13);
+    size_t slen = std::min(wp0.surname.size(), size_t{12});
+    std::memcpy(&SwosVM::g_memByte[CareerOffsets::kManagerSurnameBuffer], wp0.surname.data(), slen);
+
+    // Initialize division career with Player 0's team ID (teamWord: (ordinal << 8) | countryFile)
+    logInfo("Calling InitCareer with D0=0x%04x (countryFile=%d, ordinal=%d)",
+            static_cast<uint16_t>(orderedTeamIds[0]),
+            orderedTeams[0].teamFileNo, orderedTeams[0].teamOrdinal);
     *(uint16_t *)&D0 = orderedTeamIds[0];
     InitCareer();
     swos.g_gameType = kGameTypeCareer;
@@ -523,6 +575,7 @@ void startCareerMode()
         auto& p = mgr.player(i);
         p.newBalance = mgr.player(0).newBalance;
         p.oldBalance = mgr.player(0).oldBalance;
+        p.startingBalance = mgr.player(0).startingBalance;
         p.playerWagesBill = mgr.player(0).playerWagesBill;
         std::memcpy(p.careerHistory, mgr.player(0).careerHistory, sizeof(p.careerHistory));
     }

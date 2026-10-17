@@ -124,11 +124,19 @@ public:
     int careerNumPlayers() const { return m_careerNumPlayers; }
     void setCareerNumPlayers(int count) { m_careerNumPlayers = count; }
 
-    void assignTeamSlot(int16_t teamId, int slot);
+    struct AssignedSlotInfo {
+        int slot = -1;
+        int16_t globalTeamNumber = 0;
+        uint16_t teamWord = 0;
+        TeamFile teamFile;
+    };
+
+    void assignTeamSlot(int16_t teamId, int slot, const TeamFile *tf = nullptr);
     void unassignTeamSlot(int16_t teamId);
     void unassignAllTeamSlots();
     int getTeamSlot(int16_t teamId) const;
     int getTeamForSlot(int slot) const;
+    const AssignedSlotInfo *getAssignedSlotInfo(int slot) const;
     int getNextAvailableSlot() const;
     int getAssignedSlotCount() const;
     int getTeamSlotFromEntry(const struct MenuEntry *entry) const;
@@ -180,6 +188,7 @@ private:
     bool m_isSelectingCareerTeams = false;
     int m_careerNumPlayers = 1;
     std::map<int16_t, int> m_assignedTeamSlots;
+    std::map<int, AssignedSlotInfo> m_assignedSlotInfos;
 };
 
 void startCareerMode();

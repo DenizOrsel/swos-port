@@ -84,7 +84,7 @@ void selectEntry(MenuEntry *entry, int controlMask /* = kShortFireMask */)
                     // Currently CPU -> assign to next available player slot
                     int nextSlot = HotseatCareerManager::get().getNextAvailableSlot();
                     if (nextSlot >= 0 && nextSlot < HotseatCareerManager::get().careerNumPlayers()) {
-                        HotseatCareerManager::get().assignTeamSlot(team->globalTeamNumber, nextSlot);
+                        HotseatCareerManager::get().assignTeamSlot(team->globalTeamNumber, nextSlot, team);
                         team->teamControls = kPlayerCoach;
                         entry->bg.entryColor = 11; // Purplish (Player-Coach)
                         entry->drawn = 0;
