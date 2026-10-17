@@ -533,7 +533,7 @@ static void processStoppedGameState()
 static void setPlayersDestinationState(TeamGeneralInfo& team, DestinationState state)
 {
     if (!team.resetControls) {
-        for (int i = 0; i < 11; ++i)
+        for (int i = 0; i < 11; i++)
             team.players[i]->destReachedState = state;
     }
 }
@@ -547,7 +547,7 @@ static bool allVisiblePlayersArrived()
 
     const TeamGeneralInfo *teams[] = { &swos.topTeamData, &swos.bottomTeamData };
     for (const auto team : teams) {
-        for (int i = 0; i < 11; ++i) {
+        for (int i = 0; i < 11; i++) {
             const auto player = team->players[i];
             if ((requireOffscreenPlayers || player->onScreen) &&
                 player->destReachedState != DestinationState::kReached)
@@ -596,7 +596,7 @@ static void updateCameraBreakMode()
             if (swos.gameState == GameState::kKeeperHoldsTheBall) {
                 swos.gameStatePl = GameState::kWaitingOnPlayer;
                 swos.inGameCounter = 0;
-                swos.breakState = static_cast<word>(swos.gameState);
+                swos.breakState = swos.gameState;
             }
             setPlayersDestinationState(swos.topTeamData, DestinationState::kStarting);
             setPlayersDestinationState(swos.bottomTeamData, DestinationState::kStarting);
@@ -657,7 +657,7 @@ static void updateCameraBreakMode()
         swos.goalCameraMode = 0;
         swos.gameStatePl = GameState::kWaitingOnPlayer;
         swos.inGameCounter = 0;
-        swos.breakState = static_cast<word>(swos.gameState);
+        swos.breakState = swos.gameState;
         break;
 
     default:

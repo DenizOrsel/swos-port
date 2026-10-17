@@ -13,6 +13,16 @@ constexpr int kRightThrowInLine = 590;
 constexpr int kTopPitchLine = 129;
 constexpr int kBottomPitchLine = 769;
 
+constexpr int kLeftCornerX = 86;
+constexpr int kRightCornerX = 585;
+constexpr int kTopCornerY = 134;
+constexpr int kBottomCornerY = 764;
+
+constexpr int kLeftGoalKickX = 276;
+constexpr int kRightGoalKickX = 396;
+constexpr int kTopGoalKickY = 154;
+constexpr int kBottomGoalKickY = 744;
+
 constexpr int kGoalAttemptLeft = 240;
 constexpr int kGoalAttemptRight = 431;
 
@@ -32,5 +42,15 @@ constexpr int kGoalHeight = 19;
 
 constexpr int kTopPenaltySpotY = 187;
 constexpr int kBottomPenaltySpotY = 711;
+
+constexpr int kPenaltyAreaLeft = 193;
+constexpr int kPenaltyAreaRight = 478;
+constexpr int kTopPenaltyAreaBottom = 216;
+constexpr int kBottomPenaltyAreaTop = 682;
+
+constexpr int kGoalkeeperAreaLeft = 273;
+constexpr int kGoalkeeperAreaRight = 398;
+constexpr int kTopGoalkeeperAreaBottom = 158;
+constexpr int kBottomGoalkeeperAreaTop = 740;
 
 constexpr int kNumBallQuadrants = 35;

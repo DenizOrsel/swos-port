@@ -23,7 +23,14 @@ static uint16_t m_cpuShotAftertouchTimer;
 static uint16_t m_cpuResumePlayTimer;
 static uint16_t m_cpuMaximumStoppageTime;
 static int16_t m_cpuResumePlayTurnStep = 1;
-static constexpr std::array<DirectionMask, 6> kCpuThrowInDirections{3, 6, 12, 129, 192, 96};
+static constexpr std::array<DirectionMask, 6> kCpuThrowInDirections{
+    makeDirectionMask(Direction::kTop, Direction::kTopRight),
+    makeDirectionMask(Direction::kTopRight, Direction::kRight),
+    makeDirectionMask(Direction::kRight, Direction::kBottomRight),
+    makeDirectionMask(Direction::kTop, Direction::kTopLeft),
+    makeDirectionMask(Direction::kLeft, Direction::kTopLeft),
+    makeDirectionMask(Direction::kBottomLeft, Direction::kLeft),
+};
 static constexpr std::array<int16_t, 3> kCpuLeftSpinDirections{-1, -2, -3};
 static constexpr std::array<int16_t, 3> kCpuRightSpinDirections{1, 2, 3};
 static constexpr std::array<int16_t, 3> kCpuLongKickDirections{0, -999, 4};
@@ -140,7 +147,8 @@ void updateCpuPlayerControls(TeamGeneralInfo& team)
             auto deriveFromAngle = true;
             if (state == GameState::kFoul) {
                 auto ballY = swos.ballSprite.y.whole();
-                deriveFromAngle = &team == &swos.topTeamData ? ballY < 682 : ballY > 216;
+                deriveFromAngle = &team == &swos.topTeamData ?
+                    ballY < kBottomPenaltyAreaTop : ballY > kTopPenaltyAreaBottom;
             }
             if (deriveFromAngle)
                 spin = angleDifference < 0 ? 1 : -1;
@@ -213,17 +221,17 @@ void updateCpuPlayerControls(TeamGeneralInfo& team)
         int16_t bias = difference < 0 ? 1 : -1;
         auto ballY = swos.ballSprite.y.whole();
         auto outsideGoalArea =
-            (swos.ballSprite.deltaY.raw() < 0 && ballY < 342) ||
-            (swos.ballSprite.deltaY.raw() >= 0 && ballY > 555);
+            (swos.ballSprite.deltaY.raw() < 0 && ballY < kPitchUpperThirdYLimit) ||
+            (swos.ballSprite.deltaY.raw() >= 0 && ballY >= kPitchMiddleThirdYLimit);
         if (!outsideGoalArea) {
             auto phase = (swos.currentGameTick & 0x1c) >> 2;
             auto ballX = swos.ballSprite.x.whole();
-            if (ballX >= 193 && ballX < 478) {
+            if (ballX >= kPenaltyAreaLeft && ballX < kPenaltyAreaRight) {
                 if (!phase)
                     bias = 0;
                 else if (phase >= 5)
                     bias = -bias;
-            } else if (ballX >= 118 && ballX <= 553) {
+            } else if (ballX >= kPenaltyAreaLeft - 75 && ballX <= kPenaltyAreaRight + 75) {
                 if (!phase)
                     bias = -bias;
                 else if (phase < 4)
@@ -335,7 +343,8 @@ void updateCpuPlayerControls(TeamGeneralInfo& team)
     auto useFallback = false;
     if (playerDirection == Direction::kRight || playerDirection == Direction::kLeft) {
         auto ballY = swos.ballSprite.y.whole();
-        useFallback = &team == &swos.topTeamData ? ballY >= 740 : ballY <= 158;
+        useFallback = &team == &swos.topTeamData ?
+            ballY >= kBottomGoalkeeperAreaTop : ballY <= kTopGoalkeeperAreaBottom;
     }
     if (!useFallback && goal.squaredDistance > 28800)
         useFallback = true;
@@ -436,11 +445,9 @@ void cpuPlayerAttemptTackle(TeamGeneralInfo& team, const Sprite& player)
 
 static CpuGoalContext calculateCpuGoalContext(const TeamGeneralInfo& team)
 {
-    constexpr int kTopGoalLineY = 129;
-    constexpr int kBottomGoalLineY = 769;
     constexpr int kDirectionCalculationSpeed = 256;
 
-    auto goalY = &team == &swos.bottomTeamData ? kTopGoalLineY : kBottomGoalLineY;
+    auto goalY = &team == &swos.bottomTeamData ? kTopPitchLine : kBottomPitchLine;
     auto ballX = swos.ballSprite.x.whole();
     auto ballY = swos.ballSprite.y.whole();
     auto deltaX = ballX - kPitchCenterX;

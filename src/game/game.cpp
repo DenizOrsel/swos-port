@@ -426,7 +426,7 @@ void initTeamsData()
     swos.inGameCounter = 0;
     swos.gameStatePl = GameState::kInProgress;
     swos.gameState = GameState::kInProgress;
-    swos.breakState = 0;
+    swos.breakState = GameState::kPlayersGoingToInitialPositions;
     swos.breakCameraMode = CameraBreakMode::kInactive;
 
     auto team = &swos.topTeamData;
@@ -470,15 +470,15 @@ void initTeamsData()
         team->ballOutOfPlay = 0;
         team->passKickTimer = 0;
         team->ballCanBeControlled = 0;
-        team->ofs114 = 0;
+        team->reserved114 = 0;
         team->ballControllingDirection = Direction::kNoDirection;
-        team->ofs116 = 0;
+        team->reserved116 = 0;
         team->wonTheBallTimer = 0;
         team->spinTimer = -1;
-        team->ofs60 = 0;
+        team->reserved60 = 0;
         team->goalkeeperSavedCommentTimer = 0;
         team->lastHeadingTacklingPlayer.reset();
-        team->ofs78 = 0;
+        team->reserved78 = 0;
         team->headerOrTackle = 0;
         team->shooting = 0;
         team->passInProgress = 0;
@@ -777,7 +777,7 @@ static void processPostGameData(TeamFile *team1, TeamFile *team2, int paramD7)
         if (!swos.g_trainingGame) {
             A1 = team1;
             A2 = team2;
-            D0 = swos.plg_D3_param;
+            D0 = swos.useCompetitionPlayerStatusRules;
             cseg_30BD1();
 
             if (paramD7 < 0) {
@@ -912,12 +912,11 @@ static void initGameVariables()
 
 static void startingMatch()
 {
-    constexpr int kStartingBallY = 449;
     constexpr int kInitialDelayBeforeKickOff = 100;
 
     swos.halfNumber = 1;
     swos.hideBall = 0;
-    setBallPosition(kBallOffCourtX, kStartingBallY);
+    setBallPosition(kBallOffCourtX, kPitchCenterY);
 
     initTeamsData();    // careful, this function resets some stuff, so keep it up here for now
 
@@ -948,8 +947,8 @@ static void startingMatch()
 //
 void SWOS::InitializeInGameTeamsAndStartGame()
 {
-    swos.plg_D0_param = D0;
-    swos.plg_D3_param = D3;
+    swos.useFriendlyMatchRules = D0;
+    swos.useCompetitionPlayerStatusRules = D3;
 
     invokeWithSaved68kRegisters([]() {
         auto topTeamFile = A1.as<TeamFile *>();

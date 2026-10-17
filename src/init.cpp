@@ -13,6 +13,7 @@
 #include "util.h"
 #include "mainMenu.h"
 #include "team.h"
+#include "restartPositions.h"
 
 #ifndef SWOS_TEST
 static_assert(offsetof(SwosVM::SwosVariables, g_selectedTeams) -
@@ -38,7 +39,6 @@ SDL_UNUSED constexpr int kTotalExtraMemorySize = kDosMemBufferSize + kSpritesBuf
 
 static void init();
 static void initRandomSeed();
-static void patchPlayersLeavingPitchDestinations();
 
 void startMainMenuLoop()
 {
@@ -48,6 +48,9 @@ void startMainMenuLoop()
 
     startMenuSong();
     initRandomSeed();
+#ifndef SWOS_TEST
+    patchPlayersLeavingPitchDestinations();
+#endif
 
     D0 = 0;
     Randomize2();
@@ -133,7 +136,6 @@ static void init()
     setupExtraMemory();
 
 #ifndef SWOS_TEST
-    patchPlayersLeavingPitchDestinations();
 #endif
 
     initTimer();
@@ -157,16 +159,4 @@ static void initRandomSeed()
 
     assert(seed <= 0xffff);
     swos.randomSeed = seed;
-}
-
-static void patchPlayersLeavingPitchDestinations()
-{
-    constexpr int kPlayersOffscreenOffsetX = 39;
-
-    // shift player destinations when leaving the pitch more to the right, since it looks bad if unzoomed,
-    // they're visible on screen, and all converging into one point on the right side of the pitch
-    for (size_t i = 0; i < std::size(swos.playersLeavingPitchBottom); i += 2) {
-        swos.playersLeavingPitchBottom[i] += kPlayersOffscreenOffsetX;
-        swos.playersLeavingPitchTop[i] -= kPlayersOffscreenOffsetX;
-    }
 }

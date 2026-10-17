@@ -19,9 +19,6 @@ constexpr int kLeavingBenchCameraDestX = 211;
 constexpr int kBenchSlideAreaStartY = 339;
 constexpr int kBenchSlideAreaEndY = 359;
 
-constexpr int kPlayersOutsidePitchX = 590;
-constexpr int kTopGoalLine = 129;
-
 constexpr int kPitchMaxX = 352;
 constexpr int kPitchMinY = 16;
 constexpr int kPitchMaxY = 664;
@@ -370,7 +367,7 @@ static std::pair<int, int> getStandardModeCameraVelocity(FixedPoint xDirection, 
 
 static CameraParams waitingForPlayersToLeaveCameraLocation(int limit)
 {
-    return { kPlayersOutsidePitchX, kPitchCenterY, limit };
+    return { kRightThrowInLine, kPitchCenterY, limit };
 }
 
 static CameraParams showResultAtCenter(int limit)
@@ -380,7 +377,7 @@ static CameraParams showResultAtCenter(int limit)
 
 static CameraParams showResultAtTop(int limit)
 {
-    return { kPitchCenterX, kTopGoalLine, limit };
+    return { kPitchCenterX, kTopPitchLine, limit };
 }
 
 static CameraParams followTheBall(int limit, int xVelocity, int yVelocity)

@@ -266,7 +266,7 @@ static void setPitchNumber()
         m_pitchNumber = kTrainingPitchIndex;
     } else {
         int index;
-        if (swos.plg_D0_param) {
+        if (swos.useFriendlyMatchRules) {
             // pick random pitch (used in friendlies)
             index = SWOS::rand() & 0xf;
         } else {

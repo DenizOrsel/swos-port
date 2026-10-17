@@ -3,6 +3,7 @@
 #include "dump.h"
 #include "text.h"
 #include "gameLoop.h"
+#include "updatePlayers.h"
 
 static bool m_debugOutput = true;
 
@@ -10,7 +11,7 @@ void dumpVariables()
 {
     char buf[256];
     if (m_debugOutput && isMatchRunning()) {
-        sprintf(buf, "DEF X: %hd", SwosVM::g_memWord[524746/2]);
+        sprintf(buf, "DEF X: %d", getBallDefensivePositionX());
         drawText(0, 16, buf, -1, kYellowText);
         sprintf(buf, "BALL X: %hd", swos.ballSprite.x.whole());
         drawText(0, 23, buf, -1, kYellowText);

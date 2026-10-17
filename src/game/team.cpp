@@ -80,7 +80,7 @@ const ShotChanceTable *getPlayerShotChanceTable()
 
 int getGoalieShotChanceTableIndex(const ShotChanceTable *ptr)
 {
-    for (size_t i = 0; i < std::size(kGoalieSkillTables); ++i) {
+    for (size_t i = 0; i < std::size(kGoalieSkillTables); i++) {
         if (ptr == &m_shotChanceTables.asPtr()[i])
             return static_cast<int>(i);
     }

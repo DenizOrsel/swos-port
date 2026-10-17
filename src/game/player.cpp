@@ -59,6 +59,9 @@ static uint32_t getTacklingPlayersDistanceMetric(const Sprite& player, const Spr
 static void tackleBall(TeamGeneralInfo& team, Sprite& player, BallTackleStrength strength);
 static void doFlyingHeader(Sprite& headingPlayer, Sprite& ballSprite);
 
+// Recalculate a normal player's movement speed from roster skill and game
+// state, then derive animation timing from that speed. Uncontrolled keepers in
+// live play retain the speed chosen by goalkeeper logic.
 void updatePlayerSpeedAndFrameDelay(const TeamGeneralInfo& team, Sprite& player)
 {
     if (player.state != PlayerState::kNormal ||
@@ -176,12 +179,15 @@ static Sprite& positionBallInFrontOfPlayer(const Sprite& player)
     return ball;
 }
 
+// Attach a controlled ground ball to the point immediately in front of an outfield player.
 void updateBallWithControllingPlayer(const Sprite& player)
 {
     auto& ball = positionBallInFrontOfPlayer(player);
     ball.z.setWhole(0);
 }
 
+// Attach the ball to a goalkeeper while preserving a descending trajectory;
+// a rising ball is reflected downward so it settles into the keeper's hands.
 void updateBallWithControllingGoalkeeper(const Sprite& player)
 {
     auto& ball = positionBallInFrontOfPlayer(player);
@@ -214,8 +220,9 @@ void calculateIfPlayerWinsBall(TeamGeneralInfo& team, Sprite& player, Direction 
     if (!opponent.wonTheBallTimer && opponent.playerHasBall &&
         opponent.currentAllowedDirection != Direction::kNoDirection &&
         opponent.controlledPlayer) {
-        // This apparently odd lookup is intentional: SWOS uses the opponent's
-        // controlled-player ordinal to select a player from each team's roster.
+        // Original SWOS bug retained for compatibility: the opponent's ordinal
+        // selects a player from both rosters, so this may rate a different
+        // player than the one from the team that is actually contesting the ball.
         const auto& teamPlayer = getPlayerPointerFromShirtNumber(team, *opponent.controlledPlayer);
         const auto& opponentPlayer = getPlayerPointerFromShirtNumber(opponent, *opponent.controlledPlayer);
         auto teamRating = static_cast<uint8_t>(
@@ -497,6 +504,8 @@ void playerTackledTheBallWeak(TeamGeneralInfo& team, Sprite& player)
     tackleBall(team, player, BallTackleStrength::kWeak);
 }
 
+// Stop play after a goalkeeper claim, constrain the restart directions, and
+// transfer control immediately unless the keeper is still in a dive.
 void goalkeeperClaimedTheBall(TeamGeneralInfo& team, Sprite& goalKeeper, Sprite& ballSprite)
 {
     setLastPlayerBeforeGoalkeeper(getLastPlayerPlayed());
@@ -548,6 +557,8 @@ void goalkeeperClaimedTheBall(TeamGeneralInfo& team, Sprite& goalKeeper, Sprite&
     }
 }
 
+// Send a saved ball away from goal with a tick-dependent horizontal scatter.
+// The goalkeeper skill table selects strong, medium, or weak deflection speed.
 void goalkeeperDeflectedBall(const TeamGeneralInfo& team, Sprite& ballSprite)
 {
     auto direction = &team == &swos.bottomTeamData ? Direction::kTop : Direction::kBottom;
@@ -571,6 +582,9 @@ void goalkeeperDeflectedBall(const TeamGeneralInfo& team, Sprite& ballSprite)
     playKickSample();
 }
 
+// Start a pass toward the closest eligible teammate in the facing direction.
+// Distance and passing skill determine speed; CPU players may deliberately
+// misdirect low-skill passes, while human passes retain aftertouch state.
 void doPass(TeamGeneralInfo& team, const Sprite& passingPlayer)
 {
     // lower values in the table means higher chance to fail the pass, 0 = can't fail
@@ -686,6 +700,8 @@ void setPlayerDowntimeAfterTackle(const TeamGeneralInfo& team, Sprite& player)
         kWeakTackleDownTime : kStrongTackleDownTime[playerInfo.tackling];
 }
 
+// Switch a wound-up jump-header attempt to its contact animation at the
+// original tick/frame gate, halving player movement when the switch occurs.
 void setJumpHeaderHitAnimTable(Sprite& player)
 {
     // this is an animation switch from previous heading "intro" animation
@@ -698,6 +714,8 @@ void setJumpHeaderHitAnimTable(Sprite& player)
     }
 }
 
+// Map a sprite's one-based player ordinal to its roster record. Despite the
+// inherited name, this uses lineup order rather than the displayed shirt number.
 const PlayerInfo& getPlayerPointerFromShirtNumber(const TeamGeneralInfo& team, const Sprite& player)
 {
     assert(team.inGameTeamPtr);
@@ -758,6 +776,7 @@ static void setPlayerJumpHeaderHitAnimationTable(Sprite& player)
         setPlayerAnimationTableAndPictureIndex(player, getJumpHeaderHitAnimTable());
 }
 
+// Apply the deferred good-pass commentary command after pass outcome is known.
 static void playStopGoodPassSampleIfNeeded()
 {
     if (m_goodPassCommand == GoodPassCommand::kPlaySample) {
@@ -769,11 +788,13 @@ static void playStopGoodPassSampleIfNeeded()
     }
 }
 
+// Cancel any queued good-pass reaction.
 static void stopGoodPassSample()
 {
     swos.playingGoodPassTimer = -1;
 }
 
+// Count successful passes and schedule commentary after every fifth one.
 static void enqueuePlayingGoodPassSample()
 {
     swos.playingGoodPassTimer = -1;
@@ -783,6 +804,8 @@ static void enqueuePlayingGoodPassSample()
     }
 }
 
+// Aim a tackled ball generally along the player's facing direction, allowing
+// controls to deflect it by one adjacent direction but never reverse it.
 static void setBallDirectionAfterTackle(TeamGeneralInfo& team, const Sprite& player)
 {
     auto controlsDirection = team.currentAllowedDirection;
@@ -823,6 +846,8 @@ static uint32_t getTacklingPlayersDistanceMetric(const Sprite& player, const Spr
     return distanceSquared + static_cast<uint32_t>(static_cast<int32_t>(deltaY) * deltaY);
 }
 
+// Apply the weak or strong tackle's speed transfer and classify a clean tackle
+// when the former ball carrier is sufficiently far from both ball and tackler.
 static void tackleBall(TeamGeneralInfo& team, Sprite& player, BallTackleStrength strength)
 {
     if (strength == BallTackleStrength::kWeak)
@@ -860,6 +885,8 @@ static void tackleBall(TeamGeneralInfo& team, Sprite& player, BallTackleStrength
     resetBothTeamSpinTimers();
 }
 
+// Give a flying header its upward arc, retain 75% of horizontal speed, and
+// enter the contact animation when its frame gate permits.
 static void doFlyingHeader(Sprite& headingPlayer, Sprite& ballSprite)
 {
     static constexpr auto kFlyingHeaderBallDeltaZ = 2.0_fp;

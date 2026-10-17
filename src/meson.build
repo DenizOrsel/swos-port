@@ -2,6 +2,16 @@
 c = run_command([python, '-c', getFilesCommand.format('.', '*.cpp')], check: true)
 rawSources = c.stdout().strip().split('\n')
 
+# These are private implementation fragments included by updatePlayers.cpp.
+rawSources -= [
+    'game/updatePlayers/ballProjections.cpp',
+    'game/updatePlayers/foulsAndCards.cpp',
+    'game/updatePlayers/playerActions.cpp',
+    'game/updatePlayers/playerStates.cpp',
+    'game/updatePlayers/playerUpdateCore.cpp',
+    'game/updatePlayers/updateAllPlayers.cpp',
+]
+
 currentSrcDir = meson.current_source_dir()
 sourceFiles = []
 

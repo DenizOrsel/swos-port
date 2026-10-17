@@ -180,15 +180,12 @@ static bool prolongLastMinute()
     if (swos.gameStatePl != GameState::kInProgress)
         return true;
 
-    constexpr int kUpperPenaltyAreaLowerLine = 216;
-    constexpr int kLowerPenaltyAreaUpperLine = 682;
-
 #ifdef SWOS_TEST
     auto ballY = swos.ballSprite.y.whole();
 #else
     auto ballY = swos.ballSprite.y;
 #endif
-    auto ballInsidePenaltyArea = ballY <= kUpperPenaltyAreaLowerLine || ballY > kLowerPenaltyAreaUpperLine;
+    auto ballInsidePenaltyArea = ballY <= kTopPenaltyAreaBottom || ballY > kBottomPenaltyAreaTop;
     auto attackingTeam = ballY > kPitchCenterY ? &swos.topTeamData : &swos.bottomTeamData;
     auto attackInProgress = swos.lastTeamPlayed == attackingTeam;
 

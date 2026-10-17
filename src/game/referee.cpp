@@ -13,11 +13,11 @@ constexpr auto kRefereeSpeed = 2.0_speed;
 constexpr int kRefereeHidingPlaceX = 276;
 constexpr int kRefereeHidingPlaceY = 439;
 
-constexpr int kRefereeLeavingTopDestY = 129;
-constexpr int kRefereeLeavingBottomDestY = 770;
+constexpr int kRefereeLeavingTopDestY = kTopPitchLine;
+constexpr int kRefereeLeavingBottomDestY = kBottomPitchLine + 1;
 
 constexpr int kSentOffPlayerX = -20;
-constexpr int kSentOffPlayerY = 449;
+constexpr int kSentOffPlayerY = kPitchCenterY;
 
 constexpr int kPlayerNumberOffset = 20;
 

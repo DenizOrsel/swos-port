@@ -21,8 +21,9 @@ offset  length  description
   10     32     16 goalkeeper dive-speed indices, selected with
                 currentGameTick & 0x0f. The selected value is decremented and
                 clamped to zero before indexing kGoalkeeperDiveDeltas.
-  42      2     unknown
-  44      2     unknown
+  42      2     diving catch chance, 0..15
+  44      2     following range length for the secondary diving-deflection
+                result; remaining rolls select the primary deflection
   46      2     unknown
   48      2     close-ball catch chance, 0..15. The goalkeeper catches when
                 ((currentGameTick & 0xf0) >> 4) is less than this value;

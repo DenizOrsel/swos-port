@@ -1,4 +1,4 @@
-; ---------------------------------------------------------------------------
+﻿; ---------------------------------------------------------------------------
 
 REGS struc ; (sizeof=0x1C, mappedto_56)
                     ; XREF: dseg:kBallAirSpeedReduction/o FF0006CE/r ...
@@ -214,7 +214,7 @@ deltaX dd ?         ; XREF: UpdateControlledPlayerNumbers+113/r
 deltaY dd ?         ; XREF: UpdateAndDrawStatistics+E5/r
                     ; UpdateAndDrawStatistics+146/r ... ; base 10
 deltaZ dd ?         ; XREF: SetBallPosition+80/w
-                    ; UpdateBallVariables+6A/r ... ; base 10
+                    ; UpdateGoalkeeperBallProjections+6A/r ... ; base 10
 destX dw ?          ; XREF: ActivateReferee+3E/w StopPlayers+56/w ... ; base 10
 destY dw ?          ; XREF: ActivateReferee+4E/w StopPlayers+6A/w ... ; base 10
 field_3E db 6 dup(?)
@@ -1411,13 +1411,13 @@ ST_GOAL_OUT_RIGHT  = 2
 ST_KEEPER_HOLDS_BALL  = 3
 ST_CORNER_LEFT  = 4
 ST_CORNER_RIGHT  = 5
-ST_FREE_KICK_LEFT1  = 6
-ST_FREE_KICK_LEFT2  = 7
-ST_FREE_KICK_LEFT3  = 8
+ST_FREE_KICK_OUTER_LEFT  = 6
+ST_FREE_KICK_MIDDLE_LEFT  = 7
+ST_FREE_KICK_INNER_LEFT  = 8
 ST_FREE_KICK_CENTER  = 9
-ST_FREE_KICK_RIGHT1  = 10
-ST_FREE_KICK_RIGHT2  = 11
-ST_FREE_KICK_RIGHT3  = 12
+ST_FREE_KICK_INNER_RIGHT  = 10
+ST_FREE_KICK_MIDDLE_RIGHT  = 11
+ST_FREE_KICK_OUTER_RIGHT  = 12
 ST_FOUL  = 13
 ST_PENALTY  = 14
 ST_THROW_IN_FORWARD_RIGHT  = 15
@@ -34648,13 +34648,13 @@ InitializeInGameTeamsAndStartGame proc near
                     ; cseg_29E79+4C1↑p ...
 mov     hilStarted, 0
 mov     ax, word ptr D0
-mov     plg_D0_param, ax
+mov     useFriendlyMatchRules, ax
 mov     ax, word ptr D1
 mov     gameMinSubstitutes, ax
 mov     ax, word ptr D2
 mov     gameMaxSubstitutes, ax
 mov     ax, word ptr D3
-mov     plg_D3_param, ax
+mov     useCompetitionPlayerStatusRules, ax
 mov     eax, A1
 mov     gameTeam1, eax
 mov     eax, A2
@@ -35230,7 +35230,7 @@ mov     eax, A2
 mov     A1, eax
 mov     eax, A3
 mov     A2, eax
-mov     ax, plg_D3_param
+mov     ax, useCompetitionPlayerStatusRules
 mov     word ptr D0, ax
 call    cseg_30BD1
 pop     A6
@@ -35619,7 +35619,7 @@ call    GetPlayer
 mov     esi, A1
 mov     al, [esi+34h]
 mov     byte ptr D1, al
-mov     ax, plg_D3_param
+mov     ax, useCompetitionPlayerStatusRules
 or      ax, ax
 jnz     short cseg_2F286
 shl     byte ptr D1, 2
@@ -36087,7 +36087,7 @@ cmp     word ptr D2, 11
 jb      @@first_team_players
 mov     eax, A5
 mov     A0, eax
-mov     ax, plg_D3_param
+mov     ax, useCompetitionPlayerStatusRules
 mov     word ptr D0, ax
 push    D0
 push    D1
@@ -36141,7 +36141,7 @@ mov     [esi+PlayerInfoHeader.cards], 0
 mov     esi, A5
 mov     al, [esi+(PlayerFile.cardsInjuries+4Ch)]
 mov     byte ptr D0, al
-mov     ax, plg_D3_param
+mov     ax, useCompetitionPlayerStatusRules
 or      ax, ax
 jnz     short cseg_2FAE8
 and     word ptr D0, 1Ch
@@ -37723,7 +37723,7 @@ jnz     short cseg_313F7
 mov     word ptr D4, 100 ; D4 = 100 if CPU team
 
 cseg_313F7:         ; CODE XREF: AdjustPlayerSkills+172↑j
-mov     ax, plg_D0_param
+mov     ax, useFriendlyMatchRules
 or      ax, ax
 jnz     short @@get_player_price_percentage_change
 cmp     A4, offset bottomTeamInGame
@@ -90157,7 +90157,7 @@ mov     ax, currentGameTick
 mov     word ptr D0, ax
 and     word ptr D0, 10h
 shl     word ptr D0, 4 ; this value gets overwritten
-mov     ax, plg_D0_param
+mov     ax, useFriendlyMatchRules
 or      ax, ax
 jz      short @@set_pseudo_random_pitch
 call    Rand
@@ -101669,9 +101669,9 @@ cmp     gameState, ST_KEEPER_HOLDS_BALL
 jz      short @@game_stopped
 cmp     gameState, ST_FOUL
 jz      short @@game_stopped
-cmp     gameState, ST_FREE_KICK_LEFT1
+cmp     gameState, ST_FREE_KICK_OUTER_LEFT
 jb      short @@game_stopped
-cmp     gameState, ST_FREE_KICK_RIGHT3
+cmp     gameState, ST_FREE_KICK_OUTER_RIGHT
 
 @@game_stopped:     ; CODE XREF: UpdateGameTimersAndCameraBreakMode+469↑j
                     ; UpdateGameTimersAndCameraBreakMode+473↑j ...
@@ -105504,7 +105504,8 @@ GetPlayerPointerFromShirtNumber endp
 ;      A2 -> ball sprite
 ;      A6 -> team (general)
 
-UpdateBallVariables proc near ; CODE XREF: UpdatePlayers+6F3↓p
+UpdateGoalkeeperBallProjections proc near
+                    ; CODE XREF: UpdatePlayers+6F3↓p
 push    D0          ; size 0xb02
 push    D4
 push    D5
@@ -105541,7 +105542,7 @@ jg      @@ball_going_right
 jmp     @@ball_not_moving
 ; ---------------------------------------------------------------------------
 
-@@ball_going_up:    ; CODE XREF: UpdateBallVariables+86↑j
+@@ball_going_up:    ; CODE XREF: UpdateGoalkeeperBallProjections+86↑j
 cmp     A6, offset topTeamData
 jnz     @@ball_not_moving
 mov     esi, A1     ; doing this for team1, ball going toward their half/goal
@@ -105563,8 +105564,8 @@ add     D2, eax     ; D2 = ball y again
 jmp     @@ball_above_player_check
 ; ---------------------------------------------------------------------------
 
-@@set_ball_y_to_0:  ; CODE XREF: UpdateBallVariables+DC↑j
-                    ; UpdateBallVariables+14E↓j
+@@set_ball_y_to_0:  ; CODE XREF: UpdateGoalkeeperBallProjections+DC↑j
+                    ; UpdateGoalkeeperBallProjections+14E↓j
 mov     eax, D7     ; ball is between player and opponent goal
 sub     D6, eax     ; delta z -= air friction
 mov     eax, D6
@@ -105601,7 +105602,7 @@ or      ax, ax
 jns     short cseg_77879
 mov     word ptr D3, 0
 
-cseg_77879:         ; CODE XREF: UpdateBallVariables+1DA↑j
+cseg_77879:         ; CODE XREF: UpdateGoalkeeperBallProjections+1DA↑j
 mov     ax, word ptr D3
 mov     ballDefensiveZ, ax
 mov     ax, word ptr D1
@@ -105614,7 +105615,8 @@ mov     ax, word ptr D3
 xchg    ax, word ptr D3+2
 mov     word ptr D3, ax
 
-@@ball_above_player_check: ; CODE XREF: UpdateBallVariables+11D↑j
+@@ball_above_player_check:
+                    ; CODE XREF: UpdateGoalkeeperBallProjections+11D↑j
 sub     D2, 870000h ; 135.0
 jge     short @@ball_above_135
 mov     ax, ballDefensiveX
@@ -105627,8 +105629,8 @@ add     D2, 870000h ; 135.0, D2 = ball y again
 jmp     cseg_779F5
 ; ---------------------------------------------------------------------------
 
-@@ball_above_135:   ; CODE XREF: UpdateBallVariables+234↑j
-                    ; UpdateBallVariables+295↓j
+@@ball_above_135:   ; CODE XREF: UpdateGoalkeeperBallProjections+234↑j
+                    ; UpdateGoalkeeperBallProjections+295↓j
 mov     eax, D7
 sub     D6, eax
 mov     eax, D6
@@ -105661,7 +105663,7 @@ or      ax, ax
 jns     short cseg_779B0
 mov     word ptr D3, 0
 
-cseg_779B0:         ; CODE XREF: UpdateBallVariables+311↑j
+cseg_779B0:         ; CODE XREF: UpdateGoalkeeperBallProjections+311↑j
 mov     ax, word ptr D3
 mov     ballNotHighZ, ax
 mov     ax, word ptr D1
@@ -105674,7 +105676,7 @@ mov     ax, word ptr D3
 xchg    ax, word ptr D3+2
 mov     word ptr D3, ax
 
-cseg_779F5:         ; CODE XREF: UpdateBallVariables+264↑j
+cseg_779F5:         ; CODE XREF: UpdateGoalkeeperBallProjections+264↑j
 sub     D2, 810000h ; -129.0
 jge     short @@ball_between_129_135
 mov     strikeDestX, 0
@@ -105684,8 +105686,9 @@ add     D2, 810000h ; 129.0
 jmp     @@out
 ; ---------------------------------------------------------------------------
 
-@@ball_between_129_135: ; CODE XREF: UpdateBallVariables+36B↑j
-                    ; UpdateBallVariables+3C3↓j
+@@ball_between_129_135:
+                    ; CODE XREF: UpdateGoalkeeperBallProjections+36B↑j
+                    ; UpdateGoalkeeperBallProjections+3C3↓j
 mov     eax, D7     ; D7 = air friction
 sub     D6, eax
 mov     eax, D6
@@ -105718,7 +105721,7 @@ or      ax, ax
 jns     short cseg_77ADE
 mov     word ptr D3, 0
 
-cseg_77ADE:         ; CODE XREF: UpdateBallVariables+43F↑j
+cseg_77ADE:         ; CODE XREF: UpdateGoalkeeperBallProjections+43F↑j
 mov     ax, word ptr D3
 mov     dseg_17E663, ax
 mov     ax, word ptr D1
@@ -105733,7 +105736,7 @@ mov     word ptr D3, ax
 jmp     @@out
 ; ---------------------------------------------------------------------------
 
-@@ball_going_down:  ; CODE XREF: UpdateBallVariables+92↑j
+@@ball_going_down:  ; CODE XREF: UpdateGoalkeeperBallProjections+92↑j
 cmp     A6, offset bottomTeamData
 jnz     @@ball_not_moving
 mov     esi, A1
@@ -105755,8 +105758,8 @@ add     D2, eax     ; D2 = ball y
 jmp     cseg_77C95
 ; ---------------------------------------------------------------------------
 
-@@ball_above_player: ; CODE XREF: UpdateBallVariables+4B3↑j
-                    ; UpdateBallVariables+525↓j
+@@ball_above_player: ; CODE XREF: UpdateGoalkeeperBallProjections+4B3↑j
+                    ; UpdateGoalkeeperBallProjections+525↓j
 mov     eax, D7
 sub     D6, eax
 mov     eax, D6
@@ -105793,7 +105796,7 @@ or      ax, ax
 jns     short cseg_77C50
 mov     word ptr D3, 0
 
-cseg_77C50:         ; CODE XREF: UpdateBallVariables+5B1↑j
+cseg_77C50:         ; CODE XREF: UpdateGoalkeeperBallProjections+5B1↑j
 mov     ax, word ptr D3
 mov     ballDefensiveZ, ax
 mov     ax, word ptr D1
@@ -105806,7 +105809,7 @@ mov     ax, word ptr D3
 xchg    ax, word ptr D3+2
 mov     word ptr D3, ax
 
-cseg_77C95:         ; CODE XREF: UpdateBallVariables+4F4↑j
+cseg_77C95:         ; CODE XREF: UpdateGoalkeeperBallProjections+4F4↑j
 sub     D2, 2FB0000h ; 763.0
 jl      short cseg_77CDD
 mov     ax, ballDefensiveX
@@ -105822,8 +105825,8 @@ add     D2, 2FB0000h ; 763.0
 jmp     cseg_77DD5
 ; ---------------------------------------------------------------------------
 
-cseg_77CDD:         ; CODE XREF: UpdateBallVariables+60B↑j
-                    ; UpdateBallVariables+675↓j
+cseg_77CDD:         ; CODE XREF: UpdateGoalkeeperBallProjections+60B↑j
+                    ; UpdateGoalkeeperBallProjections+675↓j
 mov     eax, D7
 sub     D6, eax
 mov     eax, D6
@@ -105856,7 +105859,7 @@ or      ax, ax
 jns     short cseg_77D90
 mov     word ptr D3, 0
 
-cseg_77D90:         ; CODE XREF: UpdateBallVariables+6F1↑j
+cseg_77D90:         ; CODE XREF: UpdateGoalkeeperBallProjections+6F1↑j
 mov     ax, word ptr D3
 mov     ballNotHighZ, ax
 mov     ax, word ptr D1
@@ -105869,7 +105872,7 @@ mov     ax, word ptr D3
 xchg    ax, word ptr D3+2
 mov     word ptr D3, ax
 
-cseg_77DD5:         ; CODE XREF: UpdateBallVariables+644↑j
+cseg_77DD5:         ; CODE XREF: UpdateGoalkeeperBallProjections+644↑j
 sub     D2, 3010000h ; 769.0
 jl      short cseg_77E0B
 mov     strikeDestX, 0
@@ -105879,8 +105882,8 @@ add     D2, 3010000h ; 769.0
 jmp     @@out
 ; ---------------------------------------------------------------------------
 
-cseg_77E0B:         ; CODE XREF: UpdateBallVariables+74B↑j
-                    ; UpdateBallVariables+7A3↓j
+cseg_77E0B:         ; CODE XREF: UpdateGoalkeeperBallProjections+74B↑j
+                    ; UpdateGoalkeeperBallProjections+7A3↓j
 mov     eax, D7
 sub     D6, eax
 mov     eax, D6
@@ -105913,7 +105916,7 @@ or      ax, ax
 jns     short cseg_77EBE
 mov     word ptr D3, 0
 
-cseg_77EBE:         ; CODE XREF: UpdateBallVariables+81F↑j
+cseg_77EBE:         ; CODE XREF: UpdateGoalkeeperBallProjections+81F↑j
 mov     ax, word ptr D3
 mov     dseg_17E663, ax
 mov     ax, word ptr D1
@@ -105928,7 +105931,7 @@ mov     word ptr D3, ax
 jmp     @@out
 ; ---------------------------------------------------------------------------
 
-@@ball_going_left:  ; CODE XREF: UpdateBallVariables+A2↑j
+@@ball_going_left:  ; CODE XREF: UpdateGoalkeeperBallProjections+A2↑j
 mov     esi, A1
 mov     eax, [esi+Sprite.x]
 sub     D1, eax     ; D1 = ball x - player x
@@ -105939,8 +105942,9 @@ add     D1, eax     ; D1 = ball x
 jmp     @@ball_not_moving
 ; ---------------------------------------------------------------------------
 
-@@ball_right_of_player: ; CODE XREF: UpdateBallVariables+883↑j
-                    ; UpdateBallVariables+8C5↓j
+@@ball_right_of_player:
+                    ; CODE XREF: UpdateGoalkeeperBallProjections+883↑j
+                    ; UpdateGoalkeeperBallProjections+8C5↓j
 mov     eax, D7
 sub     D6, eax
 mov     eax, D6
@@ -105979,13 +105983,13 @@ or      ax, ax
 jns     short cseg_77FF6
 mov     word ptr D3, 0
 
-cseg_77FF6:         ; CODE XREF: UpdateBallVariables+957↑j
+cseg_77FF6:         ; CODE XREF: UpdateGoalkeeperBallProjections+957↑j
 mov     ax, word ptr D3
 mov     ballDefensiveZ, ax
 jmp     cseg_78136
 ; ---------------------------------------------------------------------------
 
-@@ball_going_right: ; CODE XREF: UpdateBallVariables+B2↑j
+@@ball_going_right: ; CODE XREF: UpdateGoalkeeperBallProjections+B2↑j
 mov     esi, A1
 mov     eax, [esi+Sprite.x]
 sub     D1, eax     ; D1 = ball x - sprite x
@@ -105996,8 +106000,9 @@ add     D1, eax     ; D1 = ball x
 jmp     @@ball_not_moving
 ; ---------------------------------------------------------------------------
 
-@@ball_left_of_player: ; CODE XREF: UpdateBallVariables+982↑j
-                    ; UpdateBallVariables+9C4↓j
+@@ball_left_of_player:
+                    ; CODE XREF: UpdateGoalkeeperBallProjections+982↑j
+                    ; UpdateGoalkeeperBallProjections+9C4↓j
 mov     eax, D7
 sub     D6, eax
 mov     eax, D6
@@ -106036,15 +106041,15 @@ or      ax, ax
 jns     short cseg_780F5
 mov     word ptr D3, 0
 
-cseg_780F5:         ; CODE XREF: UpdateBallVariables+A56↑j
+cseg_780F5:         ; CODE XREF: UpdateGoalkeeperBallProjections+A56↑j
 mov     ax, word ptr D3
 mov     ballDefensiveZ, ax
 or      ax, ax
 jmp     short cseg_78136
 ; ---------------------------------------------------------------------------
 
-@@ball_not_moving:  ; CODE XREF: UpdateBallVariables+B8↑j
-                    ; UpdateBallVariables+C7↑j ...
+@@ball_not_moving:  ; CODE XREF: UpdateGoalkeeperBallProjections+B8↑j
+                    ; UpdateGoalkeeperBallProjections+C7↑j ...
 mov     esi, A2
 mov     ax, word ptr [esi+(Sprite.x+2)]
 mov     ballDefensiveX, ax
@@ -106055,8 +106060,8 @@ mov     esi, A2
 mov     ax, word ptr [esi+(Sprite.z+2)]
 mov     ballDefensiveZ, ax
 
-cseg_78136:         ; CODE XREF: UpdateBallVariables+96E↑j
-                    ; UpdateBallVariables+A70↑j
+cseg_78136:         ; CODE XREF: UpdateGoalkeeperBallProjections+96E↑j
+                    ; UpdateGoalkeeperBallProjections+A70↑j
 mov     ax, ballDefensiveX
 mov     ballNotHighX, ax
 mov     ax, ballDefensiveY
@@ -106068,15 +106073,15 @@ mov     strikeDestX, 0
 mov     dseg_17E661, 0
 mov     dseg_17E663, 0
 
-@@out:              ; CODE XREF: UpdateBallVariables+392↑j
-                    ; UpdateBallVariables+48F↑j ...
+@@out:              ; CODE XREF: UpdateGoalkeeperBallProjections+392↑j
+                    ; UpdateGoalkeeperBallProjections+48F↑j ...
 pop     D7
 pop     D6
 pop     D5
 pop     D4
 pop     D0
 retn
-UpdateBallVariables endp
+UpdateGoalkeeperBallProjections endp
 
 
 ; =============== S U B R O U T I N E =======================================
@@ -106324,7 +106329,7 @@ GoalkeeperJumping endp
 ;     D0 -  currently pressed direction
 ;     A1 -> player sprite that's tackling
 ;
-; Set player state to tackling. Set his dest x and y with a table, and set speed to taclking speed.
+; Set player state to tackling. Set his dest x and y with a table, and set speed to tackling speed.
 
 PlayerBeginTackling proc near ; CODE XREF: UpdatePlayers+2C45↓p
                     ; UpdatePlayers+42F9↓p
@@ -106979,7 +106984,7 @@ GoalkeeperDeflectedBall endp
 ;      A2 -> sprite (ball)
 ;      A6 -> team data
 ;
-; Check if the tackle ends up in faul, there must be a few conditions satisfied:
+; Check if the tackle ends up in foul, there must be a few conditions satisfied:
 ; - opponent has a controlled player
 ; - distance between them is more than 32 units
 
@@ -107287,7 +107292,7 @@ nullsub_28 endp
 
 TryBookingThePlayer proc near
                     ; CODE XREF: PlayerTacklingTestFoul:@@yellow_card↑p
-mov     ax, plg_D3_param
+mov     ax, useCompetitionPlayerStatusRules
 or      ax, ax
 jnz     short cseg_794A5
 mov     esi, A6
@@ -107358,7 +107363,7 @@ mov     esi, A1
 mov     ax, [esi+Sprite.cards]
 mov     word ptr D0, ax
 add     word ptr D0, 1
-mov     ax, plg_D3_param
+mov     ax, useCompetitionPlayerStatusRules
 or      ax, ax
 jnz     short cseg_795E0
 mov     A0, offset dseg_17E3EE
@@ -107513,7 +107518,7 @@ mov     ax, [esi+Sprite.cards]
 mov     word ptr D0, ax
 xor     word ptr D0, 1
 add     word ptr D0, 3
-mov     ax, plg_D3_param
+mov     ax, useCompetitionPlayerStatusRules
 or      ax, ax
 jnz     short cseg_79804
 mov     A0, offset dseg_17E3EE
@@ -107615,7 +107620,7 @@ mov     ax, word ptr [esi+(Sprite.y+2)]
 mov     word ptr D2, ax ; D2 = fouled player y
 cmp     A6, offset topTeamData
 jz      @@left_team
-mov     cameraDirection, 4 ; south
+mov     cameraDirection, kDirectionBottom
 cmp     word ptr D2, 682 ; lower penalty area upper bound
 jl      @@not_in_lower_penalty_area
 cmp     word ptr D1, 193 ; both penalty areas left bound
@@ -107765,19 +107770,19 @@ cmp     word ptr D1, 518
 jl      short @@free_kick_left_2
 
 @@free_kick_left_1: ; CODE XREF: TestFoulForPenaltyAndFreeKick+2DD↑j
-mov     gameState, ST_FREE_KICK_LEFT1
+mov     gameState, ST_FREE_KICK_OUTER_LEFT
 jmp     short @@save_foul_coordinates
 ; ---------------------------------------------------------------------------
 
 @@free_kick_left_2: ; CODE XREF: TestFoulForPenaltyAndFreeKick+2EC↑j
                     ; TestFoulForPenaltyAndFreeKick+37B↑j
-mov     gameState, ST_FREE_KICK_LEFT2
+mov     gameState, ST_FREE_KICK_MIDDLE_LEFT
 jmp     short @@save_foul_coordinates
 ; ---------------------------------------------------------------------------
 
 @@free_kick_left_3: ; CODE XREF: TestFoulForPenaltyAndFreeKick+2FB↑j
                     ; TestFoulForPenaltyAndFreeKick+370↑j
-mov     gameState, ST_FREE_KICK_LEFT3
+mov     gameState, ST_FREE_KICK_INNER_LEFT
 jmp     short @@save_foul_coordinates
 ; ---------------------------------------------------------------------------
 
@@ -107789,19 +107794,19 @@ jmp     short @@save_foul_coordinates
 
 @@free_kick_right_1: ; CODE XREF: TestFoulForPenaltyAndFreeKick+319↑j
                     ; TestFoulForPenaltyAndFreeKick+35A↑j
-mov     gameState, ST_FREE_KICK_RIGHT1
+mov     gameState, ST_FREE_KICK_INNER_RIGHT
 jmp     short @@save_foul_coordinates
 ; ---------------------------------------------------------------------------
 
 @@free_kick_right_2: ; CODE XREF: TestFoulForPenaltyAndFreeKick+328↑j
                     ; TestFoulForPenaltyAndFreeKick+34B↑j
-mov     gameState, ST_FREE_KICK_RIGHT2
+mov     gameState, ST_FREE_KICK_MIDDLE_RIGHT
 jmp     short @@save_foul_coordinates
 ; ---------------------------------------------------------------------------
 
 @@free_kick_right_3: ; CODE XREF: TestFoulForPenaltyAndFreeKick+32E↑j
                     ; TestFoulForPenaltyAndFreeKick+33C↑j
-mov     gameState, ST_FREE_KICK_RIGHT3
+mov     gameState, ST_FREE_KICK_OUTER_RIGHT
 jmp     short @@save_foul_coordinates
 ; ---------------------------------------------------------------------------
 
@@ -107827,7 +107832,7 @@ jnz     short @@jump_here ; always taken
 mov     A6, offset bottomTeamData
 
 @@jump_here:        ; CODE XREF: TestFoulForPenaltyAndFreeKick+403↑j
-mov     gameStatePl, 101
+mov     gameStatePl, ST_STOPPED
 mov     gameNotInProgressCounterWriteOnly, 0
 mov     esi, A6
 mov     eax, [esi+TeamGeneralInfo.opponentsTeam]
@@ -109423,8 +109428,7 @@ UpdateBallWithControllingPlayer endp
 ;
 ; Sets the coordinates of a player that takes the throw in.
 
-SetThrowInPlayerDestinationCoordinates proc near
-                    ; CODE XREF: UpdatePlayers+316E↓p
+SetThrowInPlayerCoordinates proc near ; CODE XREF: UpdatePlayers+316E↓p
                     ; UpdatePlayers+41F9↓p
 mov     A0, offset ballSprite ; A0 -> ball sprite
 mov     esi, A0
@@ -109436,10 +109440,10 @@ add     word ptr D1, 3
 jmp     short @@set_player_x
 ; ---------------------------------------------------------------------------
 
-@@left_half:        ; CODE XREF: SetThrowInPlayerDestinationCoordinates+23↑j
+@@left_half:        ; CODE XREF: SetThrowInPlayerCoordinates+23↑j
 sub     word ptr D1, 3
 
-@@set_player_x:     ; CODE XREF: SetThrowInPlayerDestinationCoordinates+2D↑j
+@@set_player_x:     ; CODE XREF: SetThrowInPlayerCoordinates+2D↑j
 mov     ax, word ptr D1 ; D1 = ball x +/- 3
 mov     esi, A1
 mov     word ptr [esi+(Sprite.x+2)], ax
@@ -109455,7 +109459,7 @@ mov     ax, word ptr [esi+(Sprite.y+2)]
 mov     esi, A1
 mov     [esi+Sprite.destY], ax
 retn
-SetThrowInPlayerDestinationCoordinates endp
+SetThrowInPlayerCoordinates endp
 
 
 ; =============== S U B R O U T I N E =======================================
@@ -109614,6 +109618,11 @@ PlayerTackledTheBallWeak endp
 ; in:
 ;      A1 -> current player sprite
 ;      A6 -> team data
+;      D6 -  ball x
+;      D7 -  ball y
+;
+; D6 and D7 are only used for goalkeeper. It might be a live ball location
+; or a break location if the game is stopped (and where the ball will be).
 
 SetPlayerWithNoBallDestination proc near
                     ; CODE XREF: UpdatePlayers:@@set_player_with_no_ball_destination↓p
@@ -109631,7 +109640,7 @@ jz      short @@keepers_ball_or_goalout
 cmp     gameState, ST_GOAL_OUT_LEFT
 jz      short @@keepers_ball_or_goalout
 cmp     gameState, ST_GOAL_OUT_RIGHT
-jnz     short @@game_in_progress
+jnz     short @@check_if_player_or_goalkeeper
 
 @@keepers_ball_or_goalout:
                     ; CODE XREF: SetPlayerWithNoBallDestination+3F↑j
@@ -109649,7 +109658,8 @@ movzx   ebx, word ptr D0
 mov     eax, [esi+ebx]
 mov     A0, eax     ; now A0 -> team's tactics when game's not in progress (goal out or keeper's ball)
 
-@@game_in_progress: ; CODE XREF: SetPlayerWithNoBallDestination+53↑j
+@@check_if_player_or_goalkeeper:
+                    ; CODE XREF: SetPlayerWithNoBallDestination+53↑j
 mov     eax, A0
 add     eax, Tactics.playerPos
 mov     A0, eax     ; A0 -> player positions
@@ -112453,7 +112463,7 @@ PlayerHittingStaticHeader endp
 ; =============== S U B R O U T I N E =======================================
 
 ; in:
-;      D0 - some direction
+;      D0  - player direction (but superfluous)
 ;      A1 -> player sprite
 ;
 ; Players jumps in place trying to hit static header.
@@ -112463,7 +112473,7 @@ mov     esi, A1
 mov     [esi+Sprite.heading], 0
 mov     ax, word ptr D0
 mov     esi, A1
-mov     [esi+Sprite.direction], ax
+mov     [esi+Sprite.direction], ax ; assignment already done by the caller
 mov     A5, offset kDefaultDestinations
 shl     word ptr D0, 2
 mov     eax, A5
@@ -112977,7 +112987,7 @@ jz      @@check_pass_to_player
 mov     eax, lastPlayerPlayed
 cmp     A1, eax
 jz      @@this_player_last_played
-call    UpdateBallVariables ; goalkeeper hasn't touched the ball in previous frame,
+call    UpdateGoalkeeperBallProjections ; goalkeeper hasn't touched the ball in previous frame,
                     ; and the ball isn't in penalty area
 call    CalculateBallNextGroundXYPositions
 mov     ax, ballInGoalkeeperArea
@@ -115544,7 +115554,7 @@ mov     ax, word ptr D0
 mov     esi, A1
 mov     [esi+Sprite.direction], ax
 push    D0
-call    SetThrowInPlayerDestinationCoordinates
+call    SetThrowInPlayerCoordinates
 pop     D0
 mov     A0, offset aboutToThrowInAnimTable
 call    SetPlayerAnimationTable
@@ -116511,7 +116521,7 @@ mov     esi, A1
 mov     ax, [esi+Sprite.direction]
 mov     word ptr D0, ax
 push    D0
-call    SetThrowInPlayerDestinationCoordinates
+call    SetThrowInPlayerCoordinates
 pop     D0
 mov     A0, offset aboutToThrowInAnimTable
 call    SetPlayerAnimationTable
@@ -116882,9 +116892,9 @@ cmp     breakState, ST_CORNER_LEFT
 jz      @@next_player
 cmp     breakState, ST_CORNER_RIGHT
 jz      @@next_player
-cmp     breakState, ST_FREE_KICK_LEFT1
+cmp     breakState, ST_FREE_KICK_OUTER_LEFT
 jb      short @@update_destination_reached_state
-cmp     breakState, ST_FREE_KICK_RIGHT3
+cmp     breakState, ST_FREE_KICK_OUTER_RIGHT
 jbe     @@next_player
 
 @@update_destination_reached_state: ; CODE XREF: UpdatePlayers+480E↑j
@@ -117156,13 +117166,13 @@ mov     freeKickDestX, 0
 mov     eax, lastTeamPlayedBeforeBreak
 cmp     A6, eax
 jz      @@not_in_free_kick_state
-cmp     gameState, ST_FREE_KICK_LEFT1
+cmp     gameState, ST_FREE_KICK_OUTER_LEFT
 jb      @@not_in_free_kick_state
-cmp     gameState, ST_FREE_KICK_RIGHT3
+cmp     gameState, ST_FREE_KICK_OUTER_RIGHT
 ja      @@not_in_free_kick_state
-cmp     gameState, ST_FREE_KICK_LEFT1
+cmp     gameState, ST_FREE_KICK_OUTER_LEFT
 jz      @@not_in_free_kick_state
-cmp     gameState, ST_FREE_KICK_RIGHT3
+cmp     gameState, ST_FREE_KICK_OUTER_RIGHT
 jz      @@not_in_free_kick_state
 mov     esi, A1
 cmp     [esi+Sprite.playerOrdinal], 2
@@ -117960,9 +117970,9 @@ jbe     @@update_turn_direction
 @@no_throw_in:      ; CODE XREF: UpdateCpuPlayerControls+2D5↑j
 cmp     gameState, ST_FOUL
 jz      short @@foul_or_free_kick
-cmp     gameState, ST_FREE_KICK_LEFT1
+cmp     gameState, ST_FREE_KICK_OUTER_LEFT
 jb      return
-cmp     gameState, ST_FREE_KICK_RIGHT3
+cmp     gameState, ST_FREE_KICK_OUTER_RIGHT
 ja      return
 
 @@foul_or_free_kick: ; CODE XREF: UpdateCpuPlayerControls+2ED↑j
@@ -118000,9 +118010,9 @@ cmp     gameState, ST_GOAL_OUT_RIGHT
 jz      @@keepers_ball
 cmp     gameState, ST_PLAYERS_TO_INITIAL_POSITIONS
 jz      @@goal_scored
-cmp     gameState, ST_FREE_KICK_LEFT1
+cmp     gameState, ST_FREE_KICK_OUTER_LEFT
 jb      short @@test_throw_in
-cmp     gameState, ST_FREE_KICK_RIGHT3
+cmp     gameState, ST_FREE_KICK_OUTER_RIGHT
 jbe     @@free_kick
 
 @@test_throw_in:    ; CODE XREF: UpdateCpuPlayerControls+3D9↑j
@@ -118124,7 +118134,7 @@ mov     ax, [esi+Sprite.direction]
 or      ax, ax
 jz      return
 mov     esi, A5
-cmp     [esi+Sprite.direction], 4
+cmp     [esi+Sprite.direction], kDirectionBottom
 jz      return
 jmp     short @@apply_after_touch ; doing penalties, and the player's direction isn't up or down
 ; ---------------------------------------------------------------------------
@@ -118820,9 +118830,9 @@ cmp     gameState, ST_PENALTY
 jz      @@weak_after_touch
 cmp     gameState, ST_PENALTIES
 jz      @@weak_after_touch
-cmp     gameState, ST_FREE_KICK_LEFT1
+cmp     gameState, ST_FREE_KICK_OUTER_LEFT
 jb      short @@test_corner
-cmp     gameState, ST_FREE_KICK_RIGHT3
+cmp     gameState, ST_FREE_KICK_OUTER_RIGHT
 jbe     short @@check_distance_from_the_goal
 
 @@test_corner:      ; CODE XREF: UpdateCpuPlayerControls+110C↑j
@@ -203872,7 +203882,8 @@ kBallBounceFactorTable dw 88, 112, 104, 104, 96, 88, 80
 kPitchBallSpeedInfluence dw -3, 4, 1, 0, 0, -1, -1
                     ; DATA XREF: InitGameRestoreTeams+5D5↑o
                     ; this gets subtracted from the ball speed
-kBallAirFriction dd 3291 ; DATA XREF: UpdateBallVariables+72↑r
+kBallAirFriction dd 3291
+                    ; DATA XREF: UpdateGoalkeeperBallProjections+72↑r
                     ; CalculateBallNextGroundXYPositions+A7↑r ...
                     ; = 0.0502166748046875 (~0.05)
                     ; subtract from ball delta z
@@ -217835,10 +217846,12 @@ topTeamPlayerNo dw 0 ; DATA XREF: SetupPlayers:@@not_coach↑w
                     ; (in versus menu)
 bottomTeamPlayerNo dw 0 ; DATA XREF: SetupPlayers+2F3↑w
                     ; SetupPlayers+45F↑w ...
-plg_D0_param dw 0   ; DATA XREF: InitializeInGameTeamsAndStartGame+F↑w
+useFriendlyMatchRules dw 0
+                    ; DATA XREF: InitializeInGameTeamsAndStartGame+F↑w
                     ; AdjustPlayerSkills:cseg_313F7↑r ...
+                    ; set for a game duration:
                     ; if true, choose pitch at random, else pseudo-random (team based number)
-                    ; it true, don't allow lowering of team skills by 12%
+                    ; if true, don't allow lowering of team skills by 12%
 isGameFriendly dw 0 ; DATA XREF: GameLoop+64C↑r InitAndPlayGame+1E4↑w ...
                     ; boolean
 playing2ndGame dw 0 ; DATA XREF: InitAndPlayGame+1DB↑w
@@ -217897,9 +217910,11 @@ team2GoalsFirstLeg dw 0 ; DATA XREF: InitAndPlayGame+1B7↑w
 team1PenaltyGoals dw 0 ; DATA XREF: cseg_29E79+6A7↑r cseg_29E79+81D↑r ...
                     ; goals scored from penalties after the game ended with a tie
 team2PenaltyGoals dw 0 ; DATA XREF: cseg_29E79+6B3↑r cseg_29E79+829↑r ...
-plg_D3_param dw 0   ; DATA XREF: InitializeInGameTeamsAndStartGame+33↑w
+useCompetitionPlayerStatusRules dw 0
+                    ; DATA XREF: InitializeInGameTeamsAndStartGame+33↑w
                     ; InitializeInGameTeamsAndStartGame+CB0↑r ...
-                    ; has influence on red cards; seems to be don't give 2nd yellow card flag
+                    ; set for a game duration, controls competition-style card, suspension,
+                    ; and injury handling; may not reliably identify every competition context.
 hilStarted dw 0     ; DATA XREF: InitializeInGameTeamsAndStartGame↑w
                     ; ShowStadiumInit+182↑r ...
 team1NumAllowedInjuries dw 0 ; DATA XREF: GameLoop+672↑w
@@ -246040,9 +246055,9 @@ kGoalieSkill0Table dw 7, 424, -50, 832, 160, 4, 5, 6, 7, 7, 7, 7, 7, 7, 7, 7, 7,
 dw 7, 3, 5, 8, 5, 11, 2, 6, 8, 5
 kStaticHeaderBallSpeed dw 1792
                     ; DATA XREF: PlayerHittingStaticHeader+1D0↑r
-                    ; =7.0
+                    ; =3.5
 kStaticHeaderPlayerSpeed dw 256 ; DATA XREF: AttemptStaticHeader+A8↑r
-                    ; =1.0
+                    ; =0.5
 numberBuffer db 15 dup(0) ; DATA XREF: MakePlayerNameSprite+D↑o
                     ; MakePlayerNameSprite+104↑o
 plOrdinalsTable db 32 dup(0) ; DATA XREF: SwapPlayerNameData↑o
@@ -246059,27 +246074,27 @@ prevLastPlayer dd 0 ; DATA XREF: UpdatePlayers+5↑w
                     ; UpdatePlayers+53F5↑r ...
 prevLastTeamPlayed dd 0 ; DATA XREF: UpdatePlayers+F↑w
                     ; UpdatePlayers+5425↑r
-ballDefensiveX dw 0 ; DATA XREF: UpdateBallVariables+E8↑w
-                    ; UpdateBallVariables+1BF↑w ...
+ballDefensiveX dw 0 ; DATA XREF: UpdateGoalkeeperBallProjections+E8↑w
+                    ; UpdateGoalkeeperBallProjections+1BF↑w ...
                     ; only updates inside penalty areas
-ballDefensiveY dw 0 ; DATA XREF: UpdateBallVariables+F8↑w
-                    ; UpdateBallVariables+1CB↑w ...
-ballDefensiveZ dw 0 ; DATA XREF: UpdateBallVariables+108↑w
-                    ; UpdateBallVariables+1EB↑w ...
-ballNotHighX dw 0   ; DATA XREF: UpdateBallVariables+23C↑w
-                    ; UpdateBallVariables+2F6↑w ...
-ballNotHighY dw 0   ; DATA XREF: UpdateBallVariables+248↑w
-                    ; UpdateBallVariables+302↑w ...
-ballNotHighZ dw 0   ; DATA XREF: UpdateBallVariables+254↑w
-                    ; UpdateBallVariables+322↑w ...
+ballDefensiveY dw 0 ; DATA XREF: UpdateGoalkeeperBallProjections+F8↑w
+                    ; UpdateGoalkeeperBallProjections+1CB↑w ...
+ballDefensiveZ dw 0 ; DATA XREF: UpdateGoalkeeperBallProjections+108↑w
+                    ; UpdateGoalkeeperBallProjections+1EB↑w ...
+ballNotHighX dw 0   ; DATA XREF: UpdateGoalkeeperBallProjections+23C↑w
+                    ; UpdateGoalkeeperBallProjections+2F6↑w ...
+ballNotHighY dw 0   ; DATA XREF: UpdateGoalkeeperBallProjections+248↑w
+                    ; UpdateGoalkeeperBallProjections+302↑w ...
+ballNotHighZ dw 0   ; DATA XREF: UpdateGoalkeeperBallProjections+254↑w
+                    ; UpdateGoalkeeperBallProjections+322↑w ...
                     ; ball z for the goalkeeper
 strikeDestX dw 0    ; DATA XREF: UpdateAndDrawStatistics+19C↑r
                     ; UpdateAndDrawStatistics+1AB↑r ...
                     ; if strike is crossing pitch line by y
-dseg_17E661 dw 0    ; DATA XREF: UpdateBallVariables+376↑w
-                    ; UpdateBallVariables+430↑w ...
-dseg_17E663 dw 0    ; DATA XREF: UpdateBallVariables+37F↑w
-                    ; UpdateBallVariables+450↑w ...
+dseg_17E661 dw 0    ; DATA XREF: UpdateGoalkeeperBallProjections+376↑w
+                    ; UpdateGoalkeeperBallProjections+430↑w ...
+dseg_17E663 dw 0    ; DATA XREF: UpdateGoalkeeperBallProjections+37F↑w
+                    ; UpdateGoalkeeperBallProjections+450↑w ...
 ballNextGroundX dw 0
                     ; DATA XREF: CalculateBallNextGroundXYPositions+167↑w
                     ; CalculateBallNextGroundXYPositions:@@ball_standing↑w ...

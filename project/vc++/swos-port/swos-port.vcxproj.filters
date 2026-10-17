@@ -433,6 +433,9 @@
     <ClCompile Include="..\..\..\src\game\updatePlayers\updatePlayers.cpp">
       <Filter>Source Files\game\updatePlayers</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\..\src\game\updatePlayers\restartPositions.cpp">
+      <Filter>Source Files\game\updatePlayers</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\..\src\game\ball\ball.cpp">
       <Filter>Source Files\game\ball</Filter>
     </ClCompile>
@@ -814,6 +817,27 @@
       <Filter>Source Files\util</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\game\updatePlayers\updatePlayers.h">
+      <Filter>Source Files\game\updatePlayers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\game\updatePlayers\restartPositions.h">
+      <Filter>Source Files\game\updatePlayers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\game\updatePlayers\playerUpdateCore.cpp">
+      <Filter>Source Files\game\updatePlayers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\game\updatePlayers\updateAllPlayers.cpp">
+      <Filter>Source Files\game\updatePlayers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\game\updatePlayers\playerStates.cpp">
+      <Filter>Source Files\game\updatePlayers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\game\updatePlayers\ballProjections.cpp">
+      <Filter>Source Files\game\updatePlayers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\game\updatePlayers\foulsAndCards.cpp">
+      <Filter>Source Files\game\updatePlayers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\game\updatePlayers\playerActions.cpp">
       <Filter>Source Files\game\updatePlayers</Filter>
     </ClInclude>
     <ClInclude Include="..\..\..\src\game\ball\ball.h">

@@ -4,6 +4,7 @@
 #include "updatePlayers.h"
 #include "timer.h"
 #include "ball.h"
+#include "pitchConstants.h"
 
 static bool m_enabled;
 static bool m_preventDirectionFlip;
@@ -67,8 +68,10 @@ void checkForAmigaModeDirectionFlipBan(const Sprite *sprite)
 {
     m_preventDirectionFlip = false;
     if (amigaModeActive()) {
-        m_preventDirectionFlip = sprite->x.whole() >= 273 && sprite->x.whole() <= 398 &&
-            (sprite->y.whole() <= 158 || sprite->y.whole() >= 740);
+        m_preventDirectionFlip = sprite->x.whole() >= kGoalkeeperAreaLeft &&
+            sprite->x.whole() <= kGoalkeeperAreaRight &&
+            (sprite->y.whole() <= kTopGoalkeeperAreaBottom ||
+                sprite->y.whole() >= kBottomGoalkeeperAreaTop);
     }
 }
 

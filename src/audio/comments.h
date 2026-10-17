@@ -21,6 +21,7 @@ void playHeaderComment(const TeamGeneralInfo& team);
 void playInjuryComment(const TeamGeneralInfo& team);
 void playGoodTackleComment();
 void playKeeperClaimedComment();
+void playGoalkeeperSavedComment();
 void playDangerousPlayComment();
 void playPenaltyComment();
 void playFoulComment();

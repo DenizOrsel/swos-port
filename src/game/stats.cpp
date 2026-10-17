@@ -4,6 +4,7 @@
 #include "darkRectangle.h"
 #include "pitchConstants.h"
 #include "text.h"
+#include "updatePlayers.h"
 
 constexpr int kLeftColumn = 80;
 constexpr int kMiddleColumn = 160;
@@ -89,15 +90,15 @@ void updateStatistics()
                 }
                 if (team == swos.lastTeamPlayed || ballDelta >= 0)
                     m_isGoalAttempt = false;
-            } else if (swos.ballInGoalkeeperArea) {
+            } else if (isBallInGoalkeeperArea()) {
                 if (swos.ballSprite.y <= kPitchCenterY) {
                     team = &swos.bottomTeamData;
                     ballDelta = -ballDelta;
                     stats = team->teamStatsPtr.asAligned();
                 }
                 if (ballDelta > 0 && team == swos.lastTeamPlayed && !team->playerHasBall &&
-                    swos.strikeDestX >= kGoalAttemptLeft && swos.strikeDestX <= kGoalAttemptRight) {
-                    if (swos.strikeDestX >= kGoalLeft && swos.strikeDestX <= kGoalRight)
+                    getStrikeDestinationX() >= kGoalAttemptLeft && getStrikeDestinationX() <= kGoalAttemptRight) {
+                    if (getStrikeDestinationX() >= kGoalLeft && getStrikeDestinationX() <= kGoalRight)
                         stats->onTarget++;
                     stats->goalAttempts++;
                     m_isGoalAttempt = true;

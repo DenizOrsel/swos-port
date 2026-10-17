@@ -300,10 +300,8 @@ offset:  size:  desc.
    8       1    not sure what it is exactly, but if it's true player will spend
                 only 25 frames on tackling instead of 55, although it's reset
                 to -1 later in each case (wtf)
-   9       1    this influences red card criteria, seems to be more strict if
-                it's true
-                might be true if player already has a yellow card?
-                cards (offset 10) are copied here right before the game
+   9       1    previous-cards flag; selects the alternate persistent-card
+                conversion table when recording a booking or sending-off
   10       1    yellow/red card bit-flags:
                 bit 0 - yellow card
                 bit 1 - red card (direct, or via double yellow)
@@ -391,6 +389,11 @@ offset:  size:  desc.
                            when deciding if goalkeeper should dive (I think)
                            values up to 8, indexes into another table for the goalkeeper, picks goalkeeper speed per
                            frame to save this shots
+                word 42  - diving catch chance, compared with a random value
+                           in the range 0..15
+                word 44  - size of the following range that selects the
+                           secondary diving-deflection result; remaining
+                           values select the primary deflection
                 word 48  - gets compared with high 4 bits of stoppageTimer
                            after that the keeper claimed comment is played
                 word 52  - strong goalkeeper deflect chance, must be greater than a random number 0..15
@@ -437,9 +440,8 @@ offset:  size:  desc.
                 (only updates while the player really controls the ball)
   58       2    gets set when the ball is kicked, and reset only when the fire
                 button is depressed
-  60       1    ???
-                this gets incremented by product of results from ofs56 table
-                and results from ofs118 table
+  60       1    reserved; no remaining gameplay reads, cleared during team
+                initialization
   61       1    true if the controlled player is very near the ball (d <= 32u)
   62       1    true if the controlled player is near the ball (32u < d <= 72u)
   63       1    true if the controlled player isn't too far away from the ball
@@ -450,16 +452,17 @@ offset:  size:  desc.
   67       1    true if 12 < ball z  <= 17
   68       1    true if ball z > 17
   69       1    copy ofs61 here
-  70       2    ??? something when goalkeeper dives
-  72       2    ??? 4 bytes pointer to a player
-                I'd say pointer to a last player hitting the ball with the head
-                player that's tackling is written here (tackle at distance 64 or less from the ball)
-  74       2    distance from the ball
+  70       1    goalkeeper-dive contact flag; cleared when a dive starts and
+                set after the first ball contact, preventing another contact
+                during the same dive
+  71       1    reserved; no confirmed meaning
+  72       4    pointer to the last player that headed or tackled the ball
   76       2    ??? 5, -5 (timer)
                 if positive decrease, if negative increase
                 if negative put -1 to ofs118
                 has something to do with the goalkeeper saved comment...
-  78       2    ???
+  78       2    reserved; no remaining gameplay reads, cleared during team
+                initialization
   80       2    true - goalkeeper diving right
   82       2    true - goalkeeper diving left
   84       2    255 if the ball is out of play (or at the goalkeeper); zero otherwise
@@ -494,8 +497,10 @@ offset:  size:  desc.
                 false during kicks and passes (sticky)
  112       2    direction of the player controlling the ball; changes only
                 while he actually controls it; sticky, initialized to -1
- 114       2    ???
- 116       2    ???
+ 114       2    reserved; no remaining gameplay reads, cleared during team
+                initialization
+ 116       2    reserved; no remaining gameplay reads, cleared when a player
+                takes control of the ball
  118       2    spin timer; activated only when the player releases the ball
                 through a kick or pass; while active, spin can be applied to
                 the kick/pass (if the player presses left/right); after it

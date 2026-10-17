@@ -158,7 +158,7 @@ struct PlayerInfo
     byte isInjured;
     byte field_7;
     byte field_8;
-    byte field_9;
+    byte previousCards;
     byte cards;
     byte field_B;
     char shortName[15];
@@ -324,8 +324,8 @@ struct ShotChanceTable
     int16_t goalkeeperRunSpeed;
     int16_t goalkeeperHighBallRunSpeed;
     int16_t goalkeeperDiveSpeedIndex[16];
-    int16_t unknown42;
-    int16_t unknown44;
+    int16_t divingCatchChance;
+    int16_t divingSecondaryDeflectionChance;
     int16_t unknown46;
     int16_t closeBallCatchChance;
     int16_t unknown50;
@@ -369,7 +369,7 @@ struct TeamGeneralInfo
     word fireCounter;
     Direction controlledPlDirection;
     word shooting;
-    byte ofs60;
+    byte reserved60;
     byte plVeryCloseToBall;
     byte plCloseToBall;
     byte plNotFarFromBall;
@@ -379,10 +379,11 @@ struct TeamGeneralInfo
     byte ball12To17;
     byte ballAbove17;
     byte prevPlVeryCloseToBall;
-    word ofs70;
+    byte goalkeeperDiveContactMade;
+    byte reserved71;
     SwosDataPointer<Sprite> lastHeadingTacklingPlayer;
-    word goalkeeperSavedCommentTimer;
-    word ofs78;
+    int16_t goalkeeperSavedCommentTimer;
+    word reserved78;
     word goalkeeperDivingRight;
     word goalkeeperDivingLeft;
     word ballOutOfPlayOrKeeper;
@@ -399,8 +400,8 @@ struct TeamGeneralInfo
     word ballDirectionChangeTimer;
     word ballCanBeControlled;
     Direction ballControllingDirection;
-    word ofs114;
-    word ofs116;
+    word reserved114;
+    word reserved116;
     word spinTimer;
     word leftSpin;
     word rightSpin;
@@ -417,6 +418,8 @@ struct TeamGeneralInfo
     byte secondaryFire;
 };
 static_assert(sizeof(TeamGeneralInfo) == 145, "TeamGeneralInfo is invalid");
+static_assert(offsetof(TeamGeneralInfo, goalkeeperDiveContactMade) == 70);
+static_assert(offsetof(TeamGeneralInfo, reserved71) == 71);
 static_assert(offsetof(TeamGeneralInfo, cpuControlUpdateCounter) == 130);
 static_assert(offsetof(TeamGeneralInfo, cpuDecisionCooldown) == 132);
 static_assert(offsetof(TeamGeneralInfo, cpuAftertouchStrength) == 134);

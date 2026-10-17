@@ -622,8 +622,8 @@ static BallStoppage makeCorner(TeamGeneralInfo& team, bool upper, bool left)
         Direction::kTop, Direction::kTopLeft, Direction::kLeft);
     BallStoppage stoppage{
         &team,
-        left ? 86 : 585,
-        upper ? 134 : 764,
+        left ? kLeftCornerX : kRightCornerX,
+        upper ? kTopCornerY : kBottomCornerY,
         left ? Direction::kRight : Direction::kLeft,
         static_cast<DirectionMask>(upper ? (left ? kAllowedTopLeftCornerDirections : kAllowedTopRightCornerDirections) :
             (left ? kAllowedBottomLeftCornerDirections : kAllowedBottomRightCornerDirections)),
@@ -646,8 +646,8 @@ static BallStoppage makeGoalOut(TeamGeneralInfo& team, bool upper, bool left)
 {
     BallStoppage stoppage{
         &team,
-        left ? 276 : 396,
-        upper ? 154 : 744,
+        left ? kLeftGoalKickX : kRightGoalKickX,
+        upper ? kTopGoalKickY : kBottomGoalKickY,
         upper ? Direction::kBottom : Direction::kTop,
         upper ? kAllowDownwardDirections : kAllowUpwardDirections,
     };
@@ -1171,5 +1171,5 @@ void updateBallQuadrants()
     auto yOffset = static_cast<int16_t>(quadrantY - kBallYQuadrantLimits[yQuadrant] - kHalfQuadrantHeight);
     m_playerQuadrantOffset.x = xOffset * kPlayerOffsetScaleNumerator / kPlayerOffsetScaleDenominator;
     m_playerQuadrantOffset.y = yOffset * kPlayerOffsetScaleNumerator / kPlayerOffsetScaleDenominator;
-    swos.ballQuadrantIndex = xQuadrant + kNumHorizontalQuadrants * yQuadrant;
+    setBallQuadrantIndex(xQuadrant + kNumHorizontalQuadrants * yQuadrant);
 }

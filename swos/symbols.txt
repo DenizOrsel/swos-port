@@ -60,16 +60,17 @@ playerCardChances3min - ballOutOfGameTimer
 team1GoalkeeperReplaced - statsTimer
 whiteGuyConvertTable - topTeamPtr
 kBallSpeedBounceFactorTable - kBallAirFriction
+kBallFriction
 kDefaultDestinations - dseg_17DEF4
-playerXQuadrantsCoordinates - ballQuadrantIndex
+playerXQuadrantsCoordinates - ballXQuadrantDead
 playerXQuadrantOffset
 playerYQuadrantOffset
 # player constants; keep the surrounding values still used in updatePlayers.cpp
 kBallJumpHeaderDeltaZ
 kPlayerHeaderSpeedIncrease - dseg_17E3EE
-kGoalieSkill7Table - kStaticHeaderPlayerSpeed
-kPlayerTacklingSpeed
-kJumpHeaderSpeed
+kGoalieSkill7Table - goalScoredChances
+dseg_17EECC
+kGoalkeeperGameSpeed - dseg_110D8D
 
 # pitches
 DrawPatternFromIndex
@@ -158,7 +159,6 @@ g_gotExtraMemoryForSamples - playingGoodPassTimer
 
 # referee + frame tables + ball spin tables
 CheckIfBallOutOfPlay - EndFirstHalf
-kBallKickingDeltaZ - dseg_110D8D
 staticHeaderAttemptAnimTable - animTablesEnd
 team2PlayerGettingYellowCardFrames - animTablesStart
 jumpHeaderHitTeam1BottomFrames - staticHeaderAttemptTeam1TopFrames
@@ -198,7 +198,7 @@ g_benchPlayerIndex - seed
 # + camera and some of hil variables
 benchPickTeamCounter - currentScorer
 # also includes goal minute placeholder strings
-substitutedPlX - throwInPassOrKick
+substitutedPlX - halfNumber
 tacticsStringTable - avgTeamValueBases
 
 # stats + bench, highlights, sprite coloring
@@ -256,34 +256,18 @@ team1PenaltyAttempts - penaltiesTimer
 # updatePlayers
 lastPlayerPlayed
 lastPlayerBeforeGoalkeeper
-numberBuffer - prevLastTeamPlayed
 
 # dead vars
 throwInDeadVar
 hilStarted
 deadHilVar
-writeOnlyVar02 - dseg_132804
-ballUpdatedByGoalkeeper
+writeOnlyVar02 - goalCounter
 timeVar
-deadCameraBreakVar04
-initialKickWriteOnlyTicks
-deadCameraBreakVar01 - goalCounter
 writeOnlyVar03
 deadVarAlways0
 deadVarAlways0_1
 dseg_114EC2
 cardsDisallowed
-ballNextGroundX
-ballNextYGroundY
-ballNextZDeadVar
-ballDefensiveX
-ballDefensiveY
-ballDefensiveZ
-ballNotHighX
-ballNotHighY
-ballNotHighZ
-dseg_17E661
-dseg_17E663
 goalkeeperDiveDeadVar
 
 
@@ -577,9 +561,6 @@ isGameFriendly, word
 team1NumAllowedInjuries, word
 team2NumAllowedInjuries, word
 stoppageEventTimer, word
-ballInUpperPenaltyArea, word
-ballInLowerPenaltyArea, word
-ballInGoalkeeperArea, word
 
 # game
 InitAndPlayGame, function
@@ -601,8 +582,8 @@ team1AppPercent, word
 team2AppPercent, word
 averagePlayerPrice, word
 g_gameType, word
-plg_D0_param, word
-plg_D3_param, word
+useFriendlyMatchRules, word
+useCompetitionPlayerStatusRules, word
 team1Computer, word
 team2Computer, word
 whichCard, word
@@ -616,12 +597,9 @@ lastKeeperPlayed, Sprite *
 playerHadBall, word
 goalOut, word
 penalty, word
-strikeDestX, word
-playersLeavingPitchBottom, array word[22]
-playersLeavingPitchTop, array word[22]
 halfNumber, word
 inGameCounter, word
-breakState, word
+breakState, GameState
 playerTurnFlags, word
 penaltiesTimer, word
 penaltyShooterSprite, Sprite *
@@ -773,7 +751,6 @@ runSlower, word
 lastTeamScoredNumber, word
 lastPlayerScored, Sprite *
 goalTypeScored, word
-ballQuadrantIndex, word
 
 # keep these so the competition buffer integrity static assert could work
 competitionFileBuffer, word

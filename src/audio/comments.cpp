@@ -460,12 +460,17 @@ void SWOS::PlayKeeperClaimedComment()
     playKeeperClaimedComment();
 }
 
-void SWOS::PlayGoalkeeperSavedComment()
+void playGoalkeeperSavedComment()
 {
     if (m_performingPenalty || swos.penaltiesState == -1)
         playPenaltySavedComment();
     else
         playComment(kKeeperSaved);
+}
+
+void SWOS::PlayGoalkeeperSavedComment()
+{
+    playGoalkeeperSavedComment();
 }
 
 void playGoalComment()

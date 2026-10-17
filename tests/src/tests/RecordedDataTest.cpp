@@ -378,7 +378,7 @@ void RecordedDataTest::verifyTeam(const TeamGeneralInfo& recTeam, const TeamGene
     assertEqual(recTeam.fireCounter, team.fireCounter);
     assertEqualAsInt(recTeam.controlledPlDirection, team.controlledPlDirection);
     assertEqual(recTeam.shooting, team.shooting);
-    assertEqual(recTeam.ofs60, team.ofs60);
+    assertEqual(recTeam.reserved60, team.reserved60);
     assertEqual(recTeam.plVeryCloseToBall, team.plVeryCloseToBall);
     assertEqual(recTeam.plCloseToBall, team.plCloseToBall);
     assertEqual(recTeam.plNotFarFromBall, team.plNotFarFromBall);
@@ -388,9 +388,10 @@ void RecordedDataTest::verifyTeam(const TeamGeneralInfo& recTeam, const TeamGene
     assertEqual(recTeam.ball12To17, team.ball12To17);
     assertEqual(recTeam.ballAbove17, team.ballAbove17);
     assertEqual(recTeam.prevPlVeryCloseToBall, team.prevPlVeryCloseToBall);
-    assertEqual(recTeam.ofs70, team.ofs70);
+    assertEqual(recTeam.goalkeeperDiveContactMade, team.goalkeeperDiveContactMade);
+    assertEqual(recTeam.reserved71, team.reserved71);
     assertEqual(recTeam.goalkeeperSavedCommentTimer, team.goalkeeperSavedCommentTimer);
-    assertEqual(recTeam.ofs78, team.ofs78);
+    assertEqual(recTeam.reserved78, team.reserved78);
     assertEqual(recTeam.goalkeeperDivingRight, team.goalkeeperDivingRight);
     assertEqual(recTeam.goalkeeperDivingLeft, team.goalkeeperDivingLeft);
     assertEqual(recTeam.ballOutOfPlayOrKeeper, team.ballOutOfPlayOrKeeper);
@@ -406,8 +407,8 @@ void RecordedDataTest::verifyTeam(const TeamGeneralInfo& recTeam, const TeamGene
     assertEqual(recTeam.ballDirectionChangeTimer, team.ballDirectionChangeTimer);
     assertEqual(recTeam.ballCanBeControlled, team.ballCanBeControlled);
     assertEqualAsInt(recTeam.ballControllingDirection, team.ballControllingDirection);
-    assertEqual(recTeam.ofs114, team.ofs114);
-    assertEqual(recTeam.ofs116, team.ofs116);
+    assertEqual(recTeam.reserved114, team.reserved114);
+    assertEqual(recTeam.reserved116, team.reserved116);
     assertEqual(recTeam.spinTimer, team.spinTimer);
     assertEqual(recTeam.leftSpin, team.leftSpin);
     assertEqual(recTeam.rightSpin, team.rightSpin);
@@ -454,7 +455,7 @@ void RecordedDataTest::verifyTeamGame(const TeamGame& recTeam, const TeamGame& t
         assertEqual(recPlayer.isInjured, player.isInjured);
         assertEqual(recPlayer.field_7, player.field_7);
         assertEqual(recPlayer.field_8, player.field_8);
-        assertEqual(recPlayer.field_9, player.field_9);
+        assertEqual(recPlayer.previousCards, player.previousCards);
         assertEqual(recPlayer.cards, player.cards);
         assertEqual(recPlayer.field_B, player.field_B);
         assertMemEqual(recPlayer.shortName, player.shortName);

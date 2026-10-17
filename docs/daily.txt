@@ -6312,3 +6312,13 @@ startFirstExtraTime, endFirstExtraTime and now game.cpp is fully cleansed from t
   to updateGoalkeeperBallProjections()), shouldGoalkeeperDive()
 - everything except the main body of updatePlayers() converted!
 - pushed to GitHub
+- started the updatePlayers() conversion
+...01.10.2026.
+- been converting updatePlayer() bit by bit, and finally it's done! no more machine generated code, all the
+  goto's are gone; removed all ASM variables that could be removed as well
+- the gameplay code has been completely converted to C++
+- reorganized source code a bit, since updatePlayer.cpp ended up with a mountain of functions
+...05.10.2026.
+- added some more comments
+...17.10.2026.
+- some minor fixes, and finally committing the thing!
