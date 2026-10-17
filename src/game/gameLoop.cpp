@@ -18,6 +18,7 @@
 #include "drawBench.h"
 #include "result.h"
 #include "stats.h"
+#include "hotseatCareer.h"
 #include "pitch.h"
 #include "pitchConstants.h"
 #include "referee.h"
@@ -469,6 +470,7 @@ static bool finishBreakTransmission()
         swos.statsTimer = -swos.statsTimer;
         swos.playGame = 0;
         swos.stoppageEventTimer = 0;
+        HotseatCareerManager::get().onMatchCompleted();
         return true;
 
     case GameState::kStartingGame:
