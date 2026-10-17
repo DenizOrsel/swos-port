@@ -27,3 +27,7 @@ v16
 tmp
 .vs
 dist
+buildtest
+
+swos.ini
+swos.log
