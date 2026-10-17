@@ -9,6 +9,7 @@
 #include "mainMenu.h"
 #include "game.h"
 #include "init.h"
+#include "hotseatCareer.h"
 
 #ifdef SWOS_TEST
 # include "unitTest.h"
@@ -28,6 +29,42 @@ void selectEntry(MenuEntry *entry, int controlMask /* = kShortFireMask */)
 {
     assert(entry && entry->onSelect);
     if (entry && entry->onSelect) {
+        if (HotseatCareerManager::get().isActive() && SwosVM::ptrToOffset(getCurrentPackedMenu()) == 482233) {
+            // Entry 10 in contestMenu is NEXT MATCH / END TURN
+            if (entry->ordinal == 10) {
+                if (!HotseatCareerManager::get().canEndTurn()) {
+                    logInfo("Hotseat: Match must be played before ending turn");
+                    return;
+                }
+
+                bool newRound = HotseatCareerManager::get().endTurn();
+                logInfo("Hotseat: Turn ended. Active player is now %d (newRound=%d)",
+                        HotseatCareerManager::get().activePlayerIndex(), newRound);
+                if (newRound) {
+                    // All players completed their matches! Advance calendar round.
+                    save68kRegisters();
+                    swos.controlMask = controlMask;
+                    A5 = entry;
+                    entry->onSelect();
+                    restore68kRegisters();
+                    return;
+                } else {
+                    // Intermediate turn: re-activate contestMenu for next player
+                    A6 = 482233;
+                    SWOS::ActivateMenu();
+                    return;
+                }
+            }
+
+            // Entry 7 in contestMenu is PLAY MATCH
+            if (entry->ordinal == 7) {
+                if (HotseatCareerManager::get().activePlayer().matchPlayedThisTurn) {
+                    logInfo("Hotseat: Match already completed this turn. Please press End Turn");
+                    return;
+                }
+            }
+        }
+
         save68kRegisters();
 
         swos.controlMask = controlMask;

@@ -8,6 +8,7 @@
 #include "text.h"
 #include "gameFieldMapping.h"
 #include "timer.h"
+#include "hotseatCareer.h"
 
 constexpr int kTooSmallHeightForFrame = 8;
 
@@ -49,6 +50,15 @@ void drawMenu(bool updateScreen /* = true */)
     drawMenuBackground();
     clearAllItemsDrawnFlag();
     executeMenuOnDrawFunction();
+
+    if (HotseatCareerManager::get().isActive() && SwosVM::ptrToOffset(getCurrentPackedMenu()) == 482233) {
+        if (getCurrentMenu()->numEntries > 10) {
+            if (HotseatCareerManager::get().canEndTurn()) {
+                copyStringToEntry(10, "END TURN        ");
+            }
+        }
+    }
+
     drawMenuItems();
     drawSelectedFrame();
     if (updateScreen)

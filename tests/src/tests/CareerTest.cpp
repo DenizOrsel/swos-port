@@ -162,7 +162,7 @@ void CareerTest::testHotseatInitializationAndSwapping()
     mgr.onMatchCompleted();
     assertTrue(mgr.canEndTurn());
 
-    // End Player 0's turn -> should switch to Player 1
+    // End Player 0's turn -> switches to Player 1!
     bool newRound = mgr.endTurn();
     assertFalse(newRound); // Round not finished yet, Player 1 still needs to play!
     assertEqual(mgr.activePlayerIndex(), 1);
