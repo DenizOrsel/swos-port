@@ -377,7 +377,10 @@ int HotseatCareerManager::getAssignedSlotCount() const
 
 int HotseatCareerManager::getTeamSlotFromEntry(const MenuEntry *entry) const
 {
-    if (!entry || !entry->fg.string)
+    if (!entry || !entry->fg.string || entry->invisible)
+        return -1;
+    auto packed = getCurrentPackedMenu();
+    if (!packed || SwosVM::ptrToOffset(packed) != 485019)
         return -1;
     auto tf = reinterpret_cast<const TeamFile *>(entry->fg.string - 5);
     return getTeamSlot(tf->globalTeamNumber);

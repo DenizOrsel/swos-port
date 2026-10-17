@@ -66,8 +66,9 @@ void selectEntry(MenuEntry *entry, int controlMask /* = kShortFireMask */)
         }
 
         // Career Club Selection: only allow CPU or PLAYER-COACH, and assign P1..P4 slots
-        if (HotseatCareerManager::get().isSelectingCareerTeams()) {
-            if (entry->ordinal >= 8 && entry->ordinal <= 73 && entry->fg.string) {
+        if (HotseatCareerManager::get().isSelectingCareerTeams() &&
+            getCurrentPackedMenu() && SwosVM::ptrToOffset(getCurrentPackedMenu()) == 485019) {
+            if (entry->ordinal >= 8 && entry->ordinal <= 73 && !entry->invisible && entry->fg.string) {
                 auto team = reinterpret_cast<TeamFile *>(entry->fg.string - 5);
                 int curSlot = HotseatCareerManager::get().getTeamSlot(team->globalTeamNumber);
 

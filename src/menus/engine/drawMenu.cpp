@@ -80,7 +80,8 @@ void drawMenu(bool updateScreen /* = true */)
         }
     }
 
-    if (HotseatCareerManager::get().isSelectingCareerTeams()) {
+    if (HotseatCareerManager::get().isSelectingCareerTeams() &&
+        getCurrentPackedMenu() && SwosVM::ptrToOffset(getCurrentPackedMenu()) == 485019) {
         auto menu = getCurrentMenu();
         if (menu->numEntries > 76) {
             copyStringToEntry(76, "PLAY CAREER     ");
@@ -352,10 +353,11 @@ static void drawStringMenuItem(MenuEntry *entry, const char *string)
         entry->type == kEntryNumber || entry->type == kEntryBoolOption));
 
     char customTeamBuf[32];
-    if (HotseatCareerManager::get().isSelectingCareerTeams()) {
+    if (HotseatCareerManager::get().isSelectingCareerTeams() &&
+        getCurrentPackedMenu() && SwosVM::ptrToOffset(getCurrentPackedMenu()) == 485019) {
         if (entry->ordinal == 76) {
             string = "PLAY CAREER";
-        } else if (entry->ordinal >= 8 && entry->ordinal <= 73 && string && *string) {
+        } else if (entry->ordinal >= 8 && entry->ordinal <= 73 && !entry->invisible && string && *string) {
             int slot = HotseatCareerManager::get().getTeamSlotFromEntry(entry);
             if (slot >= 0) {
                 std::string tName(string);
