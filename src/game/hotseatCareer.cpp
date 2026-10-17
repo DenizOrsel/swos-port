@@ -1,5 +1,8 @@
 #include "hotseatCareer.h"
 #include "stdinc.h"
+#include "menus.h"
+#include "unpackMenu.h"
+#include "careerPlayerCount.mnu.h"
 #include <cstring>
 #include <algorithm>
 
@@ -18,13 +21,21 @@ void HotseatCareerManager::reset()
     for (auto& p : m_players) {
         p = HotseatPlayerContext();
     }
+    m_isWizardActive = false;
+    m_wizardCurrentPlayer = 0;
+    m_wizardTotalPlayers = 1;
+    m_wizardAdvanced = false;
+    m_wizardPlayers.clear();
+    m_isSelectingCareerTeams = false;
+    m_careerNumPlayers = 1;
+    m_assignedTeamSlots.clear();
 }
 
 void HotseatCareerManager::initializeHotseat(const std::vector<int16_t>& teamIds)
 {
     reset();
     m_numPlayers = std::min(static_cast<int>(teamIds.size()), kMaxHotseatPlayers);
-    if (m_numPlayers < 2) {
+    if (m_numPlayers < 1) {
         m_active = false;
         return;
     }
@@ -85,10 +96,12 @@ void HotseatCareerManager::loadSwosContext(const HotseatPlayerContext& ctx)
 
     // Manager name buffers (null-terminated)
     std::memset(&SwosVM::g_memByte[CareerOffsets::kManagerNameBuffer], 0, 9);
-    std::strncpy(reinterpret_cast<char *>(&SwosVM::g_memByte[CareerOffsets::kManagerNameBuffer]), ctx.managerName.c_str(), 8);
+    size_t nameLen = std::min(ctx.managerName.size(), size_t{8});
+    std::memcpy(&SwosVM::g_memByte[CareerOffsets::kManagerNameBuffer], ctx.managerName.data(), nameLen);
 
     std::memset(&SwosVM::g_memByte[CareerOffsets::kManagerSurnameBuffer], 0, 13);
-    std::strncpy(reinterpret_cast<char *>(&SwosVM::g_memByte[CareerOffsets::kManagerSurnameBuffer]), ctx.managerSurname.c_str(), 12);
+    size_t surnameLen = std::min(ctx.managerSurname.size(), size_t{12});
+    std::memcpy(&SwosVM::g_memByte[CareerOffsets::kManagerSurnameBuffer], ctx.managerSurname.data(), surnameLen);
 
     *reinterpret_cast<int32_t *>(&SwosVM::g_memByte[CareerOffsets::kNewBalance]) = ctx.newBalance;
     *reinterpret_cast<int32_t *>(&SwosVM::g_memByte[CareerOffsets::kOldBalance]) = ctx.oldBalance;
@@ -261,3 +274,265 @@ void HotseatCareerManager::resolveTransferOffer(size_t offerIndex, bool accepted
         }
     }
 }
+
+static int s_chosenPlayerCount = 0;
+static bool s_playerCountConfirmed = false;
+
+void onSelect1Player()
+{
+    s_chosenPlayerCount = 1;
+    s_playerCountConfirmed = true;
+    SetExitMenuFlag();
+}
+
+void onSelect2Players()
+{
+    s_chosenPlayerCount = 2;
+    s_playerCountConfirmed = true;
+    SetExitMenuFlag();
+}
+
+void onSelect3Players()
+{
+    s_chosenPlayerCount = 3;
+    s_playerCountConfirmed = true;
+    SetExitMenuFlag();
+}
+
+void onSelect4Players()
+{
+    s_chosenPlayerCount = 4;
+    s_playerCountConfirmed = true;
+    SetExitMenuFlag();
+}
+
+void onSelectExitPlayerCount()
+{
+    s_playerCountConfirmed = false;
+    SetExitMenuFlag();
+}
+
+void HotseatCareerManager::resetWizard(int totalPlayers)
+{
+    m_wizardTotalPlayers = std::clamp(totalPlayers, 1, kMaxHotseatPlayers);
+    m_wizardCurrentPlayer = 0;
+    m_wizardAdvanced = false;
+    m_isWizardActive = true;
+    m_wizardPlayers.clear();
+    m_wizardPlayers.resize(m_wizardTotalPlayers);
+}
+
+void HotseatCareerManager::assignTeamSlot(int16_t teamId, int slot)
+{
+    m_assignedTeamSlots[teamId] = slot;
+}
+
+void HotseatCareerManager::unassignTeamSlot(int16_t teamId)
+{
+    m_assignedTeamSlots.erase(teamId);
+}
+
+void HotseatCareerManager::unassignAllTeamSlots()
+{
+    m_assignedTeamSlots.clear();
+}
+
+int HotseatCareerManager::getTeamSlot(int16_t teamId) const
+{
+    auto it = m_assignedTeamSlots.find(teamId);
+    if (it != m_assignedTeamSlots.end())
+        return it->second;
+    return -1;
+}
+
+int HotseatCareerManager::getTeamForSlot(int slot) const
+{
+    for (const auto& pair : m_assignedTeamSlots) {
+        if (pair.second == slot)
+            return pair.first;
+    }
+    return 0;
+}
+
+int HotseatCareerManager::getNextAvailableSlot() const
+{
+    for (int i = 0; i < m_careerNumPlayers; ++i) {
+        bool used = false;
+        for (const auto& pair : m_assignedTeamSlots) {
+            if (pair.second == i) {
+                used = true;
+                break;
+            }
+        }
+        if (!used)
+            return i;
+    }
+    return -1;
+}
+
+int HotseatCareerManager::getAssignedSlotCount() const
+{
+    return static_cast<int>(m_assignedTeamSlots.size());
+}
+
+int HotseatCareerManager::getTeamSlotFromEntry(const MenuEntry *entry) const
+{
+    if (!entry || !entry->fg.string)
+        return -1;
+    auto tf = reinterpret_cast<const TeamFile *>(entry->fg.string - 5);
+    return getTeamSlot(tf->globalTeamNumber);
+}
+
+void startCareerMode()
+{
+    extern void SetDefaultNameAndSurname();
+    extern void cseg_4C6EE();
+    extern void InitCareer();
+    extern void CommonMenuExit();
+
+    logInfo("Starting Career Mode setup flow");
+
+    // Step 1: Prompt for Number of Players (1, 2, 3, 4)
+    s_chosenPlayerCount = 0;
+    s_playerCountConfirmed = false;
+    showMenu(careerPlayerCountMenu);
+    if (!s_playerCountConfirmed || s_chosenPlayerCount < 1 || s_chosenPlayerCount > 4) {
+        logInfo("Career player count selection canceled or exited");
+        return;
+    }
+
+    int numPlayers = s_chosenPlayerCount;
+    logInfo("Career Mode: %d player(s) selected", numPlayers);
+
+    auto& mgr = HotseatCareerManager::get();
+    mgr.resetWizard(numPlayers);
+
+    // Step 2: Sequential Player Setup Wizard (Name, Surname, Nationality, Role)
+    for (int p = 0; p < numPlayers; ++p) {
+        mgr.setWizardCurrentPlayer(p);
+        mgr.setWizardAdvanced(false);
+
+        if (p == 0) {
+            SetDefaultNameAndSurname();
+            swos.coachOrPlayer = 1; // Default to Player-Coach
+            swos.plNationality = kEng;
+        } else {
+            std::memset(&SwosVM::g_memByte[CareerOffsets::kManagerNameBuffer], ' ', 8);
+            std::string defName = "PLAYER";
+            std::memcpy(&SwosVM::g_memByte[CareerOffsets::kManagerNameBuffer], defName.c_str(), defName.size());
+
+            std::memset(&SwosVM::g_memByte[CareerOffsets::kManagerSurnameBuffer], ' ', 12);
+            std::string defSurname = std::to_string(p + 1);
+            std::memcpy(&SwosVM::g_memByte[CareerOffsets::kManagerSurnameBuffer], defSurname.c_str(), defSurname.size());
+
+            swos.coachOrPlayer = 1;
+            swos.plNationality = kEng;
+        }
+
+        A6 = 483353; // careerMenu
+        SWOS::ShowMenu();
+
+        if (!mgr.wizardAdvanced()) {
+            logInfo("Player %d setup aborted by user", p + 1);
+            mgr.setWizardActive(false);
+            return;
+        }
+    }
+    mgr.setWizardActive(false);
+
+    // Step 3: Club Selection
+    mgr.setSelectingCareerTeams(true);
+    mgr.setCareerNumPlayers(numPlayers);
+    mgr.unassignAllTeamSlots();
+
+    cseg_4C6EE();
+
+    mgr.setSelectingCareerTeams(false);
+
+    uint16_t result = *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[330146]); // chooseTeamsResult
+    if (result == 0 || mgr.getAssignedSlotCount() < numPlayers) {
+        logInfo("Career club selection canceled or incomplete (assigned=%d, needed=%d)",
+                mgr.getAssignedSlotCount(), numPlayers);
+        return;
+    }
+
+    // Step 4: Gather teams ordered by player slots (P1 -> index 0, P2 -> index 1, etc.)
+    std::vector<int16_t> orderedTeamIds(numPlayers);
+    std::vector<TeamFile> orderedTeams(numPlayers);
+
+    for (int i = 0; i < numPlayers; ++i) {
+        int16_t tid = mgr.getTeamForSlot(i);
+        orderedTeamIds[i] = tid;
+
+        bool found = false;
+        int count = swos.g_numSelectedTeams;
+        if (count <= 0 || count > 100) count = 100;
+
+        for (int t = 0; t < count; ++t) {
+            auto tf = reinterpret_cast<const TeamFile *>(&swos.g_selectedTeams[t * sizeof(TeamFile)]);
+            if (tf->globalTeamNumber == tid) {
+                orderedTeams[i] = *tf;
+                found = true;
+                break;
+            }
+        }
+        if (!found && swos.selTeamsPtr) {
+            auto selTeams = reinterpret_cast<const TeamFile *>(SwosVM::offsetToPtr(swos.selTeamsPtr));
+            if (selTeams) {
+                for (int t = 0; t < count; ++t) {
+                    if (selTeams[t].globalTeamNumber == tid) {
+                        orderedTeams[i] = selTeams[t];
+                        found = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    mgr.initializeHotseat(orderedTeamIds);
+
+    for (int i = 0; i < numPlayers; ++i) {
+        auto& p = mgr.player(i);
+        const auto& wp = mgr.wizardPlayer(i);
+        p.managerName = wp.name;
+        p.managerSurname = wp.surname;
+        p.nationality = wp.nationality;
+        p.coachOrPlayer = wp.coachOrPlayer;
+        p.mrOrMs = wp.mrOrMs;
+
+        char tbuf[18] = {0};
+        std::memcpy(tbuf, orderedTeams[i].teamName, 17);
+        p.teamName = tbuf;
+        std::memcpy(p.careerTeam, &orderedTeams[i], sizeof(TeamFile));
+    }
+
+    // Initialize division career with Player 0's team ID
+    *(uint16_t *)&D0 = orderedTeamIds[0];
+    InitCareer();
+    swos.g_gameType = kGameTypeCareer;
+
+    // Save Player 0's complete context
+    mgr.saveCurrentSwosContext(mgr.player(0));
+
+    // Set up remaining players with squads and starting balances
+    for (int i = 1; i < numPlayers; ++i) {
+        auto& p = mgr.player(i);
+        p.newBalance = mgr.player(0).newBalance;
+        p.oldBalance = mgr.player(0).oldBalance;
+        p.playerWagesBill = mgr.player(0).playerWagesBill;
+        std::memcpy(p.careerHistory, mgr.player(0).careerHistory, sizeof(p.careerHistory));
+    }
+
+    // Load Player 0's context to begin P1's turn
+    mgr.loadSwosContext(mgr.player(0));
+    logInfo("Hotseat Career successfully initialized with %d players! Starting P1's turn.", numPlayers);
+
+    swos.g_exitMenu = 0;
+
+    // Launch contestMenu cleanly in its own ShowMenu loop!
+    A6 = 482233; // contestMenu
+    SWOS::ShowMenu();
+    CommonMenuExit();
+}
+

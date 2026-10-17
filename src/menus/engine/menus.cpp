@@ -10,6 +10,7 @@
 #include "game.h"
 #include "init.h"
 #include "hotseatCareer.h"
+#include "drawMenu.h"
 
 #ifdef SWOS_TEST
 # include "unitTest.h"
@@ -29,113 +30,137 @@ void selectEntry(MenuEntry *entry, int controlMask /* = kShortFireMask */)
 {
     assert(entry && entry->onSelect);
     if (entry && entry->onSelect) {
-        // Entry 10 in careerMenu (offset 483353) is "CHOOSE TEAM"
-        if (SwosVM::ptrToOffset(getCurrentPackedMenu()) == 483353 && entry->ordinal == 10) {
-            extern void cseg_4C6EE();
-            extern void InitCareer();
+        // Career Wizard: Handle NEXT PLAYER / CHOOSE CLUB in careerMenu (offset 483353)
+        if (SwosVM::ptrToOffset(getCurrentPackedMenu()) == 483353) {
+            if (HotseatCareerManager::get().isWizardActive()) {
+                if (entry->ordinal == 10) {
+                    int p = HotseatCareerManager::get().wizardCurrentPlayer();
+                    char mgrName[9] = {0};
+                    char mgrSurname[13] = {0};
+                    std::memcpy(mgrName, &SwosVM::g_memByte[CareerOffsets::kManagerNameBuffer], 8);
+                    std::memcpy(mgrSurname, &SwosVM::g_memByte[CareerOffsets::kManagerSurnameBuffer], 12);
 
-            cseg_4C6EE();
+                    for (int i = 7; i >= 0 && mgrName[i] == ' '; --i) mgrName[i] = 0;
+                    for (int i = 11; i >= 0 && mgrSurname[i] == ' '; --i) mgrSurname[i] = 0;
 
-            uint16_t result = *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[330146]); // chooseTeamsResult
-            if (result == 0) {
-                logInfo("Career team selection canceled");
-                return;
+                    auto& wp = HotseatCareerManager::get().wizardPlayer(p);
+                    wp.name = (mgrName[0] != 0 && mgrName[0] != ' ') ? mgrName : "PLAYER";
+                    wp.surname = (mgrSurname[0] != 0 && mgrSurname[0] != ' ') ? mgrSurname : std::to_string(p + 1);
+                    wp.nationality = SwosVM::g_memByte[CareerOffsets::kPlNationality];
+                    wp.coachOrPlayer = swos.coachOrPlayer;
+                    wp.mrOrMs = *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kMrOrMs]);
+
+                    logInfo("Career Wizard: Player %d configured as '%s %s', nat=%d, role=%d",
+                            p + 1, wp.name.c_str(), wp.surname.c_str(), wp.nationality, wp.coachOrPlayer);
+
+                    HotseatCareerManager::get().setWizardAdvanced(true);
+                    SetExitMenuFlag();
+                    return;
+                }
+                if (entry->ordinal == 11) {
+                    HotseatCareerManager::get().setWizardAdvanced(false);
+                    SetExitMenuFlag();
+                    return;
+                }
             }
+        }
 
-            uint16_t numSelected = *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[131757]); // g_numSelectedTeams
-            auto selectedTeams = reinterpret_cast<const TeamFile *>(&SwosVM::g_memByte[131759]);
+        // Career Club Selection: only allow CPU or PLAYER-COACH, and assign P1..P4 slots
+        if (HotseatCareerManager::get().isSelectingCareerTeams()) {
+            if (entry->ordinal >= 8 && entry->ordinal <= 73 && entry->fg.string) {
+                auto team = reinterpret_cast<TeamFile *>(entry->fg.string - 5);
+                int curSlot = HotseatCareerManager::get().getTeamSlot(team->globalTeamNumber);
 
-            if (numSelected <= 1) {
-                // Standard single player career
-                HotseatCareerManager::get().reset();
-                uint16_t teamId = (numSelected == 1) ? selectedTeams[0].globalTeamNumber : *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[330144]);
-                *(uint16_t *)&D0 = teamId;
-                InitCareer();
-                A6 = 482233;
-                SWOS::ActivateMenu();
-                return;
-            }
-
-            // 2 to 4 teams selected: Initialize Hotseat Turn-Based Career!
-            int numHotseatTeams = std::min(static_cast<int>(numSelected), 4);
-            std::vector<int16_t> teamIds;
-            for (int i = 0; i < numHotseatTeams; ++i) {
-                teamIds.push_back(selectedTeams[i].globalTeamNumber);
-            }
-
-            auto& mgr = HotseatCareerManager::get();
-            mgr.initializeHotseat(teamIds);
-
-            // Copy manager name from careerMenu input buffer for Player 0
-            char mgrName[9] = {0};
-            char mgrSurname[9] = {0};
-            std::memcpy(mgrName, &SwosVM::g_memByte[CareerOffsets::kManagerNameBuffer], 8);
-            std::memcpy(mgrSurname, &SwosVM::g_memByte[CareerOffsets::kManagerSurnameBuffer], 8);
-            if (mgrName[0] != 0 && mgrName[0] != ' ') {
-                mgr.player(0).managerName = mgrName;
-                mgr.player(0).managerSurname = mgrSurname;
-            }
-
-            for (int i = 0; i < numHotseatTeams; ++i) {
-                char teamNameBuf[18] = {0};
-                std::memcpy(teamNameBuf, selectedTeams[i].teamName, 17);
-                mgr.player(i).teamName = teamNameBuf;
-                if (i > 0) {
-                    mgr.player(i).managerName = "PLAYER";
-                    mgr.player(i).managerSurname = std::to_string(i + 1);
+                if (curSlot >= 0) {
+                    // Currently assigned to Player-Coach -> toggle back to CPU!
+                    HotseatCareerManager::get().unassignTeamSlot(team->globalTeamNumber);
+                    team->teamControls = kComputerTeam;
+                    entry->bg.entryColor = 10; // Red (CPU)
+                    entry->drawn = 0;
+                    drawMenu();
+                    return;
+                } else {
+                    // Currently CPU -> assign to next available player slot
+                    int nextSlot = HotseatCareerManager::get().getNextAvailableSlot();
+                    if (nextSlot >= 0 && nextSlot < HotseatCareerManager::get().careerNumPlayers()) {
+                        HotseatCareerManager::get().assignTeamSlot(team->globalTeamNumber, nextSlot);
+                        team->teamControls = kPlayerCoach;
+                        entry->bg.entryColor = 11; // Purplish (Player-Coach)
+                        entry->drawn = 0;
+                        drawMenu();
+                        return;
+                    } else {
+                        logInfo("All %d hotseat players already have teams assigned!",
+                                HotseatCareerManager::get().careerNumPlayers());
+                        return;
+                    }
                 }
             }
 
-            // Initialize division career with Player 0's team
-            *(uint16_t *)&D0 = teamIds[0];
-            InitCareer();
-
-            // Save Player 0's complete initialized context
-            mgr.saveCurrentSwosContext(mgr.player(0));
-
-            // Set up remaining players with their squads and starting balances
-            for (int i = 1; i < numHotseatTeams; ++i) {
-                auto& p = mgr.player(i);
-                p.teamId = teamIds[i];
-                p.coachOrPlayer = 0;
-                p.newBalance = mgr.player(0).newBalance;
-                p.oldBalance = mgr.player(0).oldBalance;
-                p.playerWagesBill = mgr.player(0).playerWagesBill;
-                std::memcpy(p.careerTeam, &selectedTeams[i], sizeof(TeamFile));
-                std::memcpy(p.careerHistory, mgr.player(0).careerHistory, sizeof(p.careerHistory));
+            if (entry->ordinal == 76) {
+                // PLAY CAREER button
+                if (HotseatCareerManager::get().getAssignedSlotCount() < HotseatCareerManager::get().careerNumPlayers()) {
+                    logInfo("Cannot start career: %d of %d teams selected",
+                            HotseatCareerManager::get().getAssignedSlotCount(),
+                            HotseatCareerManager::get().careerNumPlayers());
+                    return;
+                }
+                save68kRegisters();
+                swos.controlMask = controlMask;
+                A5 = entry;
+                entry->onSelect();
+                restore68kRegisters();
+                return;
             }
 
-            // Load Player 0 and launch contestMenu!
-            mgr.loadSwosContext(mgr.player(0));
-            logInfo("Hotseat Career initialized with %d players!", numHotseatTeams);
-            A6 = 482233;
-            SWOS::ActivateMenu();
-            return;
+            if (entry->ordinal == 74) {
+                // CHANGE TEAMS button
+                HotseatCareerManager::get().unassignAllTeamSlots();
+                save68kRegisters();
+                swos.controlMask = controlMask;
+                A5 = entry;
+                entry->onSelect();
+                restore68kRegisters();
+                return;
+            }
         }
 
         if (HotseatCareerManager::get().isActive() && SwosVM::ptrToOffset(getCurrentPackedMenu()) == 482233) {
             // Entry 10 in contestMenu is NEXT MATCH / END TURN
             if (entry->ordinal == 10) {
-                if (!HotseatCareerManager::get().canEndTurn()) {
-                    logInfo("Hotseat: Match must be played before ending turn");
-                    return;
-                }
+                if (HotseatCareerManager::get().numPlayers() > 1) {
+                    if (!HotseatCareerManager::get().canEndTurn()) {
+                        logInfo("Hotseat: Match must be played before ending turn");
+                        return;
+                    }
 
-                bool newRound = HotseatCareerManager::get().endTurn();
-                logInfo("Hotseat: Turn ended. Active player is now %d (newRound=%d)",
-                        HotseatCareerManager::get().activePlayerIndex(), newRound);
-                if (newRound) {
-                    // All players completed their matches! Advance calendar round.
+                    bool newRound = HotseatCareerManager::get().endTurn();
+                    logInfo("Hotseat: Turn ended. Active player is now %d (newRound=%d)",
+                            HotseatCareerManager::get().activePlayerIndex(), newRound);
+                    if (newRound) {
+                        // All players completed their matches! Advance calendar round.
+                        save68kRegisters();
+                        swos.controlMask = controlMask;
+                        A5 = entry;
+                        entry->onSelect();
+                        restore68kRegisters();
+                        return;
+                    } else {
+                        // Intermediate turn: re-activate contestMenu for next player
+                        A6 = 482233;
+                        SWOS::ActivateMenu();
+                        return;
+                    }
+                } else {
+                    // Single player mode
+                    if (HotseatCareerManager::get().canEndTurn()) {
+                        HotseatCareerManager::get().endTurn();
+                    }
                     save68kRegisters();
                     swos.controlMask = controlMask;
                     A5 = entry;
                     entry->onSelect();
                     restore68kRegisters();
-                    return;
-                } else {
-                    // Intermediate turn: re-activate contestMenu for next player
-                    A6 = 482233;
-                    SWOS::ActivateMenu();
                     return;
                 }
             }

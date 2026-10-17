@@ -20,4 +20,7 @@ private:
     void testHotseatInterPlayerTransferOffer();
     void testHotseatHeadToHeadFixture();
     void testHotseatMultiTeamSelection();
+    void testHotseatWizardPlayerSetup();
+    void testHotseatTeamSlotAssignment();
+    void testSinglePlayerCareerHotseat();
 };

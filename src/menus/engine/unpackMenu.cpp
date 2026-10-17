@@ -6,6 +6,7 @@
 #include "drawMenu.h"
 #include "menuItemRenderer.h"
 #include "menuControls.h"
+#include "hotseatCareer.h"
 
 // SWOS introduced limit
 constexpr int kMaxMenuEntries = 115;
@@ -422,6 +423,22 @@ void activateMenu(const void *menu)
         currentMenu->onInit();
 
         assert(menuMark == menuAlloc(0));
+    }
+
+    if (HotseatCareerManager::get().isWizardActive() && SwosVM::ptrToOffset(m_currentMenu) == 483353) {
+        if (HotseatCareerManager::get().wizardCurrentPlayer() > 0) {
+            int p = HotseatCareerManager::get().wizardCurrentPlayer();
+            std::memset(&SwosVM::g_memByte[CareerOffsets::kManagerNameBuffer], ' ', 8);
+            std::string defName = "PLAYER";
+            std::memcpy(&SwosVM::g_memByte[CareerOffsets::kManagerNameBuffer], defName.c_str(), defName.size());
+
+            std::memset(&SwosVM::g_memByte[CareerOffsets::kManagerSurnameBuffer], ' ', 12);
+            std::string defSurname = std::to_string(p + 1);
+            std::memcpy(&SwosVM::g_memByte[CareerOffsets::kManagerSurnameBuffer], defSurname.c_str(), defSurname.size());
+
+            swos.coachOrPlayer = 1;
+            swos.plNationality = kEng;
+        }
     }
 
     assert(currentMenu->numEntries < 256);

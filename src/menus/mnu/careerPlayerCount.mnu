@@ -1,0 +1,99 @@
+//
+// Career Player Count Selection Menu
+//
+
+#include "common.mh"
+
+Menu careerPlayerCountMenu
+{
+    initialEntry: twoPlayers
+
+    kMenuWidth = 140
+    kMenuHeight = 16
+    kMenuX = 85
+    kStartY = 55
+
+    Entry header {
+        x: 60
+        y: 22
+        width: 190
+        height: 16
+
+        color: @kDarkBlue
+        textFlags: @kBigText | @kCenterAligned
+        text: "NUMBER OF PLAYERS"
+    }
+
+    Entry onePlayer {
+        x: kMenuX
+        y: kStartY
+        width: kMenuWidth
+        height: kMenuHeight
+
+        color: @kLightBrownWithOrangeFrame
+        downEntry: twoPlayers
+
+        textFlags: @kBigText | @kCenterAligned
+        text: "1 PLAYER"
+        onSelect: ~onSelect1Player
+    }
+
+    Entry twoPlayers {
+        x: kMenuX
+        y: @prevEndY + 6
+        width: kMenuWidth
+        height: kMenuHeight
+
+        color: @kLightBrownWithOrangeFrame
+        upEntry: onePlayer
+        downEntry: threePlayers
+
+        textFlags: @kBigText | @kCenterAligned
+        text: "2 PLAYERS"
+        onSelect: ~onSelect2Players
+    }
+
+    Entry threePlayers {
+        x: kMenuX
+        y: @prevEndY + 6
+        width: kMenuWidth
+        height: kMenuHeight
+
+        color: @kLightBrownWithOrangeFrame
+        upEntry: twoPlayers
+        downEntry: fourPlayers
+
+        textFlags: @kBigText | @kCenterAligned
+        text: "3 PLAYERS"
+        onSelect: ~onSelect3Players
+    }
+
+    Entry fourPlayers {
+        x: kMenuX
+        y: @prevEndY + 6
+        width: kMenuWidth
+        height: kMenuHeight
+
+        color: @kLightBrownWithOrangeFrame
+        upEntry: threePlayers
+        downEntry: exitButton
+
+        textFlags: @kBigText | @kCenterAligned
+        text: "4 PLAYERS"
+        onSelect: ~onSelect4Players
+    }
+
+    Entry exitButton {
+        x: kMenuX
+        y: @prevEndY + 12
+        width: kMenuWidth
+        height: kMenuHeight
+
+        color: @kRed
+        upEntry: fourPlayers
+
+        textFlags: @kBigText | @kCenterAligned
+        text: "EXIT"
+        onSelect: ~onSelectExitPlayerCount
+    }
+}

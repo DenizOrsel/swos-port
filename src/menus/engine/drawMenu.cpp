@@ -59,9 +59,31 @@ void drawMenu(bool updateScreen /* = true */)
             copyStringToEntry(0, banner);
         }
         if (getCurrentMenu()->numEntries > 10) {
-            if (HotseatCareerManager::get().canEndTurn()) {
-                copyStringToEntry(10, "END TURN        ");
+            if (HotseatCareerManager::get().numPlayers() > 1) {
+                if (HotseatCareerManager::get().canEndTurn()) {
+                    copyStringToEntry(10, "END TURN        ");
+                }
             }
+        }
+    }
+
+    if (HotseatCareerManager::get().isWizardActive() && SwosVM::ptrToOffset(getCurrentPackedMenu()) == 483353) {
+        int pNum = HotseatCareerManager::get().wizardCurrentPlayer() + 1;
+        char titleBuf[32];
+        snprintf(titleBuf, sizeof(titleBuf), "PLAYER %d DETAILS", pNum);
+        copyStringToEntry(0, titleBuf);
+
+        if (HotseatCareerManager::get().wizardCurrentPlayer() < HotseatCareerManager::get().wizardTotalPlayers() - 1) {
+            copyStringToEntry(10, "NEXT PLAYER     ");
+        } else {
+            copyStringToEntry(10, "CHOOSE CLUB     ");
+        }
+    }
+
+    if (HotseatCareerManager::get().isSelectingCareerTeams()) {
+        auto menu = getCurrentMenu();
+        if (menu->numEntries > 76) {
+            copyStringToEntry(76, "PLAY CAREER     ");
         }
     }
 
@@ -328,6 +350,24 @@ static void drawStringMenuItem(MenuEntry *entry, const char *string)
 {
     assert(entry && (entry->type == kEntryString || entry->type == kEntryStringTable ||
         entry->type == kEntryNumber || entry->type == kEntryBoolOption));
+
+    char customTeamBuf[32];
+    if (HotseatCareerManager::get().isSelectingCareerTeams()) {
+        if (entry->ordinal == 76) {
+            string = "PLAY CAREER";
+        } else if (entry->ordinal >= 8 && entry->ordinal <= 73 && string && *string) {
+            int slot = HotseatCareerManager::get().getTeamSlotFromEntry(entry);
+            if (slot >= 0) {
+                std::string tName(string);
+                while (!tName.empty() && (tName.back() == ' ' || tName.back() == '*'))
+                    tName.pop_back();
+                if (tName.size() > 11)
+                    tName.resize(11);
+                snprintf(customTeamBuf, sizeof(customTeamBuf), "%s (P%d)", tName.c_str(), slot + 1);
+                string = customTeamBuf;
+            }
+        }
+    }
 
     if (string) {
         bool bigFont = entry->bigFont();

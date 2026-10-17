@@ -4,6 +4,7 @@
 #include <string>
 #include <array>
 #include <vector>
+#include <map>
 
 constexpr int kMaxHotseatPlayers = 4;
 constexpr int kCareerTeamBufferSize = 1292;
@@ -79,12 +80,20 @@ struct HotseatPlayerContext {
     bool turnCompleted = false;
 };
 
+struct WizardPlayerInfo {
+    std::string name = "MANAGER";
+    std::string surname = "PLAYER";
+    uint8_t nationality = 8;
+    int16_t coachOrPlayer = 1;       // 1 = player-coach
+    int16_t mrOrMs = 0;
+};
+
 class HotseatCareerManager {
 public:
     static HotseatCareerManager& get();
 
     void reset();
-    bool isActive() const { return m_active && m_numPlayers >= 2; }
+    bool isActive() const { return m_active && m_numPlayers >= 1; }
     void setActive(bool active) { m_active = active; }
     int numPlayers() const { return m_numPlayers; }
     int activePlayerIndex() const { return m_activePlayerIndex; }
@@ -95,6 +104,34 @@ public:
 
     // Setup
     void initializeHotseat(const std::vector<int16_t>& teamIds);
+
+    // Wizard
+    bool isWizardActive() const { return m_isWizardActive; }
+    void setWizardActive(bool active) { m_isWizardActive = active; }
+    int wizardCurrentPlayer() const { return m_wizardCurrentPlayer; }
+    void setWizardCurrentPlayer(int p) { m_wizardCurrentPlayer = p; }
+    int wizardTotalPlayers() const { return m_wizardTotalPlayers; }
+    void setWizardTotalPlayers(int total) { m_wizardTotalPlayers = total; }
+    bool wizardAdvanced() const { return m_wizardAdvanced; }
+    void setWizardAdvanced(bool advanced) { m_wizardAdvanced = advanced; }
+    WizardPlayerInfo& wizardPlayer(int idx) { return m_wizardPlayers[idx]; }
+    const WizardPlayerInfo& wizardPlayer(int idx) const { return m_wizardPlayers[idx]; }
+    void resetWizard(int totalPlayers);
+
+    // Club Selection State
+    bool isSelectingCareerTeams() const { return m_isSelectingCareerTeams; }
+    void setSelectingCareerTeams(bool selecting) { m_isSelectingCareerTeams = selecting; }
+    int careerNumPlayers() const { return m_careerNumPlayers; }
+    void setCareerNumPlayers(int count) { m_careerNumPlayers = count; }
+
+    void assignTeamSlot(int16_t teamId, int slot);
+    void unassignTeamSlot(int16_t teamId);
+    void unassignAllTeamSlots();
+    int getTeamSlot(int16_t teamId) const;
+    int getTeamForSlot(int slot) const;
+    int getNextAvailableSlot() const;
+    int getAssignedSlotCount() const;
+    int getTeamSlotFromEntry(const struct MenuEntry *entry) const;
 
     // Context Swapping
     void saveCurrentSwosContext(HotseatPlayerContext& ctx);
@@ -132,4 +169,23 @@ private:
     int m_activePlayerIndex = 0;
     std::array<HotseatPlayerContext, kMaxHotseatPlayers> m_players;
     std::vector<TransferOffer> m_transferOffers;
+
+    // Hotseat Setup Wizard & Selection
+    bool m_isWizardActive = false;
+    int m_wizardCurrentPlayer = 0;
+    int m_wizardTotalPlayers = 1;
+    bool m_wizardAdvanced = false;
+    std::vector<WizardPlayerInfo> m_wizardPlayers;
+
+    bool m_isSelectingCareerTeams = false;
+    int m_careerNumPlayers = 1;
+    std::map<int16_t, int> m_assignedTeamSlots;
 };
+
+void startCareerMode();
+void onSelect1Player();
+void onSelect2Players();
+void onSelect3Players();
+void onSelect4Players();
+void onSelectExitPlayerCount();
+
