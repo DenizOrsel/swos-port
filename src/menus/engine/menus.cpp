@@ -29,6 +29,90 @@ void selectEntry(MenuEntry *entry, int controlMask /* = kShortFireMask */)
 {
     assert(entry && entry->onSelect);
     if (entry && entry->onSelect) {
+        // Entry 10 in careerMenu (offset 483353) is "CHOOSE TEAM"
+        if (SwosVM::ptrToOffset(getCurrentPackedMenu()) == 483353 && entry->ordinal == 10) {
+            extern void cseg_4C6EE();
+            extern void InitCareer();
+
+            cseg_4C6EE();
+
+            uint16_t result = *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[330146]); // chooseTeamsResult
+            if (result == 0) {
+                logInfo("Career team selection canceled");
+                return;
+            }
+
+            uint16_t numSelected = *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[131757]); // g_numSelectedTeams
+            auto selectedTeams = reinterpret_cast<const TeamFile *>(&SwosVM::g_memByte[131759]);
+
+            if (numSelected <= 1) {
+                // Standard single player career
+                HotseatCareerManager::get().reset();
+                uint16_t teamId = (numSelected == 1) ? selectedTeams[0].globalTeamNumber : *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[330144]);
+                *(uint16_t *)&D0 = teamId;
+                InitCareer();
+                A6 = 482233;
+                SWOS::ActivateMenu();
+                return;
+            }
+
+            // 2 to 4 teams selected: Initialize Hotseat Turn-Based Career!
+            int numHotseatTeams = std::min(static_cast<int>(numSelected), 4);
+            std::vector<int16_t> teamIds;
+            for (int i = 0; i < numHotseatTeams; ++i) {
+                teamIds.push_back(selectedTeams[i].globalTeamNumber);
+            }
+
+            auto& mgr = HotseatCareerManager::get();
+            mgr.initializeHotseat(teamIds);
+
+            // Copy manager name from careerMenu input buffer for Player 0
+            char mgrName[9] = {0};
+            char mgrSurname[9] = {0};
+            std::memcpy(mgrName, &SwosVM::g_memByte[CareerOffsets::kManagerNameBuffer], 8);
+            std::memcpy(mgrSurname, &SwosVM::g_memByte[CareerOffsets::kManagerSurnameBuffer], 8);
+            if (mgrName[0] != 0 && mgrName[0] != ' ') {
+                mgr.player(0).managerName = mgrName;
+                mgr.player(0).managerSurname = mgrSurname;
+            }
+
+            for (int i = 0; i < numHotseatTeams; ++i) {
+                char teamNameBuf[18] = {0};
+                std::memcpy(teamNameBuf, selectedTeams[i].teamName, 17);
+                mgr.player(i).teamName = teamNameBuf;
+                if (i > 0) {
+                    mgr.player(i).managerName = "PLAYER";
+                    mgr.player(i).managerSurname = std::to_string(i + 1);
+                }
+            }
+
+            // Initialize division career with Player 0's team
+            *(uint16_t *)&D0 = teamIds[0];
+            InitCareer();
+
+            // Save Player 0's complete initialized context
+            mgr.saveCurrentSwosContext(mgr.player(0));
+
+            // Set up remaining players with their squads and starting balances
+            for (int i = 1; i < numHotseatTeams; ++i) {
+                auto& p = mgr.player(i);
+                p.teamId = teamIds[i];
+                p.coachOrPlayer = 0;
+                p.newBalance = mgr.player(0).newBalance;
+                p.oldBalance = mgr.player(0).oldBalance;
+                p.playerWagesBill = mgr.player(0).playerWagesBill;
+                std::memcpy(p.careerTeam, &selectedTeams[i], sizeof(TeamFile));
+                std::memcpy(p.careerHistory, mgr.player(0).careerHistory, sizeof(p.careerHistory));
+            }
+
+            // Load Player 0 and launch contestMenu!
+            mgr.loadSwosContext(mgr.player(0));
+            logInfo("Hotseat Career initialized with %d players!", numHotseatTeams);
+            A6 = 482233;
+            SWOS::ActivateMenu();
+            return;
+        }
+
         if (HotseatCareerManager::get().isActive() && SwosVM::ptrToOffset(getCurrentPackedMenu()) == 482233) {
             // Entry 10 in contestMenu is NEXT MATCH / END TURN
             if (entry->ordinal == 10) {
@@ -224,6 +308,20 @@ void saveCurrentMenuAndStartGameLoop()
 {
     logInfo("Starting the game...");
     logInfo("Top team: %s, bottom team: %s", swos.topTeamInGame.teamName, swos.bottomTeamInGame.teamName);
+
+    if (HotseatCareerManager::get().isActive()) {
+        int topP = HotseatCareerManager::get().findHotseatPlayerByTeamName(swos.topTeamInGame.teamName);
+        int botP = HotseatCareerManager::get().findHotseatPlayerByTeamName(swos.bottomTeamInGame.teamName);
+        if (topP >= 0 && botP >= 0) {
+            logInfo("Hotseat: Head-to-Head fixture detected between %s (Player %d) and %s (Player %d)",
+                    swos.topTeamInGame.teamName, topP + 1,
+                    swos.bottomTeamInGame.teamName, botP + 1);
+            swos.topTeamData.playerNumber = 1;
+            swos.bottomTeamData.playerNumber = 2;
+            HotseatCareerManager::get().markPlayerMatchCompleted(topP);
+            HotseatCareerManager::get().markPlayerMatchCompleted(botP);
+        }
+    }
 
     saveCurrentMenu();
     startMainGameLoop();

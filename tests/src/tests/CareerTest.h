@@ -18,4 +18,6 @@ private:
     void testForeignMarketPlayerLookup();
     void testHotseatInitializationAndSwapping();
     void testHotseatInterPlayerTransferOffer();
+    void testHotseatHeadToHeadFixture();
+    void testHotseatMultiTeamSelection();
 };

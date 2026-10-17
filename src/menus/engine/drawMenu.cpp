@@ -52,6 +52,12 @@ void drawMenu(bool updateScreen /* = true */)
     executeMenuOnDrawFunction();
 
     if (HotseatCareerManager::get().isActive() && SwosVM::ptrToOffset(getCurrentPackedMenu()) == 482233) {
+        if (getCurrentMenu()->numEntries > 0) {
+            int pIdx = HotseatCareerManager::get().activePlayerIndex() + 1;
+            char banner[32];
+            snprintf(banner, sizeof(banner), "P%d: %s", pIdx, HotseatCareerManager::get().activePlayer().managerName.c_str());
+            copyStringToEntry(0, banner);
+        }
         if (getCurrentMenu()->numEntries > 10) {
             if (HotseatCareerManager::get().canEndTurn()) {
                 copyStringToEntry(10, "END TURN        ");

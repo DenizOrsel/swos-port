@@ -40,6 +40,8 @@ auto CareerTest::getCases() -> CaseList
         { "test foreign market player lookup", "career-foreign-market-lookup", {}, bind(&CareerTest::testForeignMarketPlayerLookup), 1, false },
         { "test hotseat initialization and swapping", "career-hotseat-swapping", {}, bind(&CareerTest::testHotseatInitializationAndSwapping), 1, false },
         { "test hotseat inter-player transfer offer", "career-hotseat-transfers", {}, bind(&CareerTest::testHotseatInterPlayerTransferOffer), 1, false },
+        { "test hotseat head-to-head fixture", "career-hotseat-h2h", {}, bind(&CareerTest::testHotseatHeadToHeadFixture), 1, false },
+        { "test hotseat multi-team selection", "career-hotseat-multi-team", {}, bind(&CareerTest::testHotseatMultiTeamSelection), 1, false },
     };
 }
 
@@ -222,5 +224,96 @@ void CareerTest::testHotseatInterPlayerTransferOffer()
 
     assertEqual(mgr.player(0).newBalance, 8'000'000);
     assertEqual(mgr.player(1).newBalance, 7'000'000);
+}
+
+void CareerTest::testHotseatHeadToHeadFixture()
+{
+    auto& mgr = HotseatCareerManager::get();
+    mgr.reset();
+    std::vector<int16_t> teamIds = { 0x0811, 0x0801, 0x0802 }; // Liverpool, Arsenal, Chelsea
+    mgr.initializeHotseat(teamIds);
+
+    mgr.player(0).teamName = "LIVERPOOL";
+    mgr.player(1).teamName = "ARSENAL";
+    mgr.player(2).teamName = "CHELSEA";
+
+    // Team name lookup
+    assertEqual(mgr.findHotseatPlayerByTeamName("LIVERPOOL"), 0);
+    assertEqual(mgr.findHotseatPlayerByTeamName("ARSENAL*"), 1);
+    assertEqual(mgr.findHotseatPlayerByTeamName("CHELSEA  "), 2);
+    assertEqual(mgr.findHotseatPlayerByTeamName("MANCHESTER UTD"), -1);
+
+    // Team ID lookup
+    assertEqual(mgr.findHotseatPlayerByTeamId(0x0811), 0);
+    assertEqual(mgr.findHotseatPlayerByTeamId(0x0801), 1);
+    assertEqual(mgr.findHotseatPlayerByTeamId(0x0802), 2);
+    assertEqual(mgr.findHotseatPlayerByTeamId(0x0999), -1);
+
+    // Head-to-Head match completion marking
+    assertFalse(mgr.player(0).matchPlayedThisTurn);
+    assertFalse(mgr.player(1).matchPlayedThisTurn);
+    assertFalse(mgr.player(2).matchPlayedThisTurn);
+
+    // Simulate Liverpool vs Arsenal head-to-head match completed
+    mgr.markPlayerMatchCompleted(0);
+    mgr.markPlayerMatchCompleted(1);
+
+    assertTrue(mgr.player(0).matchPlayedThisTurn);
+    assertTrue(mgr.player(1).matchPlayedThisTurn);
+    assertFalse(mgr.player(2).matchPlayedThisTurn);
+}
+
+void CareerTest::testHotseatMultiTeamSelection()
+{
+    auto& mgr = HotseatCareerManager::get();
+    mgr.reset();
+
+    // Simulate 3 teams selected from the same division
+    std::vector<int16_t> teamIds = { 0x0811, 0x0801, 0x0805 }; // Liverpool, Arsenal, Everton
+    mgr.initializeHotseat(teamIds);
+
+    assertEqual(mgr.numPlayers(), 3);
+    assertTrue(mgr.isActive());
+    assertEqual(mgr.activePlayerIndex(), 0);
+
+    // Give each player custom balances & team names
+    mgr.player(0).teamName = "LIVERPOOL";
+    mgr.player(0).newBalance = 15'000'000;
+    mgr.player(1).teamName = "ARSENAL";
+    mgr.player(1).newBalance = 10'000'000;
+    mgr.player(2).teamName = "EVERTON";
+    mgr.player(2).newBalance = 7'000'000;
+
+    // Player 0 turn
+    assertFalse(mgr.canEndTurn());
+    mgr.onMatchCompleted();
+    assertTrue(mgr.canEndTurn());
+
+    bool newRound = mgr.endTurn();
+    assertFalse(newRound); // Round 1 not over yet
+    assertEqual(mgr.activePlayerIndex(), 1);
+
+    // Player 1 turn
+    assertFalse(mgr.canEndTurn());
+    mgr.onMatchCompleted();
+    assertTrue(mgr.canEndTurn());
+
+    newRound = mgr.endTurn();
+    assertFalse(newRound); // Round 1 not over yet
+    assertEqual(mgr.activePlayerIndex(), 2);
+
+    // Player 2 turn
+    assertFalse(mgr.canEndTurn());
+    mgr.onMatchCompleted();
+    assertTrue(mgr.canEndTurn());
+
+    newRound = mgr.endTurn();
+    assertTrue(newRound); // All 3 players completed! New round begins!
+    assertEqual(mgr.activePlayerIndex(), 0);
+
+    // Verify all players' turn tracking reset for the new round
+    assertFalse(mgr.player(0).matchPlayedThisTurn);
+    assertFalse(mgr.player(1).matchPlayedThisTurn);
+    assertFalse(mgr.player(2).matchPlayedThisTurn);
 }
 

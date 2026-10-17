@@ -104,7 +104,12 @@ public:
     // Turn Management
     bool canEndTurn() const;
     void onMatchCompleted();
+    void markPlayerMatchCompleted(int playerIndex);
     bool endTurn(); // Returns true if a new fixture round was started
+
+    // Team and Player lookups
+    int findHotseatPlayerByTeamName(const char *teamName) const;
+    int findHotseatPlayerByTeamId(int16_t teamId) const;
 
     // Inter-Player Transfer queue
     struct TransferOffer {

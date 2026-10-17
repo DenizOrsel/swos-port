@@ -42,13 +42,15 @@ void HotseatCareerManager::initializeHotseat(const std::vector<int16_t>& teamIds
         m_players[i].turnCompleted = false;
     }
 
-    // Save initial context of Player 0 from whatever was loaded during career initialization
     saveCurrentSwosContext(m_players[0]);
+    m_players[0].teamId = teamIds[0];
 }
 
 void HotseatCareerManager::saveCurrentSwosContext(HotseatPlayerContext& ctx)
 {
-    ctx.teamId = *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kSelTeamNumber]);
+    int16_t vmTeamId = *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kSelTeamNumber]);
+    if (vmTeamId != 0 || ctx.teamId == 0)
+        ctx.teamId = vmTeamId;
     ctx.coachOrPlayer = *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kCoachOrPlayer]);
     ctx.mrOrMs = *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kMrOrMs]);
     ctx.nationality = SwosVM::g_memByte[CareerOffsets::kPlNationality];
@@ -157,6 +159,56 @@ bool HotseatCareerManager::endTurn()
     return newRound;
 }
 
+void HotseatCareerManager::markPlayerMatchCompleted(int playerIndex)
+{
+    if (playerIndex >= 0 && playerIndex < m_numPlayers) {
+        m_players[playerIndex].matchPlayedThisTurn = true;
+    }
+}
+
+static bool teamNamesMatch(const std::string& a, const char *b)
+{
+    if (!b || a.empty())
+        return false;
+
+    size_t aLen = a.size();
+    while (aLen > 0 && (a[aLen - 1] == ' ' || a[aLen - 1] == '*'))
+        --aLen;
+
+    size_t bLen = strlen(b);
+    while (bLen > 0 && (b[bLen - 1] == ' ' || b[bLen - 1] == '*'))
+        --bLen;
+
+    if (aLen != bLen)
+        return false;
+
+    return strncmp(a.c_str(), b, aLen) == 0;
+}
+
+int HotseatCareerManager::findHotseatPlayerByTeamName(const char *teamName) const
+{
+    if (!teamName || !m_active)
+        return -1;
+
+    for (int i = 0; i < m_numPlayers; ++i) {
+        if (teamNamesMatch(m_players[i].teamName, teamName))
+            return i;
+    }
+    return -1;
+}
+
+int HotseatCareerManager::findHotseatPlayerByTeamId(int16_t teamId) const
+{
+    if (!m_active)
+        return -1;
+
+    for (int i = 0; i < m_numPlayers; ++i) {
+        if (m_players[i].teamId == teamId)
+            return i;
+    }
+    return -1;
+}
+
 void HotseatCareerManager::queueTransferOffer(const TransferOffer& offer)
 {
     m_transferOffers.push_back(offer);
@@ -188,6 +240,24 @@ void HotseatCareerManager::resolveTransferOffer(size_t offerIndex, bool accepted
             offer.toPlayerIndex >= 0 && offer.toPlayerIndex < m_numPlayers) {
             m_players[offer.fromPlayerIndex].newBalance -= offer.offerAmount;
             m_players[offer.toPlayerIndex].newBalance += offer.offerAmount;
+
+            // Transfer squad member if valid ordinal
+            if (offer.playerOrdinal >= 0 && offer.playerOrdinal < 16) {
+                constexpr size_t kHeaderSize = 76;
+                constexpr size_t kPlayerSize = 38;
+                size_t srcOffset = kHeaderSize + offer.playerOrdinal * kPlayerSize;
+                size_t dstOffset = kHeaderSize + 15 * kPlayerSize; // transfer to reserve slot 15
+
+                auto& sellerTeam = m_players[offer.toPlayerIndex].careerTeam;
+                auto& buyerTeam = m_players[offer.fromPlayerIndex].careerTeam;
+                std::memcpy(&buyerTeam[dstOffset], &sellerTeam[srcOffset], kPlayerSize);
+            }
+
+            // Sync with current VM memory if active player is involved
+            if (offer.fromPlayerIndex == m_activePlayerIndex || offer.toPlayerIndex == m_activePlayerIndex) {
+                *reinterpret_cast<int32_t *>(&SwosVM::g_memByte[CareerOffsets::kNewBalance]) =
+                    m_players[m_activePlayerIndex].newBalance;
+            }
         }
     }
 }
