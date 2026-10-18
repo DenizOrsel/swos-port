@@ -411,6 +411,7 @@ aDiy, array const char
 
 InitCareerVariables, function
 InitCareer, function
+LoadLiverpool, function
 ChooseTeamAndStartCareer, function
 SetDefaultNameAndSurname, function
 InitHighestScorersTable, function
