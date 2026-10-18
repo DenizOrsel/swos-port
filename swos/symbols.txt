@@ -172,8 +172,8 @@ nullsub_5
 nullsub_6
 cseg_60003
 cseg_88373 - cseg_883B8
-cseg_8BC06 - cseg_8BF1A
 GlobalRetn
+
 dataStart - aChairmanScenes
 # get rid of comments too
 introTeamChantIndices - PIT_countdown
@@ -410,6 +410,8 @@ aTact, array const char
 aDiy, array const char
 
 InitCareerVariables, function
+InitCareer, function
+ChooseTeamAndStartCareer, function
 SetDefaultNameAndSurname, function
 InitHighestScorersTable, function
 InitUserTactics, function
