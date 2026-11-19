@@ -2,6 +2,7 @@
 #include "log.h"
 #include "util.h"
 #include "dirent.h"
+#include "hotseatCareer.h"
 
 #ifdef _WIN32
 # include <direct.h>
@@ -139,6 +140,27 @@ static void loadFileImp()
 
     D0 = 0;
     D1 = loadFile(filename, buffer);
+
+    if (filename) {
+        std::string fname(filename);
+        if (fname.size() >= 4) {
+            std::string ext = fname.substr(fname.size() - 4);
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            if (ext == ".car") {
+                std::string hotPath = fname.substr(0, fname.size() - 4) + ".hot";
+                std::string fullHotPath = isAbsolutePath(hotPath.c_str()) ? hotPath : (m_rootDir + hotPath);
+                SDL_RWops *testFile = SDL_RWFromFile(fullHotPath.c_str(), "rb");
+                if (testFile) {
+                    SDL_RWclose(testFile);
+                    if (!HotseatCareerManager::get().loadFromFile(fullHotPath)) {
+                        HotseatCareerManager::get().reset();
+                    }
+                } else {
+                    HotseatCareerManager::get().reset();
+                }
+            }
+        }
+    }
 }
 
 // LoadFile
@@ -182,7 +204,20 @@ static int writeFileImp()
     auto buffer = A1.as<char *>();
     auto bufferSize = D1;
 
-    return saveFile(filename, buffer, bufferSize);
+    int ok = saveFile(filename, buffer, bufferSize);
+    if (ok && filename && HotseatCareerManager::get().isActive()) {
+        std::string fname(filename);
+        if (fname.size() >= 4) {
+            std::string ext = fname.substr(fname.size() - 4);
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            if (ext == ".car") {
+                std::string hotPath = fname.substr(0, fname.size() - 4) + ".hot";
+                std::string fullHotPath = isAbsolutePath(hotPath.c_str()) ? hotPath : (m_rootDir + hotPath);
+                HotseatCareerManager::get().saveToFile(fullHotPath);
+            }
+        }
+    }
+    return ok;
 }
 
 // WriteFile

@@ -222,12 +222,15 @@ public:
             return;
 
         // gotta have one non-removed node at the end, so next() doesn't loop away into outer space
+        auto sentinelOffset = m_data.spaceUsed();
         auto sentinelBuf = m_data.add(Node::requiredSize(1));
-        m_end = new (sentinelBuf) Node("z", 1, 0);
+        new (sentinelBuf) Node("z", 1, 0);
 
         constexpr auto kLookupNodeSize = sizeof(LookupNode);
         auto alignment = (kLookupNodeSize - m_data.spaceUsed() % kLookupNodeSize) % kLookupNodeSize;
         auto buf = m_data.add((m_count + 1) * kLookupNodeSize + alignment);
+        // recompute m_end after all additions in case m_data reallocated
+        m_end = reinterpret_cast<Node *>(m_data.begin() + sentinelOffset);
         m_nodes = reinterpret_cast<LookupNode *>(buf + alignment);
 
         auto node = reinterpret_cast<Node *>(m_data.begin());

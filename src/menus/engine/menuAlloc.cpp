@@ -38,6 +38,9 @@ void menuFree(size_t size)
 
 char *menuAllocString(const char *str)
 {
+    if (!str)
+        return nullptr;
+
     auto buf = m_menuMemory;
 
     int len = 0;

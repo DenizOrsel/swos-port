@@ -426,12 +426,41 @@ aDiy, array const char
 
 InitCareerVariables, function
 InitCareer, function
+CareerInitVars, function
+CalculateStartingBalance, function
 LoadLiverpool, function
 ChooseTeamAndStartCareer, function
 SetDefaultNameAndSurname, function
 InitHighestScorersTable, function
 InitUserTactics, function
 ApplyTeamTactics, function
+VerifyTeamLoaded, function
+GetTeamPointer, function
+FillCareerTeamPlayers, function
+NextMatch, function
+cseg_34DA3, function
+cseg_3B860, function
+cseg_3C07C, function
+cseg_3D204, function
+cseg_5DEB9, function
+cseg_94DB1, function
+cseg_64A65, function
+cseg_567B5, function
+cseg_52B6A, function
+AddPlayerToCareerContest, function
+AddForeignMarketPlayer, function
+FillForeignMarketPlayers, function
+cseg_540A0, function
+cseg_5400D, function
+cseg_5509D, function
+cseg_54F7A, function
+cseg_52EA6, function
+RemovePlayerFromTeam, function
+ShowDomesticPlayerMarket, function
+cseg_54F34, function
+cseg_5A227, function
+cseg_5A666, function
+GetPlayer, function
 diyStatsName, dword
 
 # transfer negotiation variables
@@ -810,7 +839,26 @@ USER_A, TeamTactics (align: 1)
 #
 
 @on-enter
-# currently empty
+InitCareerVariables
+CareerInitVars
+StartContest
+InitializeNewSeason
+cseg_34DA3
+cseg_8B8B8
+cseg_94DB1
+cseg_3C07C
+cseg_8E539
+cseg_8E841
+cseg_8E796
+cseg_8E469
+cseg_29B4A
+cseg_8B7EA
+cseg_8DAC3
+cseg_375C2
+cseg_39392
+cseg_92D55
+cseg_9307A
+cseg_9339D
 
 #
 # insert a call to given C++ function into a proc at a given line
@@ -826,6 +874,41 @@ USER_A, TeamTactics (align: 1)
 AdjustPlayerSkills, @@set_goalie_skill, FixTwoCPUsGameCrash
 ViewOpponentsSelect, 63, RecalculateReachableEntries
 ReturnFromViewOpponent, 9, RecalculateReachableEntries
+InitializeNewSeason, @@out, Hotseat_OnNewSeasonInitialized
+PlayMatchMenu, cseg_347F4, Hotseat_OnAfterPlayMatch
+NextMatch, cseg_34933, Hotseat_OnAfterPlayMatch
+cseg_8B8D9, cseg_8BBD3, Hotseat_OnLeagueCalendarSlotAdded
+cseg_8BC06, cseg_8BE54, Hotseat_OnCupCalendarSlotAdded
+cseg_29B4A, cseg_29DB3, Hotseat_OnCupCalendarSlotAdded
+cseg_2AE07, cseg_2AE96, Hotseat_ResolvePostMatchCalendarSlotPtr
+cseg_2A71E, cseg_2AA61, Hotseat_CommitAndStageNextCalendarSlot
+cseg_34DA3, 66, Hotseat_OnAfterCalcNextMatch
+cseg_8C516, cseg_8C574, Hotseat_OnCalendarInsertSpace
+cseg_32128, cseg_321C3, Hotseat_OnDomesticCupTeamSelect
+cseg_3252E, cseg_325BD, Hotseat_OnTournamentTeamSelect
+CareerGameListCommon, 36, Hotseat_ResolveGameListSlotPtr
+cseg_52A3E, 58, Hotseat_OnAfterReplacementPlayer
+cseg_52EA6, 114, Hotseat_SyncTransferMarkets
+cseg_52EA6, 217, Hotseat_SyncTransferMarkets
+RemovePlayerFromTeam, 10, Hotseat_SyncTransferMarkets
+AddCareerTeamPlayer, 2, Hotseat_OnBeforeAddDomesticMarket
+AddCareerTeamPlayer, 87, Hotseat_OnAfterAddDomesticMarket
+AddRandomForeignMarketPlayer, 2, Hotseat_OnBeforeAddForeignMarket
+AddRandomForeignMarketPlayer, 73, Hotseat_OnAfterAddForeignMarket
+FillForeignMarketPlayers, 22, Hotseat_SyncTransferMarkets
+FillCareerTeamPlayers, 47, Hotseat_SyncTransferMarkets
+cseg_54F7A, cseg_5509C, Hotseat_SyncTransferMarkets
+cseg_5509D, cseg_551BF, Hotseat_SyncTransferMarkets
+cseg_540A0, cseg_540E6, Hotseat_SyncTransferMarkets
+cseg_5400D, cseg_54062, Hotseat_SyncTransferMarkets
+cseg_59B41, 1, Hotseat_SyncTransferMarkets
+cseg_5A227, 1, Hotseat_SyncTransferMarkets
+cseg_5A017, 39, Hotseat_ResolveMarketEntryTeamPtr
+cseg_5A227, 73, Hotseat_ResolveMarketListTeamPtr
+cseg_5A666, 10, @remove
+cseg_5A666, 14, @remove
+cseg_5A666, 15, Hotseat_LookupForeignPoolPlayer
+GetPlayer, @@get_player_offset, Hotseat_ResolveGetPlayerTeamPtr
 
 
 #

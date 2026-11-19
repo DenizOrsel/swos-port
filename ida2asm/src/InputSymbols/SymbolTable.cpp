@@ -1,6 +1,6 @@
 #include "SymbolTable.h"
 
-constexpr int kProcCapacity = 24'000;
+constexpr int kProcCapacity = 48'000;
 constexpr int kReplacementsCapacity = 600;
 
 SymbolTable::SymbolTable() : m_procs(kProcCapacity), m_replacements(kReplacementsCapacity)

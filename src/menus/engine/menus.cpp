@@ -34,30 +34,19 @@ static void executeEndTurn(bool fromSubMenu)
         return;
 
     int oldIdx = mgr.activePlayerIndex();
-    bool newRound = mgr.endTurn();
-    logInfo("Hotseat: Turn ended for Player %d. Active player is now Player %d (newRound=%d)",
-            oldIdx + 1, mgr.activePlayerIndex() + 1, newRound);
-
-    if (newRound) {
-        // All human players have played! Advance calendar round.
-        extern void NextMatch();
-        save68kRegisters();
-        NextMatch();
-        restore68kRegisters();
-
-        // Switch to Player 0 to start the new week
-        mgr.switchToPlayer(0);
-        logInfo("Hotseat: Week advanced. Starting new round for Player 1 (%s)",
-                mgr.player(0).teamName.c_str());
-    }
+    bool newRound = mgr.advanceTurnAndResolveRound();
+    logInfo("Hotseat: Turn ended for Player %d. Active player is now Player %d (%s, newRound=%d)",
+            oldIdx + 1, mgr.activePlayerIndex() + 1, mgr.activePlayer().teamName.c_str(), newRound);
 
     if (fromSubMenu) {
-        // We were in a sub-menu (like DIY_leagueTournamentMenu). Exit it back to contestMenu!
+        // Wait until contestMenu restores before prompting pending transfer offers
+        mgr.setPendingOfferPrompt(true);
         SetExitMenuFlag();
     } else {
-        // We are on contestMenu. Re-activate contestMenu with new player's context.
+        mgr.setPendingOfferPrompt(false);
         A6 = 482233;
         SWOS::ActivateMenu();
+        mgr.processPendingOffersForActivePlayer();
     }
 }
 
@@ -65,8 +54,11 @@ void selectEntry(MenuEntry *entry, int controlMask /* = kShortFireMask */)
 {
     assert(entry && entry->onSelect);
     if (entry && entry->onSelect) {
+        auto currentPacked = getCurrentPackedMenu();
+        uint32_t currentPackedOfs = (currentPacked && SwosVM::isSwosPtr(currentPacked)) ? SwosVM::ptrToOffset(currentPacked) : 0;
+
         // Career Wizard: Handle NEXT PLAYER / CHOOSE CLUB in careerMenu (offset 483353)
-        if (SwosVM::ptrToOffset(getCurrentPackedMenu()) == 483353) {
+        if (currentPackedOfs == 483353) {
             if (HotseatCareerManager::get().isWizardActive()) {
                 if (entry->ordinal == 10) {
                     int p = HotseatCareerManager::get().wizardCurrentPlayer();
@@ -75,12 +67,16 @@ void selectEntry(MenuEntry *entry, int controlMask /* = kShortFireMask */)
                     std::memcpy(mgrName, &SwosVM::g_memByte[CareerOffsets::kManagerNameBuffer], 8);
                     std::memcpy(mgrSurname, &SwosVM::g_memByte[CareerOffsets::kManagerSurnameBuffer], 12);
 
-                    for (int i = 7; i >= 0 && mgrName[i] == ' '; --i) mgrName[i] = 0;
-                    for (int i = 11; i >= 0 && mgrSurname[i] == ' '; --i) mgrSurname[i] = 0;
+                    trimTrailingSwosPadding(mgrName);
+                    trimTrailingSwosPadding(mgrSurname);
+                    const char *nameStart = mgrName;
+                    while (*nameStart == ' ') ++nameStart;
+                    const char *surnameStart = mgrSurname;
+                    while (*surnameStart == ' ') ++surnameStart;
 
                     auto& wp = HotseatCareerManager::get().wizardPlayer(p);
-                    wp.name = (mgrName[0] != 0 && mgrName[0] != ' ') ? mgrName : "PLAYER";
-                    wp.surname = (mgrSurname[0] != 0 && mgrSurname[0] != ' ') ? mgrSurname : std::to_string(p + 1);
+                    wp.name = (*nameStart != '\0') ? nameStart : "PLAYER";
+                    wp.surname = (*surnameStart != '\0') ? surnameStart : std::to_string(p + 1);
                     wp.nationality = SwosVM::g_memByte[CareerOffsets::kPlNationality];
                     wp.coachOrPlayer = swos.coachOrPlayer;
                     wp.mrOrMs = *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kMrOrMs]);
@@ -100,15 +96,13 @@ void selectEntry(MenuEntry *entry, int controlMask /* = kShortFireMask */)
             }
         }
 
-        // Career Club Selection: only allow CPU or PLAYER-COACH, and assign P1..P4 slots
-        if (HotseatCareerManager::get().isSelectingCareerTeams() &&
-            getCurrentPackedMenu() && SwosVM::ptrToOffset(getCurrentPackedMenu()) == 485019) {
+        // Career Club Selection: assign P1..P4 slots using each player's chosen role
+        if (HotseatCareerManager::get().isSelectingCareerTeams() && currentPackedOfs == 485019) {
             if (entry->ordinal >= 8 && entry->ordinal <= 73 && !entry->invisible && entry->fg.string) {
                 auto team = reinterpret_cast<TeamFile *>(entry->fg.string - 5);
                 int curSlot = HotseatCareerManager::get().getTeamSlot(team->globalTeamNumber);
 
                 if (curSlot >= 0) {
-                    // Currently assigned to Player-Coach -> toggle back to CPU!
                     HotseatCareerManager::get().unassignTeamSlot(team->globalTeamNumber);
                     team->teamControls = kComputerTeam;
                     entry->bg.entryColor = 10; // Red (CPU)
@@ -116,12 +110,15 @@ void selectEntry(MenuEntry *entry, int controlMask /* = kShortFireMask */)
                     drawMenu();
                     return;
                 } else {
-                    // Currently CPU -> assign to next available player slot
                     int nextSlot = HotseatCareerManager::get().getNextAvailableSlot();
                     if (nextSlot >= 0 && nextSlot < HotseatCareerManager::get().careerNumPlayers()) {
                         HotseatCareerManager::get().assignTeamSlot(team->globalTeamNumber, nextSlot, team);
-                        team->teamControls = kPlayerCoach;
-                        entry->bg.entryColor = 11; // Purplish (Player-Coach)
+                        int16_t role = 1;
+                        if (nextSlot < HotseatCareerManager::get().wizardTotalPlayers()) {
+                            role = HotseatCareerManager::get().wizardPlayer(nextSlot).coachOrPlayer;
+                        }
+                        team->teamControls = (role == 1) ? kPlayerCoach : kCoach;
+                        entry->bg.entryColor = (role == 1) ? 11 : 13; // Purplish (Player-Coach) / Light Blue (Coach)
                         entry->drawn = 0;
                         drawMenu();
                         return;
@@ -135,10 +132,18 @@ void selectEntry(MenuEntry *entry, int controlMask /* = kShortFireMask */)
 
             if (entry->ordinal == 76) {
                 // PLAY CAREER button
-                if (HotseatCareerManager::get().getAssignedSlotCount() < HotseatCareerManager::get().careerNumPlayers()) {
-                    logInfo("Cannot start career: %d of %d teams selected",
-                            HotseatCareerManager::get().getAssignedSlotCount(),
-                            HotseatCareerManager::get().careerNumPlayers());
+                int assigned = HotseatCareerManager::get().getAssignedSlotCount();
+                int needed = HotseatCareerManager::get().careerNumPlayers();
+                if (assigned < needed) {
+                    char msg[48];
+                    snprintf(msg, sizeof(msg), "SELECT %d MORE CLUB%s!", needed - assigned, (needed - assigned == 1) ? "" : "S");
+                    showContinueAbortPrompt("CLUB SELECTION", "OK", nullptr, { msg }, false);
+                    return;
+                }
+                if (!HotseatCareerManager::get().areAllAssignedTeamsInSameLeague()) {
+                    logInfo("Cannot start career: selected clubs are not in the same league/division!");
+                    showContinueAbortPrompt("INVALID SELECTION", "OK", nullptr,
+                        { "ALL HUMAN CLUBS MUST", "BELONG TO THE SAME", "LEAGUE AND DIVISION!" }, false);
                     return;
                 }
                 save68kRegisters();
@@ -162,50 +167,30 @@ void selectEntry(MenuEntry *entry, int controlMask /* = kShortFireMask */)
         }
 
         if (HotseatCareerManager::get().isActive()) {
-            auto packed = getCurrentPackedMenu();
-            uint32_t offset = packed ? SwosVM::ptrToOffset(packed) : 0;
+            uint32_t offset = currentPackedOfs;
 
             if (offset == 482233) {
                 // contestMenu (Career Hub)
-                // Entry 7 is PLAY MATCH / END TURN
-                if (entry->ordinal == 7) {
-                    if (HotseatCareerManager::get().numPlayers() > 1 &&
-                        HotseatCareerManager::get().canEndTurn()) {
+                auto& mgr = HotseatCareerManager::get();
+                if (mgr.numPlayers() > 1) {
+                    if ((entry->ordinal == 7 || entry->ordinal == 10) && mgr.canEndTurn()) {
                         executeEndTurn(false);
                         return;
                     }
-                }
-
-                // Entry 10 is NEXT MATCH / END TURN
-                if (entry->ordinal == 10) {
-                    if (HotseatCareerManager::get().numPlayers() > 1) {
-                        if (HotseatCareerManager::get().canEndTurn()) {
-                            executeEndTurn(false);
-                            return;
-                        }
-                        // Match not played yet - do not simulate CPU round early
-                        logInfo("Hotseat: Please play match before ending turn");
-                        return;
-                    }
-                }
-
-                // Entry 9 is EXIT
-                if (entry->ordinal == 9) {
-                    logInfo("Hotseat: Player clicked EXIT from career hub. Exiting career mode.");
-                    HotseatCareerManager::get().reset();
-                    save68kRegisters();
-                    swos.controlMask = controlMask;
-                    A5 = entry;
-                    entry->onSelect();
-                    restore68kRegisters();
-                    return;
+                    mgr.syncActivePlayerToHighlightedSlot(true);
                 }
             } else if (offset == 496147) {
                 // DIY_leagueTournamentMenu (League Table / Fixtures screen)
                 if (entry->ordinal == 1) {
                     if (HotseatCareerManager::get().numPlayers() > 1 &&
                         HotseatCareerManager::get().canEndTurn()) {
-                        executeEndTurn(true);
+                        if (HotseatCareerManager::get().inPlayMatchFlow()) {
+                            // Inside PlayMatchMenu/NextMatch flow, exiting returns to cseg_8E539 ->
+                            // cseg_8E3DA -> Hotseat_OnAfterPlayMatch, avoiding mid-flow player/EuroCup swaps.
+                            SetExitMenuFlag();
+                        } else {
+                            executeEndTurn(true);
+                        }
                         return;
                     }
                 } else if (entry->ordinal == 10) {
@@ -227,8 +212,9 @@ void selectEntry(MenuEntry *entry, int controlMask /* = kShortFireMask */)
             }
 
             if (isConfirmOffer && HotseatCareerManager::get().numPlayers() > 1) {
+                auto& mgr = HotseatCareerManager::get();
                 uint16_t teamOffering = swos.teamOffering;
-                int sellerIdx = HotseatCareerManager::get().findHotseatPlayerByTeamId(teamOffering);
+                int sellerIdx = mgr.findHotseatPlayerByTeamId(teamOffering);
 
                 extern void GetTeamPointer();
                 save68kRegisters();
@@ -238,79 +224,68 @@ void selectEntry(MenuEntry *entry, int controlMask /* = kShortFireMask */)
                 restore68kRegisters();
 
                 if (sellerIdx < 0 && sellerTeamFile) {
-                    sellerIdx = HotseatCareerManager::get().findHotseatPlayerByTeamName(sellerTeamFile->teamName);
+                    sellerIdx = mgr.findHotseatPlayerByTeamName(sellerTeamFile->teamName);
                 }
 
-                int buyerIdx = HotseatCareerManager::get().activePlayerIndex();
+                int buyerIdx = mgr.activePlayerIndex();
                 if (sellerIdx >= 0 && sellerIdx != buyerIdx) {
+                    mgr.saveCurrentSwosContext(mgr.player(buyerIdx));
+                    const auto& seller = mgr.player(sellerIdx);
+
                     uint16_t playerIdx = swos.dseg_17A6CE;
                     uint16_t offerAmountK = swos.offerAmount;
                     uint32_t cashAmount = static_cast<uint32_t>(offerAmountK) * 1000;
 
+                    if (seller.careerNumPlayers <= kMinCareerSquadPlayers) {
+                        showContinueAbortPrompt("BID BLOCKED", "OK", nullptr,
+                            { "THAT CLUB ONLY HAS", "16 PLAYERS LEFT AND", "CANNOT SELL ANYONE!" }, false);
+                        SetExitMenuFlag();
+                        return;
+                    }
+
                     char playerName[32] = "PLAYER";
-                    if (sellerTeamFile && playerIdx < 16) {
-                        snprintf(playerName, sizeof(playerName), "%.16s", sellerTeamFile->players[playerIdx].playerName);
-                        for (int len = (int)strlen(playerName) - 1; len >= 0 && (playerName[len] == ' ' || playerName[len] == '*'); --len) {
-                            playerName[len] = '\0';
-                        }
+                    if (playerIdx < seller.careerNumPlayers && playerIdx < kMaxCareerSquadPlayers) {
+                        const auto *sellerPlayers = reinterpret_cast<const PlayerFile *>(seller.careerTeam + sizeof(TeamFileHeader));
+                        snprintf(playerName, sizeof(playerName), "%.22s", sellerPlayers[playerIdx].playerName);
+                        trimTrailingSwosPadding(playerName);
+                    } else if (sellerTeamFile && playerIdx < kNumPlayersInTeam) {
+                        snprintf(playerName, sizeof(playerName), "%.22s", sellerTeamFile->players[playerIdx].playerName);
+                        trimTrailingSwosPadding(playerName);
                     }
 
-                    const auto& sellerPlayer = HotseatCareerManager::get().player(sellerIdx);
-                    const auto& buyerPlayer = HotseatCareerManager::get().player(buyerIdx);
-
-                    char line1[64], line2[64], line3[64], line4[64];
-                    snprintf(line1, sizeof(line1), "PLAYER %d (%s):", sellerIdx + 1, sellerPlayer.managerSurname.c_str());
-                    snprintf(line2, sizeof(line2), "BID FOR %s", playerName);
-                    snprintf(line3, sizeof(line3), "%s OFFERS", buyerPlayer.teamName.c_str());
-                    if (cashAmount >= 1000000) {
-                        snprintf(line4, sizeof(line4), "£%u.%03u,000", cashAmount / 1000000, (cashAmount % 1000000) / 1000);
-                    } else {
-                        snprintf(line4, sizeof(line4), "£%u,000", cashAmount / 1000);
+                    if (mgr.player(buyerIdx).newBalance < static_cast<int32_t>(cashAmount)) {
+                        showContinueAbortPrompt("INSUFFICIENT FUNDS", "OK", nullptr,
+                            { "YOU DO NOT HAVE", "ENOUGH FUNDS FOR THIS", "TRANSFER BID!" }, false);
+                        SetExitMenuFlag();
+                        return;
                     }
 
-                    std::vector<const char*> msgLines = { line1, line2, line3, line4 };
-                    bool accepted = showContinueAbortPrompt("TRANSFER OFFER", "ACCEPT", "REJECT", msgLines, false);
+                    HotseatCareerManager::TransferOffer offer;
+                    offer.fromPlayerIndex = buyerIdx;
+                    offer.toPlayerIndex = sellerIdx;
+                    offer.playerOrdinal = playerIdx;
+                    offer.offerAmount = cashAmount;
+                    offer.pending = true;
+                    offer.accepted = false;
+                    offer.rejected = false;
+                    offer.isCounterOffer = false;
+                    strncpy(offer.playerName, playerName, sizeof(offer.playerName) - 1);
 
-                    if (accepted) {
-                        extern void cseg_592D5();
-                        save68kRegisters();
-                        cseg_592D5();
-                        restore68kRegisters();
+                    int offerId = mgr.queueTransferOffer(offer);
 
-                        // Set SWOS offer accepted flag (dseg_17A6DE = 1)
-                        swos.dseg_17A6DE = 1;
+                    // Prevent SWOS CPU negotiation logic from running
+                    swos.dseg_17A6DE = 0;
 
-                        // Update seller balance and sales
-                        HotseatCareerManager::get().player(sellerIdx).newBalance += cashAmount;
-                        HotseatCareerManager::get().player(sellerIdx).playerSales += cashAmount;
+                    char line1[64], line2[64], line3[64];
+                    snprintf(line1, sizeof(line1), "OFFER OF \x9c%uK SENT TO", cashAmount / 1000);
+                    snprintf(line2, sizeof(line2), "PLAYER %d (%s)", sellerIdx + 1,
+                             mgr.player(sellerIdx).managerSurname.c_str());
+                    snprintf(line3, sizeof(line3), "FOR %s", playerName);
+                    std::vector<const char*> msgLines = { line1, line2, line3, "QUEUED FOR THEIR TURN!" };
+                    showContinueAbortPrompt("BID TRANSMITTED", "CONTINUE", nullptr, msgLines, false);
 
-                        // Sync seller squad in hotseat context
-                        save68kRegisters();
-                        *(uint16_t *)&D0 = teamOffering;
-                        GetTeamPointer();
-                        auto updatedSellerTf = A0.as<TeamFile*>();
-                        restore68kRegisters();
-                        if (updatedSellerTf) {
-                            std::memcpy(HotseatCareerManager::get().player(sellerIdx).careerTeam, updatedSellerTf, sizeof(TeamFile));
-                        }
-
-                        // Sync buyer squad and balances in hotseat context
-                        std::memcpy(HotseatCareerManager::get().player(buyerIdx).careerTeam,
-                                    &SwosVM::g_memByte[CareerOffsets::kCareerTeam], sizeof(TeamFile));
-                        HotseatCareerManager::get().player(buyerIdx).newBalance =
-                            *reinterpret_cast<int32_t*>(&SwosVM::g_memByte[CareerOffsets::kNewBalance]);
-                        HotseatCareerManager::get().player(buyerIdx).playerPurchases =
-                            *reinterpret_cast<int32_t*>(&SwosVM::g_memByte[CareerOffsets::kPlayerPurchases]);
-
-                        logInfo("Hotseat: Player %d accepted transfer offer of £%u from Player %d for %s",
-                                sellerIdx + 1, cashAmount, buyerIdx + 1, playerName);
-                    } else {
-                        // Set SWOS offer rejected flag (dseg_17A6DE = 0)
-                        swos.dseg_17A6DE = 0;
-
-                        logInfo("Hotseat: Player %d rejected transfer offer of £%u from Player %d for %s",
-                                sellerIdx + 1, cashAmount, buyerIdx + 1, playerName);
-                    }
+                    logInfo("Hotseat: Player %d queued transfer offer #%d of £%u for %s to Player %d",
+                            buyerIdx + 1, offerId, cashAmount, playerName, sellerIdx + 1);
 
                     SetExitMenuFlag();
                     return;
@@ -322,10 +297,39 @@ void selectEntry(MenuEntry *entry, int controlMask /* = kShortFireMask */)
 
         swos.controlMask = controlMask;
 
-        A5 = entry;
-        entry->onSelect();
+        struct PlayMatchFlowGuard {
+            HotseatCareerManager& mgr;
+            bool active;
+            PlayMatchFlowGuard(HotseatCareerManager& m, bool enable) : mgr(m), active(enable) {
+                if (active)
+                    mgr.setInPlayMatchFlow(true);
+            }
+            ~PlayMatchFlowGuard() {
+                if (active)
+                    mgr.setInPlayMatchFlow(false);
+            }
+        };
+
+        auto& flowMgr = HotseatCareerManager::get();
+        bool isMatchFlow = currentPackedOfs == 482233 && flowMgr.isActive() && flowMgr.numPlayers() > 1 &&
+                           (entry->ordinal == 7 || entry->ordinal == 10);
+        {
+            PlayMatchFlowGuard guard(flowMgr, isMatchFlow);
+            A5 = entry;
+            entry->onSelect();
+        }
 
         restore68kRegisters();
+
+        if (currentPackedOfs == 482233) {
+            auto& mgr = HotseatCareerManager::get();
+            if (mgr.isActive() && mgr.pendingOfferPrompt()) {
+                mgr.setPendingOfferPrompt(false);
+                if (mgr.processPendingOffersForActivePlayer()) {
+                    mgr.refreshContestMenuUi();
+                }
+            }
+        }
     }
 }
 
@@ -479,16 +483,22 @@ void saveCurrentMenuAndStartGameLoop()
     logInfo("Top team: %s, bottom team: %s", swos.topTeamInGame.teamName, swos.bottomTeamInGame.teamName);
 
     if (HotseatCareerManager::get().isActive()) {
-        int topP = HotseatCareerManager::get().findHotseatPlayerByTeamName(swos.topTeamInGame.teamName);
-        int botP = HotseatCareerManager::get().findHotseatPlayerByTeamName(swos.bottomTeamInGame.teamName);
+        auto& mgr = HotseatCareerManager::get();
+        int topP = mgr.findHotseatPlayerByTeamName(swos.topTeamInGame.teamName);
+        int botP = mgr.findHotseatPlayerByTeamName(swos.bottomTeamInGame.teamName);
         if (topP >= 0 && botP >= 0) {
             logInfo("Hotseat: Head-to-Head fixture detected between %s (Player %d) and %s (Player %d)",
                     swos.topTeamInGame.teamName, topP + 1,
                     swos.bottomTeamInGame.teamName, botP + 1);
-            swos.topTeamData.playerNumber = 1;
-            swos.bottomTeamData.playerNumber = 2;
-            HotseatCareerManager::get().markPlayerMatchCompleted(topP);
-            HotseatCareerManager::get().markPlayerMatchCompleted(botP);
+            // Ensure both sides retain human teamControls so SetupPlayers / ShowPlayMatchMenu choices remain intact
+            if (swos.playMatchTeam1Ptr && swos.playMatchTeam1Ptr->teamControls == kComputerTeam) {
+                swos.playMatchTeam1Ptr->teamControls =
+                    (mgr.player(topP).coachOrPlayer == 1) ? kPlayerCoach : kCoach;
+            }
+            if (swos.playMatchTeam2Ptr && swos.playMatchTeam2Ptr->teamControls == kComputerTeam) {
+                swos.playMatchTeam2Ptr->teamControls =
+                    (mgr.player(botP).coachOrPlayer == 1) ? kPlayerCoach : kCoach;
+            }
         }
     }
 
@@ -496,22 +506,29 @@ void saveCurrentMenuAndStartGameLoop()
     startMainGameLoop();
     restorePreviousMenu();
 
-    if (HotseatCareerManager::get().isActive()) {
-        int topP = HotseatCareerManager::get().findHotseatPlayerByTeamName(swos.topTeamInGame.teamName);
-        int botP = HotseatCareerManager::get().findHotseatPlayerByTeamName(swos.bottomTeamInGame.teamName);
+    if (HotseatCareerManager::get().isActive() && !swos.gameCanceled) {
+        auto& mgr = HotseatCareerManager::get();
+        int topP = mgr.findHotseatPlayerByTeamName(swos.topTeamInGame.teamName);
+        int botP = mgr.findHotseatPlayerByTeamName(swos.bottomTeamInGame.teamName);
+        uint16_t topPen = swos.penaltiesState ? swos.team1PenaltyGoals : 0;
+        uint16_t botPen = swos.penaltiesState ? swos.team2PenaltyGoals : 0;
+
+        mgr.syncPlayersWithSelectedTeams(false);
+        mgr.recordHeadToHeadResult(topP, botP, swos.statsTeam1Goals, swos.statsTeam2Goals, topPen, botPen);
+
         if (topP >= 0) {
-            HotseatCareerManager::get().markPlayerMatchCompleted(topP);
+            mgr.markPlayerMatchCompleted(topP);
             logInfo("Hotseat: Player %d match marked completed (top team %s)", topP + 1, swos.topTeamInGame.teamName);
         }
         if (botP >= 0) {
-            HotseatCareerManager::get().markPlayerMatchCompleted(botP);
+            mgr.markPlayerMatchCompleted(botP);
             logInfo("Hotseat: Player %d match marked completed (bottom team %s)", botP + 1, swos.bottomTeamInGame.teamName);
         }
-        HotseatCareerManager::get().onMatchCompleted();
+        mgr.onMatchCompleted();
         logInfo("Hotseat: Match finished! Active player %d (%s), canEndTurn=%d",
-                HotseatCareerManager::get().activePlayerIndex() + 1,
-                HotseatCareerManager::get().activePlayer().teamName.c_str(),
-                HotseatCareerManager::get().canEndTurn());
+                mgr.activePlayerIndex() + 1,
+                mgr.activePlayer().teamName.c_str(),
+                mgr.canEndTurn());
     }
 }
 

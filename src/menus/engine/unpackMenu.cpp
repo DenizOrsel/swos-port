@@ -402,8 +402,22 @@ void restoreMenu(const void *menu, int selectedEntry)
         assert(markAll == SwosVM::getMemoryMark());
     }
 
+    auto& hotseat = HotseatCareerManager::get();
+    if (hotseat.isActive() && !hotseat.inPlayMatchFlow() &&
+        menu && SwosVM::isSwosPtr(menu) && SwosVM::ptrToOffset(menu) == 482233) {
+        hotseat.syncActivePlayerToHighlightedSlot(true);
+    }
+
     resetMenuMouseData();
     cacheMenuItemBackgrounds();
+
+    if (hotseat.isActive() && hotseat.pendingOfferPrompt() &&
+        menu && SwosVM::isSwosPtr(menu) && SwosVM::ptrToOffset(menu) == 482233) {
+        hotseat.setPendingOfferPrompt(false);
+        if (hotseat.processPendingOffersForActivePlayer()) {
+            hotseat.refreshContestMenuUi();
+        }
+    }
 }
 
 void activateMenu(const void *menu)
@@ -425,19 +439,16 @@ void activateMenu(const void *menu)
         assert(menuMark == menuAlloc(0));
     }
 
-    if (HotseatCareerManager::get().isWizardActive() && SwosVM::ptrToOffset(m_currentMenu) == 483353) {
-        if (HotseatCareerManager::get().wizardCurrentPlayer() > 0) {
-            int p = HotseatCareerManager::get().wizardCurrentPlayer();
-            std::memset(&SwosVM::g_memByte[CareerOffsets::kManagerNameBuffer], ' ', 8);
-            std::string defName = "PLAYER";
-            std::memcpy(&SwosVM::g_memByte[CareerOffsets::kManagerNameBuffer], defName.c_str(), defName.size());
+    if (HotseatCareerManager::get().isActive() &&
+        m_currentMenu && SwosVM::isSwosPtr(m_currentMenu) && SwosVM::ptrToOffset(m_currentMenu) == 482233) {
+        HotseatCareerManager::get().syncActivePlayerToHighlightedSlot(true);
+    }
 
-            std::memset(&SwosVM::g_memByte[CareerOffsets::kManagerSurnameBuffer], ' ', 12);
-            std::string defSurname = std::to_string(p + 1);
-            std::memcpy(&SwosVM::g_memByte[CareerOffsets::kManagerSurnameBuffer], defSurname.c_str(), defSurname.size());
-
-            swos.coachOrPlayer = 1;
-            swos.plNationality = kEng;
+    if (HotseatCareerManager::get().isWizardActive() &&
+        m_currentMenu && SwosVM::isSwosPtr(m_currentMenu) && SwosVM::ptrToOffset(m_currentMenu) == 483353) {
+        int p = HotseatCareerManager::get().wizardCurrentPlayer();
+        if (p > 0) {
+            HotseatCareerManager::get().applyWizardDefaultsToVm(p);
         }
     }
 

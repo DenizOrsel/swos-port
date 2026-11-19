@@ -114,6 +114,9 @@ if (-not (Test-Path "$buildDir\build.ninja")) {
 # 5. Compile
 Write-Host "Compiling target ($BuildType)..." -ForegroundColor Green
 meson compile -C $buildDir
+if ($LASTEXITCODE -ne 0) {
+    throw "Compilation failed with exit code $LASTEXITCODE"
+}
 
 $exePath = "$buildDir\swos-port.exe"
 if (-not (Test-Path $exePath)) {
@@ -125,16 +128,26 @@ Write-Host "Build succeeded: $exePath" -ForegroundColor Green
 if ($RunTests) {
     Write-Host "Compiling test targets..." -ForegroundColor Green
     meson compile -C $buildDir tests
+    if ($LASTEXITCODE -ne 0) {
+        throw "Test compilation failed with exit code $LASTEXITCODE"
+    }
     Write-Host "`n=== Running Tests ===" -ForegroundColor Cyan
     
     Write-Host "1. Animation Table Generator Tests..."
     python "$repoRoot\src\game\animation\testGenerateAnimationTables.py"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Animation generator tests failed with exit code $LASTEXITCODE"
+    }
 
     Write-Host "2. mnu2h Unit Tests..."
     Push-Location "$repoRoot\mnu2h"
     try {
         python -m unittest discover -s tests -p "Test*.py"
-    } finally {
+        if ($LASTEXITCODE -ne 0) {
+            throw "mnu2h unit tests failed with exit code $LASTEXITCODE"
+        }
+    }
+    finally {
         Pop-Location
     }
 
@@ -142,14 +155,23 @@ if ($RunTests) {
     $env:PATH = "$repoRoot\3rd-party\bin\dll\x64\Release;$repoRoot\3rd-party\bin\dll\x64;$buildDir\tests;$env:PATH"
     $buildtestDir = "$repoRoot\buildtest"
     $swosDir = "$buildtestDir\swos-port"
-    if (-not (Test-Path $swosDir) -and (Test-Path "$repoRoot\dist\swos-port-demo-windows-x64.zip")) {
-        Write-Host "Extracting demo package to $buildtestDir..." -ForegroundColor Gray
-        Expand-Archive -Path "$repoRoot\dist\swos-port-demo-windows-x64.zip" -DestinationPath $buildtestDir -Force
+    if (-not (Test-Path "$swosDir\data")) {
+        if (Test-Path "$buildtestDir\data") {
+            $swosDir = $buildtestDir
+        }
+        elseif (Test-Path "$repoRoot\dist\swos-port-demo-windows-x64.zip") {
+            Write-Host "Extracting demo package to $buildtestDir..." -ForegroundColor Gray
+            Expand-Archive -Path "$repoRoot\dist\swos-port-demo-windows-x64.zip" -DestinationPath $buildtestDir -Force
+        }
     }
-    if (Test-Path $swosDir) {
+    if (Test-Path "$swosDir\data") {
         & "$buildDir\tests\tests.exe" "--swos-dir=$swosDir" career joypads swos-data-layout
-    } else {
+    }
+    else {
         & "$buildDir\tests\tests.exe" swos-data-layout
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "C++ test suite failed with exit code $LASTEXITCODE"
     }
 }
 
@@ -166,8 +188,8 @@ if ($Package) {
     foreach ($dir in $redistSearch) {
         if (Test-Path $dir) {
             $crt = Get-ChildItem $dir -Recurse -Filter "msvcp140.dll" -ErrorAction SilentlyContinue |
-                Where-Object { $_.FullName -like "*x64*Microsoft.VC*.CRT*" -and $_.FullName -notlike "*onecore*" } |
-                Select-Object -First 1 -ExpandProperty DirectoryName
+            Where-Object { $_.FullName -like "*x64*Microsoft.VC*.CRT*" -and $_.FullName -notlike "*onecore*" } |
+            Select-Object -First 1 -ExpandProperty DirectoryName
             if ($crt -and (Test-Path $crt)) {
                 $vcRedistDir = $crt
                 break

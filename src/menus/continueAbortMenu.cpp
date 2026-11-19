@@ -28,9 +28,9 @@ bool showContinueAbortPrompt(const char *header, const char *continueText, const
     m_abortDefault = abortDefault;
     m_result = false;
 
-    m_header = menuAllocString(header);
-    m_continueText = menuAllocString(continueText);
-    m_abortText = menuAllocString(abortText);
+    m_header = header ? menuAllocString(header) : nullptr;
+    m_continueText = continueText ? menuAllocString(continueText) : nullptr;
+    m_abortText = abortText ? menuAllocString(abortText) : nullptr;
 
     m_warningText = formMultilineText(messageLines);
 
@@ -93,7 +93,7 @@ static void continueAbortMenuInit()
     else
         abortEntry.hide();
 
-    if (!m_abortDefault)
+    if (!m_abortDefault || !m_abortText)
         setCurrentEntry(cont);
 }
 

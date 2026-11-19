@@ -53,78 +53,62 @@ void drawMenu(bool updateScreen /* = true */)
 
     if (HotseatCareerManager::get().isActive()) {
         auto packed = getCurrentPackedMenu();
-        uint32_t offset = packed ? SwosVM::ptrToOffset(packed) : 0;
-        if (offset == 482233) {
-            if (getCurrentMenu()->numEntries > 0) {
-                int pIdx = HotseatCareerManager::get().activePlayerIndex() + 1;
-                char banner[32];
-                if (HotseatCareerManager::get().canEndTurn()) {
-                    snprintf(banner, sizeof(banner), "P%d: %s (PLAYED)", pIdx,
-                             HotseatCareerManager::get().activePlayer().managerName.c_str());
-                } else {
-                    snprintf(banner, sizeof(banner), "P%d: %s", pIdx,
-                             HotseatCareerManager::get().activePlayer().managerName.c_str());
-                }
-                copyStringToEntry(0, banner);
-            }
-        } else if (offset == 496147) {
-            if (getCurrentMenu()->numEntries > 1) {
-                if (HotseatCareerManager::get().numPlayers() > 1 &&
-                    HotseatCareerManager::get().canEndTurn()) {
-                    // Hide entries 2..8 so Entry 1 ("END TURN") is completely unobstructed and visible
-                    for (int i = 2; i <= 8; ++i) {
-                        auto e = getMenuEntry(i);
-                        if (e) {
-                            e->hide();
-                            e->disable();
-                        }
-                    }
-
-                    auto entry1 = getMenuEntry(1);
-                    if (entry1) {
-                        entry1->show();
-                        entry1->enable();
-                        entry1->leftEntry = -1;
-                        entry1->rightEntry = 10;
-                    }
-                    if (getCurrentMenu()->numEntries > 10) {
-                        auto entry10 = getMenuEntry(10);
-                        if (entry10) {
-                            entry10->show();
-                            entry10->enable();
-                            entry10->leftEntry = 1;
-                        }
-                        copyStringToEntry(10, "HUB ");
-                    }
-                    copyStringToEntry(1, "END TURN        ");
-                    setCurrentEntry(1);
+        uint32_t offset = (packed && SwosVM::isSwosPtr(packed)) ? SwosVM::ptrToOffset(packed) : 0;
+        if (offset == 496147 && getCurrentMenu()->numEntries > 1 &&
+            HotseatCareerManager::get().numPlayers() > 1 &&
+            HotseatCareerManager::get().canEndTurn()) {
+            // Hide entries 2..8 so Entry 1 ("END TURN", x=0..202) stays unobstructed;
+            // keep Entry 9 (STATS, x=203..253) and Entry 10 (HUB, x=254..304) reachable.
+            for (int i = 2; i <= 8; ++i) {
+                if (auto e = getMenuEntry(i)) {
+                    e->hide();
+                    e->disable();
                 }
             }
-        }
-    }
 
-    if (HotseatCareerManager::get().isWizardActive() && SwosVM::ptrToOffset(getCurrentPackedMenu()) == 483353) {
-        int pNum = HotseatCareerManager::get().wizardCurrentPlayer() + 1;
-        char titleBuf[32];
-        snprintf(titleBuf, sizeof(titleBuf), "PLAYER %d DETAILS", pNum);
-        copyStringToEntry(0, titleBuf);
+            auto entry9 = (getCurrentMenu()->numEntries > 9) ? getMenuEntry(9) : nullptr;
+            bool statsAvailable = entry9 && !entry9->invisible;
 
-        if (HotseatCareerManager::get().wizardCurrentPlayer() < HotseatCareerManager::get().wizardTotalPlayers() - 1) {
-            copyStringToEntry(10, "NEXT PLAYER     ");
-        } else {
-            copyStringToEntry(10, "CHOOSE CLUB     ");
-        }
-    }
+            auto entry1 = getMenuEntry(1);
+            if (entry1) {
+                entry1->show();
+                entry1->enable();
+                entry1->leftEntry = -1;
+                entry1->rightEntry = statsAvailable ? 9 : 10;
+            }
+            if (statsAvailable) {
+                entry9->leftEntry = 1;
+                entry9->rightEntry = 10;
+            }
+            if (getCurrentMenu()->numEntries > 10) {
+                if (auto entry10 = getMenuEntry(10)) {
+                    entry10->show();
+                    entry10->enable();
+                    entry10->leftEntry = statsAvailable ? 9 : 1;
+                }
+            }
 
-    if (HotseatCareerManager::get().isSelectingCareerTeams() &&
-        getCurrentPackedMenu() && SwosVM::ptrToOffset(getCurrentPackedMenu()) == 485019) {
-        auto menu = getCurrentMenu();
-        if (menu->numEntries > 76) {
-            copyStringToEntry(76, "PLAY CAREER     ");
+            auto selected = getCurrentMenu()->selectedEntry;
+            if (!selected || selected->invisible || (selected->ordinal >= 2 && selected->ordinal <= 8)) {
+                setCurrentEntry(1);
+            }
         }
     }
 
     drawMenuItems();
+
+    if (HotseatCareerManager::get().isActive() &&
+        HotseatCareerManager::get().numPlayers() > 1 &&
+        HotseatCareerManager::get().anyEuroCupActive() &&
+        !HotseatCareerManager::get().inPlayMatchFlow()) {
+        auto packed = getCurrentPackedMenu();
+        if (packed && SwosVM::isSwosPtr(packed) && SwosVM::ptrToOffset(packed) == 482233) {
+            int euroIdx = HotseatCareerManager::get().activePlayer().euroCupIndex;
+            if (euroIdx >= 0)
+                HotseatCareerManager::get().activateEuroCup(euroIdx, false);
+        }
+    }
+
     drawSelectedFrame();
     if (updateScreen)
         flipInMenu();
@@ -161,7 +145,7 @@ void drawMenuItem(MenuEntry *entry)
 
     if (HotseatCareerManager::get().isActive()) {
         auto packed = getCurrentPackedMenu();
-        if (packed && SwosVM::ptrToOffset(packed) == 496147) {
+        if (packed && SwosVM::isSwosPtr(packed) && SwosVM::ptrToOffset(packed) == 496147) {
             if (HotseatCareerManager::get().numPlayers() > 1 &&
                 HotseatCareerManager::get().canEndTurn()) {
                 if (entry->ordinal == 1) {
@@ -407,16 +391,28 @@ static void drawStringMenuItem(MenuEntry *entry, const char *string)
 
     char customTeamBuf[32];
     char hotseatTextBuf[48];
-    if (HotseatCareerManager::get().isSelectingCareerTeams() &&
-        getCurrentPackedMenu() && SwosVM::ptrToOffset(getCurrentPackedMenu()) == 485019) {
+    auto packed = getCurrentPackedMenu();
+    uint32_t offset = (packed && SwosVM::isSwosPtr(packed)) ? SwosVM::ptrToOffset(packed) : 0;
+
+    if (HotseatCareerManager::get().isWizardActive() && offset == 483353) {
+        if (entry->ordinal == 0) {
+            int pNum = HotseatCareerManager::get().wizardCurrentPlayer() + 1;
+            snprintf(hotseatTextBuf, sizeof(hotseatTextBuf), "PLAYER %d DETAILS", pNum);
+            string = hotseatTextBuf;
+        } else if (entry->ordinal == 10) {
+            string = (HotseatCareerManager::get().wizardCurrentPlayer() < HotseatCareerManager::get().wizardTotalPlayers() - 1)
+                ? "NEXT PLAYER" : "CHOOSE CLUB";
+        }
+    }
+
+    if (HotseatCareerManager::get().isSelectingCareerTeams() && offset == 485019) {
         if (entry->ordinal == 76) {
             string = "PLAY CAREER";
         } else if (entry->ordinal >= 8 && entry->ordinal <= 73 && !entry->invisible && string && *string) {
             int slot = HotseatCareerManager::get().getTeamSlotFromEntry(entry);
             if (slot >= 0) {
                 std::string tName(string);
-                while (!tName.empty() && (tName.back() == ' ' || tName.back() == '*'))
-                    tName.pop_back();
+                trimTrailingSwosPadding(tName);
                 if (tName.size() > 11)
                     tName.resize(11);
                 snprintf(customTeamBuf, sizeof(customTeamBuf), "%s (P%d)", tName.c_str(), slot + 1);
@@ -426,8 +422,6 @@ static void drawStringMenuItem(MenuEntry *entry, const char *string)
     }
 
     if (HotseatCareerManager::get().isActive()) {
-        auto packed = getCurrentPackedMenu();
-        uint32_t offset = packed ? SwosVM::ptrToOffset(packed) : 0;
         if (offset == 482233) {
             if (entry->ordinal == 0) {
                 int pIdx = HotseatCareerManager::get().activePlayerIndex() + 1;
@@ -436,17 +430,15 @@ static void drawStringMenuItem(MenuEntry *entry, const char *string)
                          HotseatCareerManager::get().activePlayer().managerName.c_str(),
                          HotseatCareerManager::get().canEndTurn() ? " (PLAYED)" : "");
                 string = hotseatTextBuf;
-            } else if (entry->ordinal == 7) {
-                if (HotseatCareerManager::get().numPlayers() > 1) {
-                    string = HotseatCareerManager::get().canEndTurn() ? "END TURN" : "PLAY MATCH";
-                }
-            } else if (entry->ordinal == 10) {
-                if (HotseatCareerManager::get().numPlayers() > 1) {
-                    string = HotseatCareerManager::get().canEndTurn() ? "END TURN" : "NEXT MATCH";
-                }
+            } else if (entry->ordinal == 7 && HotseatCareerManager::get().numPlayers() > 1) {
+                if (HotseatCareerManager::get().canEndTurn())
+                    string = "END TURN";
+            } else if (entry->ordinal == 10 && HotseatCareerManager::get().numPlayers() > 1) {
+                if (HotseatCareerManager::get().canEndTurn())
+                    string = "END TURN";
             }
         } else if (offset == 496147) {
-            if (entry->ordinal == 0 && string && *string) {
+            if (entry->ordinal == 0 && string && *string && HotseatCareerManager::get().numPlayers() > 1) {
                 if (strncmp(string, "[P", 2) != 0) {
                     int pIdx = HotseatCareerManager::get().activePlayerIndex() + 1;
                     snprintf(hotseatTextBuf, sizeof(hotseatTextBuf), "[P%d] %s", pIdx, string);
