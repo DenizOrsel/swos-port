@@ -411,6 +411,12 @@ static void drawStringMenuItem(MenuEntry *entry, const char *string)
         } else if (entry->ordinal >= 8 && entry->ordinal <= 73 && !entry->invisible && string && *string) {
             int slot = HotseatCareerManager::get().getTeamSlotFromEntry(entry);
             if (slot >= 0) {
+                // Re-apply human colors when returning to a league list after browsing other countries/leagues
+                auto& mgr = HotseatCareerManager::get();
+                int16_t role = (slot < mgr.wizardTotalPlayers()) ? mgr.wizardPlayer(slot).coachOrPlayer : 1;
+                auto *team = reinterpret_cast<TeamFile *>(entry->fg.string - 5);
+                team->teamControls = (role == 1) ? kPlayerCoach : kCoach;
+                entry->bg.entryColor = (role == 1) ? 11 : 13;
                 std::string tName(string);
                 trimTrailingSwosPadding(tName);
                 size_t maxLen = (slot + 1 >= 10) ? 10 : 11;

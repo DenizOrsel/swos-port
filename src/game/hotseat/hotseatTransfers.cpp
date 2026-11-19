@@ -683,7 +683,12 @@ bool HotseatCareerManager::processPendingOffersForActivePlayer()
 
     saveCurrentSwosContext(m_players[m_activePlayerIndex]);
 
-    for (const auto& offer : pending) {
+    for (const auto& queuedOffer : pending) {
+        const auto *liveOffer = getTransferOfferById(queuedOffer.id);
+        if (!liveOffer || !liveOffer->pending)
+            continue;
+        TransferOffer offer = *liveOffer;
+
         char line1[64], line2[96], line3[96], line4[64];
         char amtStr[32], termStr[96];
         formatCurrencyAmount(amtStr, sizeof(amtStr), offer.offerAmount);
@@ -953,10 +958,13 @@ void HotseatCareerManager::syncTransferMarketPoolsForCurrentPlayer()
 
             int ownerIdx = findHotseatPlayerByTeamId(static_cast<int16_t>(e.teamId));
             if (ownerIdx >= 0) {
-                bool sameCountry = (static_cast<uint8_t>(m_players[ownerIdx].teamId & 0xFF) == activeCountry);
+                const auto& owner = m_players[ownerIdx];
+                if (owner.isNationalSelector != 0)
+                    continue;
+                bool sameCountry = (static_cast<uint8_t>(owner.teamId & 0xFF) == activeCountry);
                 if (ownerIdx == m_activePlayerIndex || sameCountry != isDomesticPool)
                     continue;
-                if (!isOrdinalInHotseatTransferList(m_players[ownerIdx], e.playerOrdinal))
+                if (!isOrdinalInHotseatTransferList(owner, e.playerOrdinal))
                     continue;
             } else {
                 bool sameCountry = (static_cast<uint8_t>(e.teamId & 0xFF) == activeCountry);
@@ -974,6 +982,8 @@ void HotseatCareerManager::syncTransferMarketPoolsForCurrentPlayer()
             if (ownerIdx == m_activePlayerIndex)
                 continue;
             const auto& owner = m_players[ownerIdx];
+            if (owner.isNationalSelector != 0)
+                continue;
             bool sameCountry = (static_cast<uint8_t>(owner.teamId & 0xFF) == activeCountry);
             if (sameCountry != isDomesticPool)
                 continue;

@@ -140,12 +140,8 @@ void selectEntry(MenuEntry *entry, int controlMask /* = kShortFireMask */)
                     showContinueAbortPrompt("CLUB SELECTION", "OK", nullptr, { msg }, false);
                     return;
                 }
-                if (!HotseatCareerManager::get().areAllAssignedTeamsInSameLeague()) {
-                    logInfo("Cannot start career: selected clubs are not in the same league/division!");
-                    showContinueAbortPrompt("INVALID SELECTION", "OK", nullptr,
-                        { "ALL HUMAN CLUBS MUST", "BELONG TO THE SAME", "LEAGUE AND DIVISION!" }, false);
-                    return;
-                }
+                // Human clubs may come from different leagues, divisions and countries: each distinct
+                // (country, division) becomes its own LeagueWorld when the career starts.
                 save68kRegisters();
                 swos.controlMask = controlMask;
                 A5 = entry;
@@ -155,8 +151,8 @@ void selectEntry(MenuEntry *entry, int controlMask /* = kShortFireMask */)
             }
 
             if (entry->ordinal == 74) {
-                // CHANGE TEAMS button
-                HotseatCareerManager::get().unassignAllTeamSlots();
+                // CHOOSE/CHANGE TEAMS button: browse another country/league while keeping already assigned
+                // clubs, so players can pick clubs from different leagues and countries.
                 save68kRegisters();
                 swos.controlMask = controlMask;
                 A5 = entry;

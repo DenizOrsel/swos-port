@@ -81,6 +81,7 @@ auto CareerTest::getCases() -> CaseList
         { "test hotseat multi-world country/league multiplexer", "career-hotseat-multi-world-mux", {}, bind(&CareerTest::testHotseatMultiWorldMultiplexer), 1, false },
         { "test hotseat multi-world lockstep and cpu round stepping", "career-hotseat-multi-world-lockstep", {}, bind(&CareerTest::testHotseatMultiWorldLockstep), 1, false },
         { "test hotseat Div 3 to Div 2 split and cross-league job offer", "career-hotseat-div3-div2-split", {}, bind(&CareerTest::testHotseatDiv3ToDiv2SplitAndCrossLeagueJobOffer), 1, false },
+        { "test hotseat multi-country career setup, cross-country transfers, V9 save, and season transition", "career-hotseat-multi-country", {}, bind(&CareerTest::testHotseatMultiCountryCareer), 1, false },
     };
 }
 
@@ -4454,6 +4455,385 @@ void CareerTest::testHotseatDiv3ToDiv2SplitAndCrossLeagueJobOffer()
     assertEqual(mgr.worldCount(), 2);
     assertTrue(mgr.leagueWorlds().count(engDiv2Key) != 0);
     assertTrue(mgr.leagueWorlds().count({ 38, 0 }) != 0);
+
+    mgr.reset();
+    SWOS_UnitTest::setMenuCallback();
+}
+
+void CareerTest::testHotseatMultiCountryCareer()
+{
+    constexpr int16_t kManUtd = 0x1408;     // England Div 0 (country 8, ord 20)
+    constexpr int16_t kFenerbahce = 0x0926; // Turkey Div 0 (country 38, ord 9)
+
+    extern void LoadTeamFile();
+    extern void LoadCareerFile();
+
+    auto loadRealTeamFile = [&](uint8_t countryFileNo, int16_t targetTeamId, TeamFile *firstOtherPremOut = nullptr) -> TeamFile {
+        save68kRegisters();
+        D0 = countryFileNo;
+        LoadTeamFile();
+        restore68kRegisters();
+
+        uint16_t fileCount = (static_cast<uint16_t>(SwosVM::g_memByte[CareerOffsets::kTeamFileBuffer]) << 8) |
+                             SwosVM::g_memByte[CareerOffsets::kTeamFileBuffer + 1];
+        TeamFile found{};
+        bool gotTarget = false;
+        bool gotOther = (firstOtherPremOut == nullptr);
+        for (uint16_t t = 0; t < fileCount; ++t) {
+            const auto *tf = reinterpret_cast<const TeamFile *>(
+                &SwosVM::g_memByte[CareerOffsets::kTeamFileBuffer + 2 + static_cast<size_t>(t) * sizeof(TeamFile)]);
+            int16_t tid = static_cast<int16_t>(*reinterpret_cast<const uint16_t *>(tf));
+            if (tid == targetTeamId && !gotTarget) {
+                found = *tf;
+                gotTarget = true;
+            } else if (!gotOther && tf->league == 0 && tid != targetTeamId) {
+                *firstOtherPremOut = *tf;
+                gotOther = true;
+            }
+        }
+        assertTrue(gotTarget);
+        assertTrue(gotOther);
+        return found;
+    };
+
+    TeamFile otherEngPremTf{};
+    TeamFile manUtdTf = loadRealTeamFile(0x08, kManUtd, &otherEngPremTf);
+    TeamFile fenerTf = loadRealTeamFile(0x26, kFenerbahce);
+    int16_t otherEngPremId = static_cast<int16_t>(*reinterpret_cast<const uint16_t *>(&otherEngPremTf));
+
+    auto& mgr = HotseatCareerManager::get();
+    mgr.reset();
+
+    SWOS_UnitTest::setMenuCallback([&] {
+        SetExitMenuFlag();
+        return false;
+    });
+
+    // 1. Multi-country setup: check cross-country selection allowed & call initializeStartingWorlds()
+    mgr.setCareerNumPlayers(2);
+    mgr.setSelectingCareerTeams(true);
+    mgr.assignTeamSlot(kManUtd, 0, &manUtdTf);
+    mgr.assignTeamSlot(kFenerbahce, 1, &fenerTf);
+    assertFalse(mgr.areAllAssignedTeamsInSameLeague());
+    mgr.setSelectingCareerTeams(false);
+
+    std::vector<TeamFile> orderedTeams = { manUtdTf, fenerTf };
+    mgr.initializeHotseat({ kManUtd, kFenerbahce });
+    mgr.setInitializingSeason(true);
+
+    struct InitPlayerMeta {
+        const char *name;
+        const char *surname;
+        uint8_t nat;
+        int32_t startBal;
+    };
+    const InitPlayerMeta meta[2] = {
+        { "ALEX", "FERGUSON", 8, 2'000'000 },
+        { "FATIH", "TERIM", 23, 1'500'000 },
+    };
+    for (int i = 0; i < 2; ++i) {
+        auto& p = mgr.player(i);
+        p.managerName = meta[i].name;
+        p.managerSurname = meta[i].surname;
+        p.nationality = meta[i].nat;
+        p.coachOrPlayer = 1;
+        p.careerNumPlayers = 16;
+        char tbuf[18] = {0};
+        std::memcpy(tbuf, orderedTeams[i].teamName, 17);
+        p.teamName = tbuf;
+        std::memcpy(p.careerTeam, &orderedTeams[i], sizeof(TeamFile));
+        auto *tf = reinterpret_cast<TeamFile *>(p.careerTeam);
+        tf->teamControls = kPlayerCoach;
+        p.careerTeamLeague = tf->league;
+        p.startingBalance = meta[i].startBal;
+        p.newBalance = meta[i].startBal;
+        p.oldBalance = meta[i].startBal;
+    }
+
+    mgr.initializeStartingWorlds(orderedTeams);
+    mgr.setInitializingSeason(false);
+
+    assertTrue(mgr.isActive());
+    assertFalse(mgr.isSelectingCareerTeams());
+    assertEqual(mgr.numPlayers(), 2);
+    assertEqual(mgr.player(0).teamId, kManUtd);
+    assertEqual(mgr.player(1).teamId, kFenerbahce);
+    assertEqual(mgr.player(0).managerSurname, std::string("FERGUSON"));
+    assertEqual(mgr.player(1).managerSurname, std::string("TERIM"));
+    assertEqual(mgr.countryWorlds().size(), size_t{2});
+    assertEqual(mgr.leagueWorlds().size(), size_t{2});
+    assertTrue(mgr.countryWorlds().count(8) != 0);
+    assertTrue(mgr.countryWorlds().count(38) != 0);
+    assertTrue(mgr.leagueWorlds().count({ 8, 0 }) != 0);
+    assertTrue(mgr.leagueWorlds().count({ 38, 0 }) != 0);
+    assertTrue(mgr.anyEuroCupActive());
+    assertEqual(static_cast<int>(mgr.player(0).careerNumPlayers), 26);
+    assertEqual(static_cast<int>(mgr.player(1).careerNumPlayers), 26);
+    const uint8_t s1SeasonPlaying = mgr.player(0).seasonPlaying;
+
+    // 2. Multi-country lockstep & mismatched schedule progression
+    const uint16_t startWeek = mgr.globalWeek();
+    const auto initialKey = mgr.activeWorldKey();
+    assertEqual(initialKey.countryFileNo, mgr.worldKeyForPlayer(mgr.activePlayer()).countryFileNo);
+    for (int step = 0; step < 12; ++step) {
+        mgr.stepActiveWorldOneCpuEntrySilently();
+        mgr.saveActiveWorldFromVm();
+        mgr.resolveLockstepAndSelectPlayer(false);
+    }
+    assertTrue(mgr.globalWeek() >= startWeek);
+    assertTrue(mgr.leagueWorlds().at({ 8, 0 }).calStepIdx > 0 || mgr.leagueWorlds().at({ 38, 0 }).calStepIdx > 0);
+
+    // 3. Cross-country transfer market visibility, lookupForeignPoolPlayer, queue & resolveTransferOffer
+    mgr.switchToPlayer(0, true);
+    assertEqual(mgr.activeWorldKey().countryFileNo, uint8_t{8});
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumPlayersOnTransferMarket]) = 1;
+    std::memset(&SwosVM::g_memByte[CareerOffsets::kPlayersOnTransferMarket], 0, kListedPlayersSize);
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kPlayersOnTransferMarket]) = 2;
+    mgr.saveCurrentSwosContext(mgr.player(0));
+    mgr.syncTransferMarketPoolsForCurrentPlayer();
+
+    auto marketHasEntry = [](size_t countOfs, size_t entriesOfs, int maxEntries, uint16_t teamId, uint8_t ord) {
+        uint16_t cnt = std::min<uint16_t>(
+            *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[countOfs]),
+            static_cast<uint16_t>(maxEntries));
+        const uint8_t *buf = &SwosVM::g_memByte[entriesOfs];
+        for (uint16_t i = 0; i < cnt; ++i) {
+            uint16_t tid = *reinterpret_cast<const uint16_t *>(buf + i * 4);
+            uint8_t pOrd = buf[i * 4 + 2];
+            if (tid == teamId && pOrd == ord)
+                return true;
+        }
+        return false;
+    };
+
+    // Active player (P0) must not see own listed player in England's domestic market
+    assertFalse(marketHasEntry(CareerOffsets::kNumHomeMarketPlayers, CareerOffsets::kHomeMarketPlayers,
+                               25, static_cast<uint16_t>(kManUtd), 2));
+
+    // Switch to P1 (Turkey): P0's listed player must appear in Turkey's Foreign Market & lookupForeignPoolPlayer()
+    mgr.switchToPlayer(1, true);
+    assertEqual(mgr.activeWorldKey().countryFileNo, uint8_t{38});
+    assertTrue(marketHasEntry(CareerOffsets::kNumForeignMarketPlayers, CareerOffsets::kForeignMarketPlayers,
+                              15, static_cast<uint16_t>(kManUtd), 2));
+
+    save68kRegisters();
+    D0 = static_cast<uint16_t>(kManUtd);
+    D1 = 2;
+    mgr.lookupForeignPoolPlayer();
+    const auto *poolEntry = reinterpret_cast<const uint8_t *>(&SwosVM::g_memByte[A0]);
+    uint16_t poolTid = *reinterpret_cast<const uint16_t *>(poolEntry);
+    uint8_t poolOrd = poolEntry[2];
+    char poolPlayerName[24] = {};
+    std::memcpy(poolPlayerName, poolEntry + 20 + 3, 23); // PoolPlayerEntry: 2+1+17+PlayerFile(nat+unk+shirt+name[23])
+    restore68kRegisters();
+    assertEqual(poolTid, static_cast<uint16_t>(kManUtd));
+    assertEqual(static_cast<int>(poolOrd), 2);
+    assertTrue(poolPlayerName[0] != '\0');
+
+    // P1 (Turkey) submits a bid to P0 (England) for P0's listed player ord = 2
+    char expectedTransferredName[24] = {};
+    std::memcpy(expectedTransferredName,
+                reinterpret_cast<const PlayerFile *>(mgr.player(0).careerTeam + sizeof(TeamFileHeader))[2].playerName,
+                23);
+
+    int32_t p0PreBal = mgr.player(0).newBalance;
+    int32_t p1PreBal = mgr.player(1).newBalance;
+    constexpr uint32_t kOfferCash = 250'000;
+
+    HotseatCareerManager::TransferOffer offer;
+    offer.fromPlayerIndex = 1;
+    offer.toPlayerIndex = 0;
+    offer.playerOrdinal = 2;
+    offer.offerAmount = kOfferCash;
+    snprintf(offer.playerName, sizeof(offer.playerName), "%.22s", expectedTransferredName);
+    int offerId = mgr.queueTransferOffer(offer);
+
+    mgr.switchToPlayer(0, true);
+    assertEqual(mgr.getPendingOffersForPlayer(0).size(), size_t{1});
+    assertTrue(mgr.resolveTransferOffer(offerId, true));
+
+    assertEqual(mgr.player(0).newBalance, p0PreBal + static_cast<int32_t>(kOfferCash));
+    assertEqual(mgr.player(1).newBalance, p1PreBal - static_cast<int32_t>(kOfferCash));
+    assertEqual(static_cast<int>(mgr.player(0).careerNumPlayers), 25);
+    assertEqual(static_cast<int>(mgr.player(0).numPlayersOnTransferMarket), 0);
+    assertEqual(static_cast<int>(mgr.player(1).careerNumPlayers), 27);
+
+    bool foundInP1 = false;
+    const auto *p1Players = reinterpret_cast<const PlayerFile *>(mgr.player(1).careerTeam + sizeof(TeamFileHeader));
+    for (int i = 0; i < mgr.player(1).careerNumPlayers && i < 30; ++i) {
+        if (std::memcmp(p1Players[i].playerName, expectedTransferredName, 22) == 0) {
+            foundInP1 = true;
+            break;
+        }
+    }
+    assertTrue(foundInP1);
+
+    mgr.switchToPlayer(1, true);
+    assertFalse(marketHasEntry(CareerOffsets::kNumForeignMarketPlayers, CareerOffsets::kForeignMarketPlayers,
+                               15, static_cast<uint16_t>(kManUtd), 2));
+
+    // 4. Cross-country .hot V9 and .CAR round-trip persistence
+    const char *kSaveName = "TMCCAR.CAR";
+    const std::string carPath = pathInRootDir("TMCCAR.CAR");
+    const std::string hotPath = pathInRootDir("TMCCAR.hot");
+    const std::string noExtPath = pathInRootDir("TMCCAR");
+    auto cleanupFiles = [&]() {
+        std::remove(carPath.c_str());
+        std::remove(hotPath.c_str());
+        std::remove(noExtPath.c_str());
+    };
+    cleanupFiles();
+
+    const uint16_t savedGlobalWeek = mgr.globalWeek();
+    const int savedActiveIdx = mgr.activePlayerIndex();
+    const auto savedActiveKey = mgr.activeWorldKey();
+    const int32_t savedP0Bal = mgr.player(0).newBalance;
+    const int32_t savedP1Bal = mgr.player(1).newBalance;
+
+    {
+        uint32_t saveEndOfs = 131757u + 2u + static_cast<uint32_t>(swos.g_numSelectedTeams) * 684u;
+        std::memcpy(&SwosVM::g_memByte[CareerOffsets::kDseg17A3D0], kSaveName, std::strlen(kSaveName) + 1);
+        save68kRegisters();
+        A0 = static_cast<uint32_t>(CareerOffsets::kDseg17A3D0);
+        A1 = static_cast<uint32_t>(CareerOffsets::kTmdCareerCount);
+        D1 = saveEndOfs - static_cast<uint32_t>(CareerOffsets::kTmdCareerCount);
+        int res = SWOS::WriteFile_REAL();
+        assertEqual(res, 0);
+        restore68kRegisters();
+    }
+
+    assertTrue(fileExists(carPath.c_str()));
+    assertTrue(fileExists(hotPath.c_str()));
+    {
+        std::ifstream fMagic(hotPath, std::ios::binary);
+        char magic[16] = {};
+        assertTrue(static_cast<bool>(fMagic.read(magic, sizeof(magic))));
+        assertEqual(std::memcmp(magic, "SWOS_HOTSEAT_V9", 15), 0);
+    }
+
+    // Direct standalone .hot V9 reload
+    mgr.reset();
+    assertTrue(mgr.loadFromFile(hotPath));
+    assertTrue(mgr.isActive());
+    assertEqual(mgr.numPlayers(), 2);
+    assertEqual(mgr.globalWeek(), savedGlobalWeek);
+    assertEqual(mgr.activePlayerIndex(), savedActiveIdx);
+    assertEqual(mgr.activeWorldKey().countryFileNo, savedActiveKey.countryFileNo);
+    assertEqual(mgr.countryWorlds().size(), size_t{2});
+    assertEqual(mgr.leagueWorlds().size(), size_t{2});
+    assertEqual(mgr.player(0).newBalance, savedP0Bal);
+    assertEqual(mgr.player(1).newBalance, savedP1Bal);
+    assertEqual(static_cast<int>(mgr.player(0).careerNumPlayers), 25);
+    assertEqual(static_cast<int>(mgr.player(1).careerNumPlayers), 27);
+
+    // Cold-boot VM wipe + full LoadCareerFile() (.CAR + .hot V9)
+    mgr.reset();
+    swos.selTeamsPtr = 0;
+    swos.g_numSelectedTeams = 0;
+    swos.g_gameType = 0;
+    *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kSelTeamNumber]) = 0;
+    std::memset(&SwosVM::g_memByte[CareerOffsets::kDsegD8CAA], 0, 24);
+    std::memset(&SwosVM::g_memByte[CareerOffsets::kArrayOfPointers], 0, 20);
+    std::memset(&SwosVM::g_memByte[CareerOffsets::kDsegDA0E2], 0, kEuroCupBufferSize);
+
+    {
+        std::memcpy(&SwosVM::g_memByte[CareerOffsets::kDseg17A3D0], kSaveName, std::strlen(kSaveName) + 1);
+        save68kRegisters();
+        A0 = static_cast<uint32_t>(CareerOffsets::kDseg17A3D0);
+        LoadCareerFile();
+        bool loadOk = SwosVM::flags.zero && D0.asWord() == 0;
+        restore68kRegisters();
+        assertTrue(loadOk);
+    }
+
+    assertTrue(mgr.isActive());
+    assertEqual(mgr.countryWorlds().size(), size_t{2});
+    assertEqual(mgr.leagueWorlds().size(), size_t{2});
+    assertEqual(mgr.activePlayerIndex(), savedActiveIdx);
+    assertEqual(mgr.activeWorldKey().countryFileNo, savedActiveKey.countryFileNo);
+    assertEqual(mgr.globalWeek(), savedGlobalWeek);
+    assertEqual(mgr.player(0).newBalance, savedP0Bal);
+    assertEqual(mgr.player(1).newBalance, savedP1Bal);
+    cleanupFiles();
+
+    // 5. End-of-season transition across both countries + cross-country job offer acceptance (Fenerbahce -> England Prem)
+    {
+        int guard = 0;
+        while (!mgr.areAllWorldsSeasonFinished() && guard < 1200) {
+            for (int pi = 0; pi < mgr.numPlayers(); ++pi) {
+                mgr.switchToPlayer(pi, true);
+                mgr.stepActiveWorldOneCpuEntrySilently();
+                mgr.saveActiveWorldFromVm();
+            }
+            ++guard;
+        }
+        assertTrue(mgr.areAllWorldsSeasonFinished());
+    }
+
+    mgr.switchToPlayer(0, true);
+    mgr.onSeasonFinishedForAllPlayers();
+    mgr.player(0).youreSacked = 0;
+    mgr.player(0).retired = 1;
+    mgr.player(0).stayingInOldClub = 0;
+    *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kRetired]) = 1;
+    *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kSeasonFinished]) = 1;
+
+    mgr.player(1).retired = 1;
+    mgr.player(1).numNewJobOffers = 1;
+    seedJobOfferInBuffer(mgr.player(1).newJobOffers, 0, otherEngPremId, otherEngPremTf.teamName, 3'000'000);
+    mgr.switchToPlayer(0, true);
+
+    bool eosP0Done = false, eosP1Done = false, enteredS2 = false;
+    SWOS_UnitTest::setMenuCallback([&] {
+        auto packed = getCurrentPackedMenu();
+        if (packed && SwosVM::isSwosPtr(packed)) {
+            uint32_t ofs = SwosVM::ptrToOffset(packed);
+            if (ofs == CareerOffsets::kCareerOverMenu) {
+                if (mgr.activePlayerIndex() == 0 && !eosP0Done) {
+                    eosP0Done = true;
+                    selectEntry(6); // P0 stays at Man Utd
+                    return false;
+                }
+                if (mgr.activePlayerIndex() == 1 && !eosP1Done) {
+                    eosP1Done = true;
+                    *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kTeamNoOfferAccepted]) = otherEngPremId;
+                    *reinterpret_cast<int32_t *>(&SwosVM::g_memByte[CareerOffsets::kTeamFundsAccepted]) = 3'000'000;
+                    mgr.onAfterAcceptJobOffer();
+                    selectEntry(6); // P1 accepts cross-country England Prem offer
+                    enteredS2 = true;
+                    return false;
+                }
+            } else if (ofs == CareerOffsets::kContestMenu && enteredS2) {
+                SetExitMenuFlag();
+                return false;
+            }
+        }
+        SetExitMenuFlag();
+        return false;
+    });
+
+    swos.g_exitMenu = 0;
+    A6 = CareerOffsets::kContestMenu;
+    SWOS::ShowMenu();
+
+    assertTrue(eosP0Done);
+    assertTrue(eosP1Done);
+    assertTrue(enteredS2);
+    assertEqual(mgr.player(0).teamId, kManUtd);
+    assertEqual(mgr.player(1).teamId, otherEngPremId);
+    assertEqual(static_cast<int>(mgr.player(0).seasonPlaying), static_cast<int>(s1SeasonPlaying) + 1);
+    assertEqual(static_cast<int>(mgr.player(1).seasonPlaying), static_cast<int>(s1SeasonPlaying) + 1);
+    assertEqual(mgr.worldKeyForPlayer(mgr.player(0)).countryFileNo, uint8_t{8});
+    assertEqual(mgr.worldKeyForPlayer(mgr.player(1)).countryFileNo, uint8_t{8});
+    assertEqual(mgr.leagueWorlds().count({ 8, 0 }), size_t{1});
+    assertEqual(mgr.leagueWorlds().count({ 38, 0 }), size_t{0});
+
+    const TeamFile *manUtdS2 = findSelectedTeamById(kManUtd);
+    const TeamFile *otherEngS2 = findSelectedTeamById(otherEngPremId);
+    assertTrue(manUtdS2 != nullptr);
+    assertTrue(otherEngS2 != nullptr);
+    assertTrue(manUtdS2->teamControls == kPlayerCoach || manUtdS2->teamControls == kCoach);
+    assertTrue(otherEngS2->teamControls == kPlayerCoach || otherEngS2->teamControls == kCoach);
 
     mgr.reset();
     SWOS_UnitTest::setMenuCallback();

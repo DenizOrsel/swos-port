@@ -5,6 +5,7 @@
 #include <array>
 #include <vector>
 #include <map>
+#include <iosfwd>
 
 constexpr int kMaxHotseatPlayers = 32;
 constexpr int kLegacyV7MaxHotseatPlayers = 4;
@@ -467,6 +468,12 @@ public:
     void setRoundCalendarIndex(int idx) { m_roundCalendarIndex = idx; }
     uint16_t globalWeek() const { return m_globalWeek; }
     void setGlobalWeek(uint16_t week) { m_globalWeek = week; }
+    // Builds every starting (country, division) world for the already-configured players (setup wizard / tests).
+    // Returns the index of the player whose turn comes first.
+    int initializeStartingWorlds(const std::vector<TeamFile>& orderedTeams);
+    // .hot V9 multi-world persistence (country worlds, league worlds, lockstep cursor, EuroCup hosts, club cache)
+    bool writeWorldsV9(std::ofstream& out) const;
+    bool readWorldsV9(std::ifstream& in);
     bool areAllWorldsSeasonFinished() const;
     bool stepActiveWorldOneCpuEntrySilently();
     bool resolveLockstepAndSelectPlayer(bool refreshUi = true);

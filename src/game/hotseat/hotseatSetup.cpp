@@ -198,10 +198,254 @@ int HotseatCareerManager::getTeamSlotFromEntry(const MenuEntry *entry) const
     return getTeamSlot(tf->globalTeamNumber);
 }
 
+void cseg_5DEB9();
+void cseg_3D204();
+void cseg_64A65();
+
+namespace {
+
+void applyPlayerIdentityToVm(const HotseatPlayerContext& p)
+{
+    swos.coachOrPlayer = p.coachOrPlayer;
+    swos.plNationality = p.nationality;
+    *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kMrOrMs]) = p.mrOrMs;
+    std::memset(&SwosVM::g_memByte[CareerOffsets::kManagerSexBuffer], 0, 5);
+    std::memcpy(&SwosVM::g_memByte[CareerOffsets::kManagerSexBuffer], p.mrOrMs != 0 ? "MS" : "MR", 2);
+
+    std::memset(&SwosVM::g_memByte[CareerOffsets::kManagerNameBuffer], 0, 9);
+    size_t nlen = std::min(p.managerName.size(), size_t{8});
+    std::memcpy(&SwosVM::g_memByte[CareerOffsets::kManagerNameBuffer], p.managerName.data(), nlen);
+
+    std::memset(&SwosVM::g_memByte[CareerOffsets::kManagerSurnameBuffer], 0, 13);
+    size_t slen = std::min(p.managerSurname.size(), size_t{12});
+    std::memcpy(&SwosVM::g_memByte[CareerOffsets::kManagerSurnameBuffer], p.managerSurname.data(), slen);
+}
+
+// Initializes a non-representative human club inside the world (league/division) that was just built by
+// InitCareer() for the representative player `rep`, mirroring what SWOS does for the career club.
+void initSiblingPlayerInWorld(HotseatCareerManager& mgr, HotseatPlayerContext& p, const HotseatPlayerContext& rep,
+                              const TeamFile& team)
+{
+    p.currentSeasonShowing = rep.currentSeasonShowing;
+    p.currentSeasonNumber = rep.currentSeasonNumber;
+    p.seasonPlaying = rep.seasonPlaying;
+    p.dsegD6CA2 = rep.dsegD6CA2;
+    p.dsegD7E66 = rep.dsegD7E66;
+    p.dsegE0048 = rep.dsegE0048;
+    p.dsegD6B62 = rep.dsegD6B62;
+    p.dsegD6B64 = rep.dsegD6B64;
+    p.dsegD6B94 = rep.dsegD6B94;
+    p.dsegD6C46 = rep.dsegD6C46;
+    p.additionalInvestments = rep.additionalInvestments;
+    p.dsegD6CDC = rep.dsegD6CDC;
+    p.teamNoOfferAccepted = rep.teamNoOfferAccepted;
+    p.teamFundsAccepted = rep.teamFundsAccepted;
+    p.dsegD6D0C = rep.dsegD6D0C;
+    p.timeToNegotiate = rep.timeToNegotiate;
+    p.stayingInOldClub = 0;
+    p.careerNumPlayers = 16;
+    p.careerTeamLeague = reinterpret_cast<const TeamFile *>(p.careerTeam)->league;
+    p.numPlayersOnTransferMarket = 0;
+    std::memset(p.playersOnTransferMarket, 0, sizeof(p.playersOnTransferMarket));
+    std::memset(p.dsegD6F26Block, 0, sizeof(p.dsegD6F26Block));
+    std::memset(p.dsegD6DBA, 0, sizeof(p.dsegD6DBA));
+    std::memset(p.newJobOffers, 0, sizeof(p.newJobOffers));
+    std::memset(p.jobOffers, 0, sizeof(p.jobOffers));
+    std::memset(p.playerTrialWeeks, 0, sizeof(p.playerTrialWeeks));
+    std::memset(p.currentMatchPlayers, 0, kCurrentMatchPlayersSize);
+    std::memcpy(p.currentMatchPlayers, team.playerNumbers, kNumPlayersInTeam);
+    std::memset(p.trainingMatchSavedPlayers, 0, kCurrentMatchPlayersSize);
+    std::memcpy(p.trainingMatchSavedPlayers, team.playerNumbers, kNumPlayersInTeam);
+    std::memset(p.dsegD8B8C, 0, kCurrentMatchPlayersSize);
+    p.dsegD761A = 0xFFFF;
+    p.dsegD761C = 0;
+    p.dsegD8B6A = 0xFFFF;
+    std::memset(&p.careerTeam[sizeof(TeamFile)], 0, kCareerTeamBufferSize - sizeof(TeamFile));
+    writeTeamCoachName(p.careerTeam, p.managerName, p.managerSurname);
+    std::memcpy(p.userTactics, rep.userTactics, 6 * kUserTacticsSize);
+    std::memcpy(p.careerHistory, rep.careerHistory, sizeof(p.careerHistory));
+
+    size_t histOfs = static_cast<size_t>(p.currentSeasonShowing) * kCareerHistoryEntrySize;
+    if (histOfs + kCareerHistoryEntrySize <= kCareerHistoryBufferSize) {
+        *reinterpret_cast<uint16_t *>(&p.careerHistory[histOfs]) = p.teamId;
+        std::memset(&p.careerHistory[histOfs + 2], 0, 18);
+        std::memcpy(&p.careerHistory[histOfs + 2], p.teamName.c_str(), std::min(p.teamName.size(), size_t{17}));
+        uint32_t euroStrOfs = 0;
+        if (p.euroCupIndex >= 0 && p.euroCupIndex < kNumEuroCups && mgr.isEuroCupActive(p.euroCupIndex)) {
+            mgr.activateEuroCup(p.euroCupIndex, false);
+            uint32_t strPtr = *reinterpret_cast<const uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDA109]);
+            euroStrOfs = (strPtr >= CareerOffsets::kChairmanScenes) ? (strPtr - CareerOffsets::kChairmanScenes) : 0;
+        }
+        *reinterpret_cast<uint32_t *>(&p.careerHistory[histOfs + 34]) = euroStrOfs;
+    }
+
+    mgr.loadSwosContext(p, true);
+    save68kRegisters();
+    if (hasCountryInSelectedTeams(static_cast<uint8_t>(p.teamId & 0xFF))) {
+        cseg_64A65();
+    } else if (!isVmNationalSelector()) {
+        static const uint8_t kReservePositions[10] = { 2, 1, 5, 4, 3, 3, 6, 6, 7, 7 };
+        for (int r = 0; r < 10; ++r) {
+            int ord = 16 + r;
+            auto *pf = reinterpret_cast<PlayerFile *>(
+                &SwosVM::g_memByte[CareerOffsets::kCareerTeam + kTeamFileHeaderSize + ord * kPlayerFileSize]);
+            std::memset(pf, 0, kPlayerFileSize);
+            pf->shirtNumber = 16;
+            pf->positionAndFace = static_cast<byte>(kReservePositions[r] << 5);
+            populateNamedTrialPlayerSlot(&SwosVM::g_memByte[CareerOffsets::kCareerTeam],
+                                         &SwosVM::g_memByte[CareerOffsets::kDsegD6C26],
+                                         ord, static_cast<uint16_t>(p.teamId), false);
+            SwosVM::g_memByte[CareerOffsets::kCurrentMatchPlayers + ord] = static_cast<uint8_t>(ord);
+            SwosVM::g_memByte[CareerOffsets::kTrainingMatchSavedPlayers + ord] = static_cast<uint8_t>(ord);
+            SwosVM::g_memByte[CareerOffsets::kDsegD8B8C + ord] = pf->shirtNumber;
+        }
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]) = 26;
+    }
+    cseg_5DEB9();
+    cseg_3D204();
+    restore68kRegisters();
+    mgr.saveCurrentSwosContext(p);
+}
+
+void clearUnusedCupBuffersInVm(const HotseatCareerManager& mgr)
+{
+    if (*reinterpret_cast<const uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8CAA + 8]) == 0) {
+        std::memset(&SwosVM::g_memByte[CareerOffsets::kDsegD985C], 0, kCup2BufferSize);
+    }
+    if (!mgr.anyEuroCupActive() && *reinterpret_cast<const uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8CB6]) == 0) {
+        uint8_t schedTpl[6];
+        std::memcpy(schedTpl, &SwosVM::g_memByte[CareerOffsets::kDsegDA11F], sizeof(schedTpl));
+        std::memset(&SwosVM::g_memByte[CareerOffsets::kDsegDA0E2], 0, kEuroCupBufferSize);
+        std::memcpy(&SwosVM::g_memByte[CareerOffsets::kDsegDA11F], schedTpl, sizeof(schedTpl));
+    }
+}
+
+} // namespace
+
+int HotseatCareerManager::initializeStartingWorlds(const std::vector<TeamFile>& orderedTeams)
+{
+    extern void InitCareer();
+
+    int numPlayers = std::min<int>(m_numPlayers, static_cast<int>(orderedTeams.size()));
+    if (numPlayers < 1)
+        return 0;
+
+    ScopedInitializingSeason initSeasonGuard(*this);
+
+    // Group human clubs by their starting (country, division) world, keeping first-appearance order so the
+    // world of player 1 is always built first (and owns the shared European cup draw).
+    std::vector<LeagueWorldKey> worldOrder;
+    std::map<LeagueWorldKey, std::vector<int>> worldPlayers;
+    for (int i = 0; i < numPlayers; ++i) {
+        LeagueWorldKey key;
+        key.countryFileNo = static_cast<uint8_t>(static_cast<uint16_t>(m_players[i].teamId) & 0xFFu);
+        key.divisionId = orderedTeams[i].league;
+        if (worldPlayers.count(key) == 0)
+            worldOrder.push_back(key);
+        worldPlayers[key].push_back(i);
+    }
+
+    struct CountryCups {
+        std::vector<uint8_t> cup1, cup2;
+        uint32_t ptr1 = 0, ptr2 = 0;
+    };
+    std::map<uint8_t, CountryCups> countryCups;
+    bool multiWorld = worldOrder.size() > 1;
+
+    for (size_t w = 0; w < worldOrder.size(); ++w) {
+        const LeagueWorldKey& key = worldOrder[w];
+        const auto& members = worldPlayers[key];
+        int rep = members[0];
+
+        if (multiWorld) {
+            setPreserveEuroCupsOnSeasonInit(w > 0);
+            m_calendarSlots.clear();
+            m_euroCupByCalOfs.clear();
+        }
+
+        applyPlayerIdentityToVm(m_players[rep]);
+        logInfo("Initializing world (country=%d, division=%d) via InitCareer with D0=0x%04x (P%d)",
+                key.countryFileNo, key.divisionId, static_cast<uint16_t>(m_players[rep].teamId), rep + 1);
+        swos.g_gameType = kGameTypeCareer;
+        *(uint16_t *)&D0 = static_cast<uint16_t>(m_players[rep].teamId);
+        InitCareer();
+        swos.g_gameType = kGameTypeCareer;
+
+        m_activePlayerIndex = rep;
+        saveCurrentSwosContext(m_players[rep]);
+        reinterpret_cast<TeamFile *>(m_players[rep].careerTeam)->teamControls =
+            (m_players[rep].coachOrPlayer == 1 ? kPlayerCoach : kCoach);
+
+        // Divisions of the same country share their domestic cups (e.g. Eng Div 2 & Eng Div 3 in one FA Cup)
+        if (multiWorld) {
+            auto cupIt = countryCups.find(key.countryFileNo);
+            if (cupIt == countryCups.end()) {
+                CountryCups cc;
+                cc.cup1.assign(&SwosVM::g_memByte[CareerOffsets::kDsegD8D0A],
+                               &SwosVM::g_memByte[CareerOffsets::kDsegD8D0A] + kCup1BufferSize);
+                cc.cup2.assign(&SwosVM::g_memByte[CareerOffsets::kDsegD985C],
+                               &SwosVM::g_memByte[CareerOffsets::kDsegD985C] + kCup2BufferSize);
+                cc.ptr1 = *reinterpret_cast<const uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8CAA + 4]);
+                cc.ptr2 = *reinterpret_cast<const uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8CAA + 8]);
+                countryCups[key.countryFileNo] = std::move(cc);
+            } else {
+                std::memcpy(&SwosVM::g_memByte[CareerOffsets::kDsegD8D0A], cupIt->second.cup1.data(), kCup1BufferSize);
+                std::memcpy(&SwosVM::g_memByte[CareerOffsets::kDsegD985C], cupIt->second.cup2.data(), kCup2BufferSize);
+                *reinterpret_cast<uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8CAA + 4]) = cupIt->second.ptr1;
+                *reinterpret_cast<uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8CAA + 8]) = cupIt->second.ptr2;
+            }
+        }
+
+        std::vector<uint8_t> worldSelTeams(kSelectedTeamsBufferSize);
+        std::memcpy(worldSelTeams.data(), swos.g_selectedTeams, kSelectedTeamsBufferSize);
+        int16_t worldNumSelTeams = swos.g_numSelectedTeams;
+
+        for (size_t mi = 1; mi < members.size(); ++mi) {
+            int idx = members[mi];
+            m_activePlayerIndex = idx;
+            initSiblingPlayerInWorld(*this, m_players[idx], m_players[rep], orderedTeams[idx]);
+            std::memcpy(swos.g_selectedTeams, worldSelTeams.data(), kSelectedTeamsBufferSize);
+            swos.g_numSelectedTeams = worldNumSelTeams;
+        }
+
+        clearUnusedCupBuffersInVm(*this);
+
+        if (!multiWorld)
+            break;
+
+        // Snapshot this world into its LeagueWorld/CountryWorld state before building the next one
+        m_activePlayerIndex = rep;
+        loadSwosContext(m_players[rep], false);
+        syncPlayersWithSelectedTeams(true);
+        ensureHotseatTeamControlsInSelectedTeams();
+        relinkCompetitionTeamPointers();
+        m_roundCalendarIndex = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3DE]);
+        captureActiveWorldAsInitial(key);
+    }
+
+    if (!multiWorld) {
+        syncPlayersWithSelectedTeams(true);
+        setRoundCalendarIndex(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3DE]));
+
+        int firstTurnPlayer = findNextPlayerForCurrentCalendarSlot();
+        if (firstTurnPlayer < 0)
+            firstTurnPlayer = 0;
+
+        switchToPlayer(firstTurnPlayer, true);
+        captureActiveWorldAsInitial(worldKeyForPlayer(m_players[firstTurnPlayer]));
+        return firstTurnPlayer;
+    }
+
+    setPreserveEuroCupsOnSeasonInit(false);
+    synchronizeSharedCupCalendarEntries();
+    m_globalWeek = 0;
+    resolveLockstepAndSelectPlayer(false);
+    return m_activePlayerIndex;
+}
+
 void startCareerMode()
 {
     extern void cseg_4C6EE();
-    extern void InitCareer();
     extern void CommonMenuExit();
 
     logInfo("Starting Career Mode setup flow");
@@ -350,142 +594,9 @@ void startCareerMode()
         p.sensisoftPlcSponsorship = 0;
     }
 
-    const auto& wp0 = savedWizardPlayers[0];
-    swos.coachOrPlayer = wp0.coachOrPlayer;
-    swos.plNationality = wp0.nationality;
-    *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kMrOrMs]) = wp0.mrOrMs;
-    std::memset(&SwosVM::g_memByte[CareerOffsets::kManagerSexBuffer], 0, 5);
-    std::memcpy(&SwosVM::g_memByte[CareerOffsets::kManagerSexBuffer], wp0.mrOrMs != 0 ? "MS" : "MR", 2);
-
-    std::memset(&SwosVM::g_memByte[CareerOffsets::kManagerNameBuffer], 0, 9);
-    size_t nlen = std::min(wp0.name.size(), size_t{8});
-    std::memcpy(&SwosVM::g_memByte[CareerOffsets::kManagerNameBuffer], wp0.name.data(), nlen);
-
-    std::memset(&SwosVM::g_memByte[CareerOffsets::kManagerSurnameBuffer], 0, 13);
-    size_t slen = std::min(wp0.surname.size(), size_t{12});
-    std::memcpy(&SwosVM::g_memByte[CareerOffsets::kManagerSurnameBuffer], wp0.surname.data(), slen);
-
-    logInfo("Calling InitCareer with D0=0x%04x (countryFile=%d, ordinal=%d)",
-            static_cast<uint16_t>(orderedTeamIds[0]),
-            orderedTeams[0].teamFileNo, orderedTeams[0].teamOrdinal);
-    swos.g_gameType = kGameTypeCareer;
-    *(uint16_t *)&D0 = orderedTeamIds[0];
-    InitCareer();
-    swos.g_gameType = kGameTypeCareer;
-
-    mgr.saveCurrentSwosContext(mgr.player(0));
-    reinterpret_cast<TeamFile *>(mgr.player(0).careerTeam)->teamControls =
-        (mgr.player(0).coachOrPlayer == 1 ? kPlayerCoach : kCoach);
-
-    extern void cseg_5DEB9();
-    extern void cseg_3D204();
-    extern void cseg_64A65();
-
-    const auto& p0 = mgr.player(0);
-    for (int i = 1; i < numPlayers; ++i) {
-        auto& p = mgr.player(i);
-        p.currentSeasonShowing = p0.currentSeasonShowing;
-        p.currentSeasonNumber = p0.currentSeasonNumber;
-        p.seasonPlaying = p0.seasonPlaying;
-        p.dsegD6CA2 = p0.dsegD6CA2;
-        p.dsegD7E66 = p0.dsegD7E66;
-        p.dsegE0048 = p0.dsegE0048;
-        p.dsegD6B62 = p0.dsegD6B62;
-        p.dsegD6B64 = p0.dsegD6B64;
-        p.dsegD6B94 = p0.dsegD6B94;
-        p.dsegD6C46 = p0.dsegD6C46;
-        p.additionalInvestments = p0.additionalInvestments;
-        p.dsegD6CDC = p0.dsegD6CDC;
-        p.teamNoOfferAccepted = p0.teamNoOfferAccepted;
-        p.teamFundsAccepted = p0.teamFundsAccepted;
-        p.dsegD6D0C = p0.dsegD6D0C;
-        p.timeToNegotiate = p0.timeToNegotiate;
-        p.stayingInOldClub = 0;
-        p.careerNumPlayers = 16;
-        p.careerTeamLeague = reinterpret_cast<const TeamFile *>(p.careerTeam)->league;
-        p.numPlayersOnTransferMarket = 0;
-        std::memset(p.playersOnTransferMarket, 0, sizeof(p.playersOnTransferMarket));
-        std::memset(p.dsegD6F26Block, 0, sizeof(p.dsegD6F26Block));
-        std::memset(p.dsegD6DBA, 0, sizeof(p.dsegD6DBA));
-        std::memset(p.newJobOffers, 0, sizeof(p.newJobOffers));
-        std::memset(p.jobOffers, 0, sizeof(p.jobOffers));
-        std::memset(p.playerTrialWeeks, 0, sizeof(p.playerTrialWeeks));
-        std::memset(p.currentMatchPlayers, 0, kCurrentMatchPlayersSize);
-        std::memcpy(p.currentMatchPlayers, orderedTeams[i].playerNumbers, kNumPlayersInTeam);
-        std::memset(p.trainingMatchSavedPlayers, 0, kCurrentMatchPlayersSize);
-        std::memcpy(p.trainingMatchSavedPlayers, orderedTeams[i].playerNumbers, kNumPlayersInTeam);
-        std::memset(p.dsegD8B8C, 0, kCurrentMatchPlayersSize);
-        p.dsegD761A = 0xFFFF;
-        p.dsegD761C = 0;
-        p.dsegD8B6A = 0xFFFF;
-        std::memset(&p.careerTeam[sizeof(TeamFile)], 0, kCareerTeamBufferSize - sizeof(TeamFile));
-        writeTeamCoachName(p.careerTeam, p.managerName, p.managerSurname);
-        std::memcpy(p.userTactics, p0.userTactics, 6 * kUserTacticsSize);
-        std::memcpy(p.careerHistory, p0.careerHistory, sizeof(p.careerHistory));
-
-        size_t histOfs = static_cast<size_t>(p.currentSeasonShowing) * kCareerHistoryEntrySize;
-        if (histOfs + kCareerHistoryEntrySize <= kCareerHistoryBufferSize) {
-            *reinterpret_cast<uint16_t *>(&p.careerHistory[histOfs]) = p.teamId;
-            std::memset(&p.careerHistory[histOfs + 2], 0, 18);
-            std::memcpy(&p.careerHistory[histOfs + 2], p.teamName.c_str(), std::min(p.teamName.size(), size_t{17}));
-            uint32_t euroStrOfs = 0;
-            if (p.euroCupIndex >= 0 && p.euroCupIndex < kNumEuroCups && mgr.isEuroCupActive(p.euroCupIndex)) {
-                mgr.activateEuroCup(p.euroCupIndex, false);
-                uint32_t strPtr = *reinterpret_cast<const uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDA109]);
-                euroStrOfs = (strPtr >= CareerOffsets::kChairmanScenes) ? (strPtr - CareerOffsets::kChairmanScenes) : 0;
-            }
-            *reinterpret_cast<uint32_t *>(&p.careerHistory[histOfs + 34]) = euroStrOfs;
-        }
-
-        mgr.loadSwosContext(p, true);
-        save68kRegisters();
-        if (hasCountryInSelectedTeams(static_cast<uint8_t>(p.teamId & 0xFF))) {
-            cseg_64A65();
-        } else if (!isVmNationalSelector()) {
-            static const uint8_t kReservePositions[10] = { 2, 1, 5, 4, 3, 3, 6, 6, 7, 7 };
-            for (int r = 0; r < 10; ++r) {
-                int ord = 16 + r;
-                auto *pf = reinterpret_cast<PlayerFile *>(
-                    &SwosVM::g_memByte[CareerOffsets::kCareerTeam + kTeamFileHeaderSize + ord * kPlayerFileSize]);
-                std::memset(pf, 0, kPlayerFileSize);
-                pf->shirtNumber = 16;
-                pf->positionAndFace = static_cast<byte>(kReservePositions[r] << 5);
-                populateNamedTrialPlayerSlot(&SwosVM::g_memByte[CareerOffsets::kCareerTeam],
-                                             &SwosVM::g_memByte[CareerOffsets::kDsegD6C26],
-                                             ord, static_cast<uint16_t>(p.teamId), false);
-                SwosVM::g_memByte[CareerOffsets::kCurrentMatchPlayers + ord] = static_cast<uint8_t>(ord);
-                SwosVM::g_memByte[CareerOffsets::kTrainingMatchSavedPlayers + ord] = static_cast<uint8_t>(ord);
-                SwosVM::g_memByte[CareerOffsets::kDsegD8B8C + ord] = pf->shirtNumber;
-            }
-            *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]) = 26;
-        }
-        cseg_5DEB9();
-        cseg_3D204();
-        restore68kRegisters();
-        mgr.saveCurrentSwosContext(p);
-    }
-
-    if (*reinterpret_cast<const uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8CAA + 8]) == 0) {
-        std::memset(&SwosVM::g_memByte[CareerOffsets::kDsegD985C], 0, kCup2BufferSize);
-    }
-    if (!mgr.anyEuroCupActive() && *reinterpret_cast<const uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8CB6]) == 0) {
-        uint8_t schedTpl[6];
-        std::memcpy(schedTpl, &SwosVM::g_memByte[CareerOffsets::kDsegDA11F], sizeof(schedTpl));
-        std::memset(&SwosVM::g_memByte[CareerOffsets::kDsegDA0E2], 0, kEuroCupBufferSize);
-        std::memcpy(&SwosVM::g_memByte[CareerOffsets::kDsegDA11F], schedTpl, sizeof(schedTpl));
-    }
-
-    mgr.syncPlayersWithSelectedTeams(true);
-    mgr.setRoundCalendarIndex(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3DE]));
-
-    int firstTurnPlayer = mgr.findNextPlayerForCurrentCalendarSlot();
-    if (firstTurnPlayer < 0)
-        firstTurnPlayer = 0;
-
-    mgr.switchToPlayer(firstTurnPlayer, true);
-    mgr.captureActiveWorldAsInitial(mgr.worldKeyForPlayer(mgr.player(firstTurnPlayer)));
-    logInfo("Hotseat Career successfully initialized with %d players! Starting P%d's turn.",
-            numPlayers, firstTurnPlayer + 1);
+    int firstTurnPlayer = mgr.initializeStartingWorlds(orderedTeams);
+    logInfo("Hotseat Career successfully initialized with %d players in %d world(s)! Starting P%d's turn.",
+            numPlayers, std::max(1, mgr.worldCount()), firstTurnPlayer + 1);
 
     swos.g_exitMenu = 0;
     A6 = 482233; // contestMenu

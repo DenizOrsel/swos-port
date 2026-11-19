@@ -29,6 +29,7 @@ constexpr char kHotseatFileMagicV5[16] = "SWOS_HOTSEAT_V5";
 constexpr char kHotseatFileMagicV6[16] = "SWOS_HOTSEAT_V6";
 constexpr char kHotseatFileMagicV7[16] = "SWOS_HOTSEAT_V7";
 constexpr char kHotseatFileMagicV8[16] = "SWOS_HOTSEAT_V8";
+constexpr char kHotseatFileMagicV9[16] = "SWOS_HOTSEAT_V9"; // V8 + multi-world (country/league) universe
 
 constexpr int32_t kMaxSerializedOffers = 1024;
 constexpr size_t kTeamFileHeaderSize = sizeof(TeamFileHeader);

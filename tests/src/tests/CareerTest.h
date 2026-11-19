@@ -51,4 +51,5 @@ private:
     void testHotseatMultiWorldMultiplexer();
     void testHotseatMultiWorldLockstep();
     void testHotseatDiv3ToDiv2SplitAndCrossLeagueJobOffer();
+    void testHotseatMultiCountryCareer();
 };

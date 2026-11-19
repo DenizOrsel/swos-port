@@ -337,6 +337,75 @@ bool readTransferOfferV6Extension(std::ifstream& in, HotseatCareerManager::Trans
     return true;
 }
 
+using CalendarSlotsMap = std::map<uint16_t, std::vector<std::array<uint8_t, 12>>>;
+
+bool writeCalendarSlotsMap(std::ofstream& out, const CalendarSlotsMap& slots)
+{
+    int32_t numCalEntries = static_cast<int32_t>(slots.size());
+    if (!writeBinary(out, numCalEntries))
+        return false;
+    for (const auto& kv : slots) {
+        uint16_t calOfs = kv.first;
+        uint16_t count = static_cast<uint16_t>(kv.second.size());
+        if (!writeBinary(out, calOfs) || !writeBinary(out, count))
+            return false;
+        for (const auto& slot : kv.second) {
+            if (!out.write(reinterpret_cast<const char *>(slot.data()), 12))
+                return false;
+        }
+    }
+    return out.good();
+}
+
+bool readCalendarSlotsMap(std::ifstream& in, CalendarSlotsMap& slots)
+{
+    int32_t numCalEntries = 0;
+    if (!readBinary(in, numCalEntries) || numCalEntries < 0 || numCalEntries > 256)
+        return false;
+    slots.clear();
+    for (int32_t c = 0; c < numCalEntries; ++c) {
+        uint16_t calOfs = 0, count = 0;
+        if (!readBinary(in, calOfs) || !readBinary(in, count) || calOfs >= 1870 || count > 32)
+            return false;
+        std::vector<std::array<uint8_t, 12>> vec(count);
+        for (uint16_t s = 0; s < count; ++s) {
+            if (!in.read(reinterpret_cast<char *>(vec[s].data()), 12))
+                return false;
+        }
+        slots[calOfs] = std::move(vec);
+    }
+    return in.good();
+}
+
+bool writeEuroCupMap(std::ofstream& out, const std::map<uint16_t, int>& euroMap)
+{
+    int32_t numEuroMapEntries = static_cast<int32_t>(euroMap.size());
+    if (!writeBinary(out, numEuroMapEntries))
+        return false;
+    for (const auto& kv : euroMap) {
+        int32_t eIdx = static_cast<int32_t>(kv.second);
+        if (!writeBinary(out, kv.first) || !writeBinary(out, eIdx))
+            return false;
+    }
+    return out.good();
+}
+
+bool readEuroCupMap(std::ifstream& in, std::map<uint16_t, int>& euroMap)
+{
+    int32_t numEuroMapEntries = 0;
+    if (!readBinary(in, numEuroMapEntries) || numEuroMapEntries < 0 || numEuroMapEntries > 256)
+        return false;
+    euroMap.clear();
+    for (int32_t i = 0; i < numEuroMapEntries; ++i) {
+        uint16_t calOfs = 0;
+        int32_t eIdx = -1;
+        if (!readBinary(in, calOfs) || !readBinary(in, eIdx) || calOfs >= 1870 || eIdx < 0 || eIdx >= kNumEuroCups)
+            return false;
+        euroMap[calOfs] = eIdx;
+    }
+    return in.good();
+}
+
 } // namespace
 
 bool HotseatCareerManager::saveToFile(const std::string& path)
@@ -346,6 +415,8 @@ bool HotseatCareerManager::saveToFile(const std::string& path)
 
     saveCurrentEuroCup();
     saveCurrentSwosContext(m_players[m_activePlayerIndex]);
+    if (m_hasActiveWorld)
+        saveActiveWorldFromVm();
 
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     if (!out)
@@ -353,7 +424,7 @@ bool HotseatCareerManager::saveToFile(const std::string& path)
 
     HotseatFileHeader hdr;
     std::memset(&hdr, 0, sizeof(hdr));
-    std::memcpy(hdr.magic, kHotseatFileMagicV8, 15);
+    std::memcpy(hdr.magic, kHotseatFileMagicV9, 15);
     hdr.numPlayers = m_numPlayers;
     hdr.activePlayerIndex = m_activePlayerIndex;
     hdr.nextOfferId = m_nextOfferId;
@@ -439,6 +510,9 @@ bool HotseatCareerManager::saveToFile(const std::string& path)
             return false;
     }
 
+    if (!writeWorldsV9(out))
+        return false;
+
     out.flush();
     if (!out.good())
         return false;
@@ -476,7 +550,9 @@ bool HotseatCareerManager::loadFromFile(const std::string& path)
     }
 
     int fileVersion = 0;
-    if (std::memcmp(hdr.magic, kHotseatFileMagicV8, 15) == 0) {
+    if (std::memcmp(hdr.magic, kHotseatFileMagicV9, 15) == 0) {
+        fileVersion = 9;
+    } else if (std::memcmp(hdr.magic, kHotseatFileMagicV8, 15) == 0) {
         fileVersion = 8;
     } else if (std::memcmp(hdr.magic, kHotseatFileMagicV7, 15) == 0) {
         fileVersion = 7;
@@ -675,10 +751,25 @@ bool HotseatCareerManager::loadFromFile(const std::string& path)
         m_endSeasonPlayerIndex = m_activePlayerIndex;
     }
 
+    if (fileVersion >= 9) {
+        if (!readWorldsV9(in)) {
+            reset();
+            logWarn("HotseatCareerManager: Corrupted V9 multi-world section in %s", path.c_str());
+            return false;
+        }
+    }
+
     m_emergencyLoanDepth = 0;
     m_playMatchSetupStack.clear();
     m_h2hPackMaps.assign(static_cast<size_t>(m_numPlayers), H2hPackedTeamMap{});
 
+    if (m_hasActiveWorld && m_leagueWorlds.count(m_activeWorldKey) != 0) {
+        // Restore the active world's VM buffers (league/cups/calendar/selected teams) saved alongside the .hot
+        loadWorldToVm(m_activeWorldKey, false);
+    } else if (fileVersion < 9 && m_leagueWorlds.empty() && swos.selTeamsPtr && swos.g_numSelectedTeams > 0 &&
+               m_activePlayerIndex >= 0 && m_activePlayerIndex < m_numPlayers) {
+        captureActiveWorldAsInitial(worldKeyForPlayer(m_players[m_activePlayerIndex]));
+    }
     stageActiveCalendarSlotToVm();
     loadSwosContext(m_players[m_activePlayerIndex]);
     if (swos.selTeamsPtr && swos.g_numSelectedTeams > 0) {
@@ -688,4 +779,242 @@ bool HotseatCareerManager::loadFromFile(const std::string& path)
     logInfo("HotseatCareerManager: Successfully loaded hotseat state (%d players, active P%d) from %s",
             m_numPlayers, m_activePlayerIndex + 1, path.c_str());
     return true;
+}
+
+bool HotseatCareerManager::writeWorldsV9(std::ofstream& out) const
+{
+    uint8_t hasActiveByte = m_hasActiveWorld ? 1 : 0;
+    if (!writeBinary(out, hasActiveByte) ||
+        !writeBinary(out, m_activeWorldKey.countryFileNo) ||
+        !writeBinary(out, m_activeWorldKey.divisionId) ||
+        !writeBinary(out, m_globalWeek)) {
+        return false;
+    }
+    for (int e = 0; e < kNumEuroCups; ++e) {
+        uint8_t hostSetByte = m_euroCupHostSet[e] ? 1 : 0;
+        if (!writeBinary(out, hostSetByte) ||
+            !writeBinary(out, m_euroCupHostKeys[e].countryFileNo) ||
+            !writeBinary(out, m_euroCupHostKeys[e].divisionId)) {
+            return false;
+        }
+    }
+
+    int32_t numCountries = static_cast<int32_t>(m_countryWorlds.size());
+    if (!writeBinary(out, numCountries))
+        return false;
+    for (const auto& kv : m_countryWorlds) {
+        const CountryWorldState& cw = kv.second;
+        uint8_t initByte = cw.initialized ? 1 : 0;
+        if (!writeBinary(out, cw.countryFileNo) ||
+            !writeBinary(out, initByte) ||
+            !writeBinary(out, cw.dsegD8CAE) ||
+            !writeBinary(out, cw.dsegD8CB2) ||
+            !writeBinary(out, cw.dsegD6CDE)) {
+            return false;
+        }
+        out.write(reinterpret_cast<const char *>(cw.cup1), sizeof(cw.cup1));
+        out.write(reinterpret_cast<const char *>(cw.cup2), sizeof(cw.cup2));
+        if (!writeBinary(out, cw.numHomeMarketPlayers))
+            return false;
+        out.write(reinterpret_cast<const char *>(cw.homeMarketPlayers), sizeof(cw.homeMarketPlayers));
+        if (!writeBinary(out, cw.numForeignMarketPlayers))
+            return false;
+        out.write(reinterpret_cast<const char *>(cw.foreignMarketPlayers), sizeof(cw.foreignMarketPlayers));
+        if (!out.good())
+            return false;
+    }
+
+    int32_t numLeagues = static_cast<int32_t>(m_leagueWorlds.size());
+    if (!writeBinary(out, numLeagues))
+        return false;
+    for (const auto& kv : m_leagueWorlds) {
+        const LeagueWorldState& lw = kv.second;
+        uint8_t initByte = lw.initialized ? 1 : 0;
+        int32_t roundCal = static_cast<int32_t>(lw.roundCalendarIndex);
+        int32_t pendOfs = static_cast<int32_t>(lw.pendingPostMatchCalOfs);
+        int32_t pendSlot = static_cast<int32_t>(lw.pendingPostMatchSlotIdx);
+        if (!writeBinary(out, lw.key.countryFileNo) ||
+            !writeBinary(out, lw.key.divisionId) ||
+            !writeBinary(out, initByte)) {
+            return false;
+        }
+        out.write(reinterpret_cast<const char *>(lw.dsegD8CAA), sizeof(lw.dsegD8CAA));
+        if (!writeBinary(out, lw.dsegD8CC0))
+            return false;
+        out.write(reinterpret_cast<const char *>(lw.competitionFileBuffer), sizeof(lw.competitionFileBuffer));
+        out.write(reinterpret_cast<const char *>(lw.dsegD9C9F), sizeof(lw.dsegD9C9F));
+        out.write(reinterpret_cast<const char *>(lw.calendar), sizeof(lw.calendar));
+        if (!writeBinary(out, lw.calStepIdx) ||
+            !writeBinary(out, lw.calByteOfs) ||
+            !writeBinary(out, lw.calTotalEntries) ||
+            !writeBinary(out, lw.dsegDB3E4) ||
+            !writeBinary(out, lw.playMatchBlink) ||
+            !writeBinary(out, lw.dsegE0048) ||
+            !writeBinary(out, lw.seasonPlaying) ||
+            !writeBinary(out, lw.currentSeasonShowing) ||
+            !writeBinary(out, lw.currentSeasonNumber) ||
+            !writeBinary(out, lw.dsegD6CA2) ||
+            !writeBinary(out, lw.seasonFinished) ||
+            !writeBinary(out, lw.careerFinished) ||
+            !writeBinary(out, lw.hlIdx) ||
+            !writeBinary(out, lw.hlSlotIdx) ||
+            !writeBinary(out, lw.hlHdr) ||
+            !writeBinary(out, lw.hlMatchPtr) ||
+            !writeBinary(out, roundCal) ||
+            !writeBinary(out, pendOfs) ||
+            !writeBinary(out, pendSlot)) {
+            return false;
+        }
+        if (!writeCalendarSlotsMap(out, lw.calendarSlots) ||
+            !writeEuroCupMap(out, lw.euroCupByCalOfs)) {
+            return false;
+        }
+        uint32_t selBytes = static_cast<uint32_t>(lw.selectedTeams.size());
+        if (!writeBinary(out, lw.numSelectedTeams) || !writeBinary(out, selBytes))
+            return false;
+        if (selBytes > 0) {
+            out.write(reinterpret_cast<const char *>(lw.selectedTeams.data()), selBytes);
+        }
+        if (!out.good())
+            return false;
+    }
+
+    int32_t numCached = static_cast<int32_t>(m_clubTeamCache.size());
+    if (!writeBinary(out, numCached))
+        return false;
+    for (const auto& kv : m_clubTeamCache) {
+        if (!writeBinary(out, kv.first) || !writeBinary(out, kv.second))
+            return false;
+    }
+
+    return out.good();
+}
+
+bool HotseatCareerManager::readWorldsV9(std::ifstream& in)
+{
+    uint8_t hasActiveByte = 0;
+    if (!readBinary(in, hasActiveByte) ||
+        !readBinary(in, m_activeWorldKey.countryFileNo) ||
+        !readBinary(in, m_activeWorldKey.divisionId) ||
+        !readBinary(in, m_globalWeek)) {
+        return false;
+    }
+    m_hasActiveWorld = (hasActiveByte != 0);
+
+    for (int e = 0; e < kNumEuroCups; ++e) {
+        uint8_t hostSetByte = 0;
+        if (!readBinary(in, hostSetByte) ||
+            !readBinary(in, m_euroCupHostKeys[e].countryFileNo) ||
+            !readBinary(in, m_euroCupHostKeys[e].divisionId)) {
+            return false;
+        }
+        m_euroCupHostSet[e] = (hostSetByte != 0);
+    }
+
+    int32_t numCountries = 0;
+    if (!readBinary(in, numCountries) || numCountries < 0 || numCountries > 128)
+        return false;
+    m_countryWorlds.clear();
+    for (int32_t c = 0; c < numCountries; ++c) {
+        CountryWorldState cw;
+        uint8_t initByte = 0;
+        if (!readBinary(in, cw.countryFileNo) ||
+            !readBinary(in, initByte) ||
+            !readBinary(in, cw.dsegD8CAE) ||
+            !readBinary(in, cw.dsegD8CB2) ||
+            !readBinary(in, cw.dsegD6CDE)) {
+            return false;
+        }
+        cw.initialized = (initByte != 0);
+        in.read(reinterpret_cast<char *>(cw.cup1), sizeof(cw.cup1));
+        in.read(reinterpret_cast<char *>(cw.cup2), sizeof(cw.cup2));
+        if (!readBinary(in, cw.numHomeMarketPlayers) || cw.numHomeMarketPlayers > kMaxHomeMarketEntries)
+            return false;
+        in.read(reinterpret_cast<char *>(cw.homeMarketPlayers), sizeof(cw.homeMarketPlayers));
+        if (!readBinary(in, cw.numForeignMarketPlayers) || cw.numForeignMarketPlayers > kMaxForeignMarketEntries)
+            return false;
+        in.read(reinterpret_cast<char *>(cw.foreignMarketPlayers), sizeof(cw.foreignMarketPlayers));
+        if (!in.good())
+            return false;
+        m_countryWorlds[cw.countryFileNo] = std::move(cw);
+    }
+
+    int32_t numLeagues = 0;
+    if (!readBinary(in, numLeagues) || numLeagues < 0 || numLeagues > 256)
+        return false;
+    m_leagueWorlds.clear();
+    for (int32_t l = 0; l < numLeagues; ++l) {
+        LeagueWorldState lw;
+        uint8_t initByte = 0;
+        int32_t roundCal = 0, pendOfs = -1, pendSlot = -1;
+        if (!readBinary(in, lw.key.countryFileNo) ||
+            !readBinary(in, lw.key.divisionId) ||
+            !readBinary(in, initByte)) {
+            return false;
+        }
+        lw.initialized = (initByte != 0);
+        in.read(reinterpret_cast<char *>(lw.dsegD8CAA), sizeof(lw.dsegD8CAA));
+        if (!readBinary(in, lw.dsegD8CC0))
+            return false;
+        in.read(reinterpret_cast<char *>(lw.competitionFileBuffer), sizeof(lw.competitionFileBuffer));
+        in.read(reinterpret_cast<char *>(lw.dsegD9C9F), sizeof(lw.dsegD9C9F));
+        in.read(reinterpret_cast<char *>(lw.calendar), sizeof(lw.calendar));
+        if (!readBinary(in, lw.calStepIdx) ||
+            !readBinary(in, lw.calByteOfs) ||
+            !readBinary(in, lw.calTotalEntries) ||
+            !readBinary(in, lw.dsegDB3E4) ||
+            !readBinary(in, lw.playMatchBlink) ||
+            !readBinary(in, lw.dsegE0048) ||
+            !readBinary(in, lw.seasonPlaying) ||
+            !readBinary(in, lw.currentSeasonShowing) ||
+            !readBinary(in, lw.currentSeasonNumber) ||
+            !readBinary(in, lw.dsegD6CA2) ||
+            !readBinary(in, lw.seasonFinished) ||
+            !readBinary(in, lw.careerFinished) ||
+            !readBinary(in, lw.hlIdx) ||
+            !readBinary(in, lw.hlSlotIdx) ||
+            !readBinary(in, lw.hlHdr) ||
+            !readBinary(in, lw.hlMatchPtr) ||
+            !readBinary(in, roundCal) ||
+            !readBinary(in, pendOfs) ||
+            !readBinary(in, pendSlot) ||
+            roundCal < 0) {
+            return false;
+        }
+        lw.roundCalendarIndex = roundCal;
+        lw.pendingPostMatchCalOfs = pendOfs;
+        lw.pendingPostMatchSlotIdx = pendSlot;
+        if (!readCalendarSlotsMap(in, lw.calendarSlots) ||
+            !readEuroCupMap(in, lw.euroCupByCalOfs)) {
+            return false;
+        }
+        uint32_t selBytes = 0;
+        if (!readBinary(in, lw.numSelectedTeams) ||
+            !readBinary(in, selBytes) ||
+            lw.numSelectedTeams < 0 ||
+            selBytes > 2 * 1024 * 1024) {
+            return false;
+        }
+        if (selBytes > 0) {
+            lw.selectedTeams.resize(selBytes);
+            in.read(reinterpret_cast<char *>(lw.selectedTeams.data()), selBytes);
+        }
+        if (!in.good())
+            return false;
+        m_leagueWorlds[lw.key] = std::move(lw);
+    }
+
+    int32_t numCached = 0;
+    if (!readBinary(in, numCached) || numCached < 0 || numCached > 16384)
+        return false;
+    m_clubTeamCache.clear();
+    for (int32_t i = 0; i < numCached; ++i) {
+        uint16_t tid = 0;
+        TeamFile tf{};
+        if (!readBinary(in, tid) || !readBinary(in, tf))
+            return false;
+        m_clubTeamCache[tid] = tf;
+    }
+
+    return in.good();
 }
