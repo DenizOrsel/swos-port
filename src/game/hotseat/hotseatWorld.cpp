@@ -37,6 +37,8 @@ void HotseatCareerManager::reset()
     m_pendingOfferPrompt = false;
     m_inPlayMatchFlow = false;
     m_initializingSeason = false;
+    m_preserveEuroCupsOnSeasonInit = false;
+    m_inEndSeasonCompute = false;
     m_endSeasonPendingInit = false;
     m_endSeasonActive = false;
     m_endSeasonPlayerIndex = 0;

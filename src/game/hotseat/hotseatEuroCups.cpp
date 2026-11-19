@@ -125,6 +125,32 @@ void HotseatCareerManager::initAdditionalEuroCups()
     if (!isActive() || swos.g_gameType != kGameTypeCareer)
         return;
 
+    if (m_preserveEuroCupsOnSeasonInit) {
+        m_euroCupByCalOfs.clear();
+        std::memcpy(&SwosVM::g_memByte[CareerOffsets::kDsegDA11F], m_euroCupScheduleTemplate, sizeof(m_euroCupScheduleTemplate));
+        uint16_t totalEntries = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E2]);
+        int16_t firstEuroIdx = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegE092F]);
+        int mappedIdx = (firstEuroIdx >= 0 && firstEuroIdx < kNumEuroCups && m_euroCupActive[firstEuroIdx])
+            ? firstEuroIdx
+            : -1;
+        size_t scanOfs = CareerOffsets::kDsegDB3E6;
+        for (uint16_t c = 0; c < totalEntries && scanOfs + 22 <= CareerOffsets::kDsegDB3E6 + 1870; ++c) {
+            if (SwosVM::g_memByte[scanOfs] == 3 && mappedIdx >= 0) {
+                m_euroCupByCalOfs[static_cast<uint16_t>(scanOfs - CareerOffsets::kDsegDB3E6)] = mappedIdx;
+            }
+            uint16_t len = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[scanOfs + 2]);
+            if (len < 22)
+                break;
+            scanOfs += len;
+        }
+        int activeIdx = (m_activePlayerIndex >= 0 && m_activePlayerIndex < m_numPlayers) ? m_activePlayerIndex : 0;
+        if (activeIdx >= 0 && activeIdx < m_numPlayers && anyEuroCupActive()) {
+            m_activeEuroCupIndex = -1;
+            activateEuroCup(m_players[activeIdx].euroCupIndex, false);
+        }
+        return;
+    }
+
     resetEuroCups();
     for (int p = 0; p < m_numPlayers; ++p)
         m_players[p].euroCupIndex = -1;
@@ -382,6 +408,21 @@ void HotseatCareerManager::synchronizeSharedCupCalendarEntries()
         if (m_euroCupHostSet[e] && m_leagueWorlds.count(m_euroCupHostKeys[e]) != 0)
             continue;
         m_euroCupHostSet[e] = false;
+        // Prefer a world that actually has a human player competing in Euro Cup e
+        for (int p = 0; p < m_numPlayers; ++p) {
+            if (m_players[p].euroCupIndex == e) {
+                LeagueWorldKey pk = worldKeyForPlayer(m_players[p]);
+                auto wIt = m_leagueWorlds.find(pk);
+                if (wIt != m_leagueWorlds.end() && wIt->second.initialized &&
+                    !wIt->second.euroCupByCalOfs.empty()) {
+                    m_euroCupHostKeys[e] = pk;
+                    m_euroCupHostSet[e] = true;
+                    break;
+                }
+            }
+        }
+        if (m_euroCupHostSet[e])
+            continue;
         for (const auto& kv : m_leagueWorlds) {
             if (!kv.second.initialized)
                 continue;

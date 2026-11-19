@@ -50,4 +50,5 @@ private:
     void testHotseatEightPlayersMirrorsAndSaveV8();
     void testHotseatMultiWorldMultiplexer();
     void testHotseatMultiWorldLockstep();
+    void testHotseatDiv3ToDiv2SplitAndCrossLeagueJobOffer();
 };

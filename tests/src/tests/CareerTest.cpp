@@ -80,6 +80,7 @@ auto CareerTest::getCases() -> CaseList
         { "test hotseat 8 players isolated mirrors and V8 save load", "career-hotseat-8players", {}, bind(&CareerTest::testHotseatEightPlayersMirrorsAndSaveV8), 1, false },
         { "test hotseat multi-world country/league multiplexer", "career-hotseat-multi-world-mux", {}, bind(&CareerTest::testHotseatMultiWorldMultiplexer), 1, false },
         { "test hotseat multi-world lockstep and cpu round stepping", "career-hotseat-multi-world-lockstep", {}, bind(&CareerTest::testHotseatMultiWorldLockstep), 1, false },
+        { "test hotseat Div 3 to Div 2 split and cross-league job offer", "career-hotseat-div3-div2-split", {}, bind(&CareerTest::testHotseatDiv3ToDiv2SplitAndCrossLeagueJobOffer), 1, false },
     };
 }
 
@@ -3434,8 +3435,8 @@ void CareerTest::testHotseatEndOfSeasonMenuSequenceAndSharedJobOfferDedup()
     mgr.onSeasonFinishedForAllPlayers();
     *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kRetired]) = 1;
 
-    // Also verify IsNewJobOffer filtering rejects foreign, national, and human clubs in hotseat
-    assertFalse(mgr.isValidHotseatJobOffer(kManUtdForeign, 0));
+    // Also verify IsNewJobOffer filtering allows cross-country club offers while rejecting national and human clubs in hotseat
+    assertTrue(mgr.isValidHotseatJobOffer(kManUtdForeign, 0));
     assertFalse(mgr.isValidHotseatJobOffer(kEnglandNational, 0));
     assertFalse(mgr.isValidHotseatJobOffer(kGalatasaray, 0));
     assertTrue(mgr.isValidHotseatJobOffer(kBesiktas, 0));
@@ -3447,7 +3448,7 @@ void CareerTest::testHotseatEndOfSeasonMenuSequenceAndSharedJobOfferDedup()
     p0.numNewJobOffers = 3;
     std::memset(p0.newJobOffers, 0, kJobOffersBufferSize);
     seedJobOfferInBuffer(p0.newJobOffers, 0, kBesiktas, "BESIKTAS", 2'000'000);
-    seedJobOfferInBuffer(p0.newJobOffers, 1, kManUtdForeign, "MAN UTD", 5'000'000);   // filtered (foreign)
+    seedJobOfferInBuffer(p0.newJobOffers, 1, kEnglandNational, "ENGLAND", 5'000'000); // filtered (national team)
     seedJobOfferInBuffer(p0.newJobOffers, 2, kGalatasaray, "GALATASARAY", 2'000'000); // filtered (human club)
     p0.numJobOffers = 0;
     std::memset(p0.jobOffers, 0, kJobOffersBufferSize);
@@ -4201,6 +4202,258 @@ void CareerTest::testHotseatMultiWorldLockstep()
     // Verify Turkey's calendar buffer stayed untouched while England simulated to season completion
     assertEqual(mgr.leagueWorlds().at(turKey).calTotalEntries, turEntries);
     assertTrue(turWeek0 <= 200);
+
+    mgr.reset();
+    SWOS_UnitTest::setMenuCallback();
+}
+
+void CareerTest::testHotseatDiv3ToDiv2SplitAndCrossLeagueJobOffer()
+{
+    constexpr int16_t kBarnetDiv3 = 0x2c08;        // England Div 3 (country 8, ord 44)
+    constexpr int16_t kBrightonDiv3 = 0x3008;      // England Div 3 (country 8, ord 48)
+    constexpr int16_t kLiverpoolDiv0 = 0x0811;     // England Div 0 (country 8)
+    constexpr int16_t kFenerbahceTur = 0x0926;     // Turkey Div 0 (country 38)
+    constexpr int16_t kEnglandNational = 0x0050;   // National team (>= 80)
+
+    SWOS_UnitTest::setMenuCallback([&] {
+        SetExitMenuFlag();
+        return true;
+    });
+
+    initTwoPlayerHotseatFromTeams(kBarnetDiv3, kBrightonDiv3);
+    auto& mgr = HotseatCareerManager::get();
+    // Simulate Season 1 to completion (silent VM stepping keeps the test independent of menu/result options)
+    // so league, domestic cups & playoffs all have real final results
+    mgr.switchToPlayer(0, true);
+    mgr.captureActiveWorldAsInitial(mgr.worldKeyForPlayer(mgr.player(0)));
+    {
+        int guard = 0;
+        while (!mgr.areAllWorldsSeasonFinished() && guard < 1200) {
+            mgr.stepActiveWorldOneCpuEntrySilently();
+            mgr.saveActiveWorldFromVm();
+            ++guard;
+        }
+        assertTrue(mgr.areAllWorldsSeasonFinished());
+    }
+
+    assertEqual(mgr.worldCount(), 1);
+    assertEqual(static_cast<int>(mgr.player(0).careerTeamLeague), 3);
+    assertEqual(static_cast<int>(mgr.player(0).dsegD6CDC), 3);
+    assertEqual(static_cast<int>(mgr.player(1).careerTeamLeague), 3);
+    assertEqual(static_cast<int>(mgr.player(1).dsegD6CDC), 3);
+
+    // Helper: consistently relabel two clubs inside the active world's league table (competitionFileBuffer)
+    // AND its playoff buffer (dseg_D9C9F) by swapping their team ids and team pointer deltas. This moves a club
+    // into another club's final position without creating impossible tables (e.g. a club both champion and
+    // playoff winner), so SWOS's native promotion/relegation logic stays self-consistent.
+    auto swapTeamsInDiyBuffer = [&](size_t compOfs, uint16_t tidA, uint16_t tidB) {
+        uint16_t compType = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[compOfs]);
+        int16_t numTeams = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[compOfs + 49]);
+        if (numTeams <= 0 || numTeams > 64 || compType > 1)
+            return;
+        size_t idsOfs = (compType == 0) ? compOfs + 301 : compOfs + 589;
+        auto ptrOfs = [&](int k) {
+            return (compType == 0) ? compOfs + 691 + static_cast<size_t>(k) * 18 : compOfs + 835 + static_cast<size_t>(k) * 4;
+        };
+        int ka = -1, kb = -1;
+        for (int k = 0; k < numTeams; ++k) {
+            uint16_t tid = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[idsOfs + k * 2]);
+            if (tid == tidA) ka = k;
+            if (tid == tidB) kb = k;
+        }
+        if (ka >= 0)
+            *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[idsOfs + ka * 2]) = tidB;
+        if (kb >= 0)
+            *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[idsOfs + kb * 2]) = tidA;
+        if (ka >= 0 && kb >= 0) {
+            std::swap(*reinterpret_cast<int32_t *>(&SwosVM::g_memByte[ptrOfs(ka)]),
+                      *reinterpret_cast<int32_t *>(&SwosVM::g_memByte[ptrOfs(kb)]));
+        }
+    };
+    auto teamAtLeaguePosition = [&](int pos) -> uint16_t {
+        size_t compOfs = CareerOffsets::kCompetitionFileBuffer;
+        uint16_t rowOfs = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[compOfs + 109 + pos * 2]);
+        int k = rowOfs / 18;
+        return *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[compOfs + 301 + k * 2]);
+    };
+    auto placeTeamAtLeaguePosition = [&](int16_t teamId, int pos) {
+        uint16_t other = teamAtLeaguePosition(pos);
+        if (other == static_cast<uint16_t>(teamId))
+            return;
+        swapTeamsInDiyBuffer(CareerOffsets::kCompetitionFileBuffer, static_cast<uint16_t>(teamId), other);
+        swapTeamsInDiyBuffer(CareerOffsets::kDsegD9C9F, static_cast<uint16_t>(teamId), other);
+        assertEqual(teamAtLeaguePosition(pos), static_cast<uint16_t>(teamId));
+    };
+
+    // Cross-division & cross-country job offer validation (Phase 4)
+    assertTrue(mgr.isValidHotseatJobOffer(kLiverpoolDiv0, 0));
+    assertTrue(mgr.isValidHotseatJobOffer(kFenerbahceTur, 0));
+    assertFalse(mgr.isValidHotseatJobOffer(kEnglandNational, 0));
+    assertFalse(mgr.isValidHotseatJobOffer(kBarnetDiv3, 0));
+    assertFalse(mgr.isValidHotseatJobOffer(kBrightonDiv3, 0));
+
+    // Finish Season 1 in World(8, 3): Barnet finishes 1st (promoted to Div 2), Brighton 13th (stays Div 3)
+    const LeagueWorldKey engDiv3Key{ 8, 3 };
+    mgr.loadWorldToVm(engDiv3Key, true);
+    placeTeamAtLeaguePosition(kBarnetDiv3, 0);
+    placeTeamAtLeaguePosition(kBrightonDiv3, 12);
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kSeasonFinished]) = 1;
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerFinished]) = 1;
+    mgr.saveActiveWorldFromVm();
+
+    mgr.switchToPlayer(0, true);
+    mgr.onSeasonFinishedForAllPlayers();
+    for (int i = 0; i < 2; ++i) {
+        mgr.player(i).retired = 1;
+        mgr.player(i).youreSacked = 0;
+        mgr.player(i).numNewJobOffers = 0;
+        mgr.player(i).numJobOffers = 0;
+    }
+    *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kRetired]) = 1;
+
+    bool s1P0Done = false;
+    bool s1P1Done = false;
+    bool enteredSeason2 = false;
+    SWOS_UnitTest::setMenuCallback([&] {
+        auto packed = getCurrentPackedMenu();
+        if (packed && SwosVM::isSwosPtr(packed)) {
+            uint32_t ofs = SwosVM::ptrToOffset(packed);
+            if (ofs == CareerOffsets::kCareerOverMenu) {
+                if (mgr.activePlayerIndex() == 0 && !s1P0Done) {
+                    s1P0Done = true;
+                    selectEntry(6); // CONTINUE CAREER -> advance to P1
+                    return false;
+                }
+                if (mgr.activePlayerIndex() == 1 && !s1P1Done) {
+                    s1P1Done = true;
+                    selectEntry(6); // CONTINUE CAREER -> executeHotseatSeasonTransition
+                    enteredSeason2 = true;
+                    return false;
+                }
+            } else if (ofs == CareerOffsets::kContestMenu && enteredSeason2) {
+                SetExitMenuFlag();
+                return false;
+            }
+        }
+        SetExitMenuFlag();
+        return false;
+    });
+    swos.g_exitMenu = 0;
+    A6 = CareerOffsets::kContestMenu;
+    SWOS::ShowMenu();
+
+    assertTrue(s1P0Done && s1P1Done && enteredSeason2);
+    assertEqual(mgr.numPlayers(), 2);
+    // Season 2 MUST split into World(8, 2) for P0 and World(8, 3) for P1, sharing CountryWorld(8) cups!
+    assertEqual(mgr.worldCount(), 2);
+    const LeagueWorldKey engDiv2Key{ 8, 2 };
+    assertTrue(mgr.leagueWorlds().count(engDiv2Key) != 0);
+    assertTrue(mgr.leagueWorlds().count(engDiv3Key) != 0);
+    assertEqual(static_cast<int>(mgr.countryWorlds().size()), 1);
+    assertTrue(mgr.countryWorlds().count(8) != 0);
+    assertTrue(mgr.worldKeyForPlayer(mgr.player(0)) == engDiv2Key);
+    assertTrue(mgr.worldKeyForPlayer(mgr.player(1)) == engDiv3Key);
+    assertEqual(static_cast<int>(mgr.player(0).dsegD6CDC), 2);
+    assertEqual(static_cast<int>(mgr.player(1).dsegD6CDC), 3);
+    // Base careerTeamLeague MUST remain 3 so Season 3 never double-promotes!
+    assertEqual(static_cast<int>(mgr.player(0).careerTeamLeague), 3);
+    assertEqual(static_cast<int>(mgr.player(1).careerTeamLeague), 3);
+    assertEqual(static_cast<int>(reinterpret_cast<const TeamFile *>(mgr.player(0).careerTeam)->league), 2);
+    assertEqual(static_cast<int>(reinterpret_cast<const TeamFile *>(mgr.player(1).careerTeam)->league), 3);
+
+    // Season 2 -> Season 3: simulate every live world to completion first (real cups/playoffs results),
+    // then pin final standings: P0 mid-table in Eng Div 2 (no double promotion!), P1 mid-table in Eng Div 3
+    // who then accepts a cross-country job offer at Fenerbahce (Turkey Div 0)!
+    {
+        int guard = 0;
+        while (!mgr.areAllWorldsSeasonFinished() && guard < 1200) {
+            for (int pi = 0; pi < mgr.numPlayers(); ++pi) {
+                mgr.switchToPlayer(pi, true);
+                mgr.stepActiveWorldOneCpuEntrySilently();
+                mgr.saveActiveWorldFromVm();
+            }
+            ++guard;
+        }
+        assertTrue(mgr.areAllWorldsSeasonFinished());
+    }
+    mgr.loadWorldToVm(engDiv2Key, true);
+    placeTeamAtLeaguePosition(kBarnetDiv3, 12);
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kSeasonFinished]) = 1;
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerFinished]) = 1;
+    mgr.saveActiveWorldFromVm();
+
+    mgr.loadWorldToVm(engDiv3Key, true);
+    placeTeamAtLeaguePosition(kBrightonDiv3, 12);
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kSeasonFinished]) = 1;
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerFinished]) = 1;
+    mgr.saveActiveWorldFromVm();
+
+    mgr.switchToPlayer(0, true);
+    mgr.onSeasonFinishedForAllPlayers();
+    *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kRetired]) = 1;
+    mgr.player(0).retired = 1;
+    mgr.player(0).youreSacked = 0;
+    mgr.player(0).numNewJobOffers = 0;
+    mgr.player(0).numJobOffers = 0;
+
+    auto& p1 = mgr.player(1);
+    p1.retired = 1;
+    p1.youreSacked = 0;
+    p1.numNewJobOffers = 1;
+    p1.numJobOffers = 0;
+    std::memset(p1.newJobOffers, 0, kJobOffersBufferSize);
+    seedJobOfferInBuffer(p1.newJobOffers, 0, kFenerbahceTur, "FENERBAHCE", 3'000'000);
+
+    bool s2P0Done = false;
+    bool s2P1Done = false;
+    bool enteredSeason3 = false;
+    SWOS_UnitTest::setMenuCallback([&] {
+        auto packed = getCurrentPackedMenu();
+        if (packed && SwosVM::isSwosPtr(packed)) {
+            uint32_t ofs = SwosVM::ptrToOffset(packed);
+            if (ofs == CareerOffsets::kCareerOverMenu) {
+                if (mgr.activePlayerIndex() == 0 && !s2P0Done) {
+                    s2P0Done = true;
+                    selectEntry(6);
+                    return false;
+                }
+                if (mgr.activePlayerIndex() == 1 && !s2P1Done) {
+                    s2P1Done = true;
+                    // Verify cross-country offer survived sanitization
+                    assertEqual(static_cast<int>(*reinterpret_cast<const int16_t *>(
+                        &SwosVM::g_memByte[CareerOffsets::kNumNewJobOffers])), 1);
+                    *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kTeamNoOfferAccepted]) = kFenerbahceTur;
+                    *reinterpret_cast<int32_t *>(&SwosVM::g_memByte[CareerOffsets::kTeamFundsAccepted]) = 3'000'000;
+                    mgr.onAfterAcceptJobOffer();
+                    selectEntry(6);
+                    enteredSeason3 = true;
+                    return false;
+                }
+            } else if (ofs == CareerOffsets::kContestMenu && enteredSeason3) {
+                SetExitMenuFlag();
+                return false;
+            }
+        }
+        SetExitMenuFlag();
+        return false;
+    });
+    swos.g_exitMenu = 0;
+    A6 = CareerOffsets::kContestMenu;
+    SWOS::ShowMenu();
+
+    assertTrue(s2P0Done && s2P1Done && enteredSeason3);
+    assertEqual(mgr.numPlayers(), 2);
+    // P0 stays at Barnet in Eng Div 2 (never double-promoted!)
+    assertEqual(mgr.player(0).teamId, kBarnetDiv3);
+    assertEqual(static_cast<int>(mgr.player(0).dsegD6CDC), 2);
+    assertEqual(static_cast<int>(mgr.player(0).careerTeamLeague), 3);
+    // P1 moved cleanly into Fenerbahce's Turkey Div 0 world!
+    assertEqual(mgr.player(1).teamId, kFenerbahceTur);
+    assertEqual(static_cast<int>(mgr.player(1).dsegD6CDC), 0);
+    assertEqual(static_cast<int>(mgr.worldKeyForPlayer(mgr.player(1)).countryFileNo), 38);
+    assertEqual(mgr.worldCount(), 2);
+    assertTrue(mgr.leagueWorlds().count(engDiv2Key) != 0);
+    assertTrue(mgr.leagueWorlds().count({ 38, 0 }) != 0);
 
     mgr.reset();
     SWOS_UnitTest::setMenuCallback();

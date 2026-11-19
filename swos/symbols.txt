@@ -874,6 +874,11 @@ cseg_39392
 cseg_92D55
 cseg_9307A
 cseg_9339D
+cseg_927A2
+cseg_93FD8
+cseg_928CC
+cseg_92A63
+cseg_925C9
 ShowPlayMatchMenu
 PlayMatchMenu
 cseg_52956

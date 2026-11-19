@@ -222,6 +222,31 @@ void cseg_9339D_OnEnter()
     HotseatCareerManager::get().activateEuroCupForSeasonEnd(2);
 }
 
+void cseg_927A2_OnEnter()
+{
+    HotseatCareerManager::get().injectEndSeasonLeagueResult();
+}
+
+void cseg_93FD8_OnEnter()
+{
+    HotseatCareerManager::get().injectEndSeasonLeagueResult();
+}
+
+void cseg_928CC_OnEnter()
+{
+    HotseatCareerManager::get().injectEndSeasonCup1Result();
+}
+
+void cseg_92A63_OnEnter()
+{
+    HotseatCareerManager::get().injectEndSeasonCup2Result();
+}
+
+void cseg_925C9_OnEnter()
+{
+    HotseatCareerManager::get().injectEndSeasonPlayoffResult();
+}
+
 void Hotseat_OnAfterReplacementPlayer()
 {
     HotseatCareerManager::get().onAfterCreateReplacementPlayer();

@@ -177,6 +177,7 @@ namespace CareerOffsets {
     constexpr size_t kNumExtraPlayersWanted = 504324;   // int16_t (2nd wanted player ordinal)
     constexpr size_t kDseg17A6D2 = 504326;              // int16_t (1st exchange player ordinal)
     constexpr size_t kDseg17A6D4 = 504328;              // int16_t (2nd exchange player ordinal)
+    constexpr size_t kDseg180782 = 518659;              // uint8_t (active country in cseg_9153F)
     constexpr size_t kJobOffersMenu = 509636;           // PackedMenu jobOffersMenu
     constexpr size_t kGotJobOfferMenu = 510954;         // PackedMenu gotJobOfferMenu
     constexpr size_t kDseg17C228 = 511324;              // uint16_t job offers UI mode
@@ -594,6 +595,11 @@ public:
     void onExitCareerMenu();
     void onJobOffersMenuRetired();
     bool onJobOffersMenuRetiredSackedEmpty();
+    void injectEndSeasonLeagueResult();
+    void injectEndSeasonCup1Result();
+    void injectEndSeasonCup2Result();
+    void injectEndSeasonPlayoffResult();
+    void setPreserveEuroCupsOnSeasonInit(bool preserve) { m_preserveEuroCupsOnSeasonInit = preserve; }
 
 private:
     HotseatCareerManager() = default;
@@ -615,6 +621,8 @@ private:
     bool m_pendingOfferPrompt = false;
     bool m_inPlayMatchFlow = false;
     bool m_initializingSeason = false;
+    bool m_preserveEuroCupsOnSeasonInit = false;
+    bool m_inEndSeasonCompute = false;
     bool m_endSeasonPendingInit = false;
     bool m_endSeasonActive = false;
     int m_endSeasonPlayerIndex = 0;
