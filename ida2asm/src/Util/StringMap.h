@@ -254,7 +254,7 @@ public:
         assert(m_nodes || !m_count);
         assert(!m_count || m_end->textPtr()[0] == 'z');
 
-        for (size_t i = 1; i < m_count; i++) {
+        for (size_t i = 0; i < m_count; i++) {
             if (m_nodes[i].node->removed())
                 return true;
 
@@ -270,7 +270,7 @@ public:
         assert(m_nodes || !m_count);
         assert(!m_count || m_end->textPtr()[0] == 'z');
 
-        for (size_t i = 1; i < m_count; i++)
+        for (size_t i = 0; i < m_count; i++)
             if (!m_nodes[i].node->removed())
                 for (size_t j = i + 1; m_nodes[j].hash == m_nodes[i].hash; j++)
                     if (*m_nodes[j].node == *m_nodes[i].node)

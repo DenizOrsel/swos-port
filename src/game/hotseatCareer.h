@@ -107,6 +107,7 @@ namespace CareerOffsets {
     constexpr size_t kDsegD8B6A = 99548;                // uint16_t (saved dseg_D761A)
     constexpr size_t kTrainingMatchSavedPlayers = 99550;// uint8_t[32] (canonical squad order)
     constexpr size_t kDsegD8B8C = 99582;                // uint8_t[32] (saved shirt numbers)
+    constexpr size_t kCurrentTeamNumber = 99544;        // uint16_t (FindTeamInCache team id)
     constexpr size_t kDsegD8BAC = 99614;                // uint8_t (saved tactics)
     constexpr size_t kDsegD8BAE = 99616;                // uint16_t
     constexpr size_t kDsegD8BB0 = 99618;                // uint16_t
@@ -138,7 +139,12 @@ namespace CareerOffsets {
     constexpr size_t kSeasonPlaying = 129467;           // uint8_t
     constexpr size_t kDsegE0052 = 129476;               // uint16_t (0=career cup select)
     constexpr size_t kDsegE092F = 131745;               // uint16_t (euro cup index / -1)
+    constexpr size_t kCompCountryNumber = 131744;       // uint8_t (active country number)
+    constexpr size_t kSomeLeaguesTable = 96218;         // int8_t[2000] active league adjustments
+    constexpr size_t kLeaguesTableCopy = 353240;        // int8_t[12944] offseason league deltas
+    constexpr size_t kDsegD6E00 = 92018;                // uint16_t career counter
     constexpr size_t kTeamFileBuffer = 252466;          // 64014 bytes
+    constexpr size_t kDseg11F9CC = 379316;              // uint16_t (FindTeamInCache careerTeam active flag)
     constexpr size_t kDiyFileBufferCopy = 317386;       // tournament work buffer
     constexpr size_t kDseg10EB23 = 317539;              // tournament team word list
     constexpr size_t kDiyCompetitionStart = 318441;     // league/cup work buffer
@@ -149,11 +155,19 @@ namespace CareerOffsets {
     constexpr size_t kDseg174578 = 482091;              // uint16_t (current calendar slot idx)
     constexpr size_t kDseg17457A = 482093;              // uint32_t (current calendar header ptr)
     constexpr size_t kDseg17457E = 482097;              // uint32_t (current match slot ptr)
+    constexpr size_t kContestMenu = 482233;             // PackedMenu contestMenu
+    constexpr size_t kCareerOverMenu = 483813;          // PackedMenu careerOverMenu
     constexpr size_t kCurrentSeasonNumber = 484815;     // uint16_t (display copy)
     constexpr size_t kSeasonFinancesBlock = 484991;     // uint8_t[24] (dseg_1750CC..E0)
+    constexpr size_t kDseg17A3CE = 503554;              // uint16_t national selector flag
     constexpr size_t kNumExtraPlayersWanted = 504324;   // int16_t (2nd wanted player ordinal)
     constexpr size_t kDseg17A6D2 = 504326;              // int16_t (1st exchange player ordinal)
     constexpr size_t kDseg17A6D4 = 504328;              // int16_t (2nd exchange player ordinal)
+    constexpr size_t kJobOffersMenu = 509636;           // PackedMenu jobOffersMenu
+    constexpr size_t kGotJobOfferMenu = 510954;         // PackedMenu gotJobOfferMenu
+    constexpr size_t kDseg17C228 = 511324;              // uint16_t job offers UI mode
+    constexpr size_t kAContinueCareer = 8403;           // "CONTINUE CAREER*******"
+    constexpr size_t kAJobOffers = 17282;               // "JOB OFFERS******"
 }
 
 constexpr int kCurrentMatchPlayersSize = 32;
@@ -459,8 +473,33 @@ public:
     uint32_t ensureHotseatTeamMirror(int playerIdx);
     uint32_t ensurePoolPlayerScratch();
 
+    // End-of-Season Multi-Player Review, Job Offer Deduplication, & Club Transition
+    bool isEndSeasonActive() const { return m_endSeasonActive; }
+    int endSeasonPlayerIndex() const { return m_endSeasonPlayerIndex; }
+    bool isValidHotseatJobOffer(uint16_t teamId, int forPlayerIdx = -1) const;
+    void removeJobOfferForAllOtherPlayers(uint16_t teamId, int acceptingPlayerIdx);
+    void sanitizeJobOffersForContext(HotseatPlayerContext& ctx, int playerIdx);
+    void sanitizeJobOffersForAllPlayers();
+    void resetCareerOverMenuState() const;
+    void resetNonHotseatTeamControlsInTmdFile();
+    void onCareerOverInit();
+    void onAfterAcceptJobOffer();
+    void onAfterJobOfferRoll();
+    void onFilterNewJobOffer();
+    void onContinueCareer();
+    void onExitCareerMenu();
+    void onJobOffersMenuRetired();
+    bool onJobOffersMenuRetiredSackedEmpty();
+
 private:
     HotseatCareerManager() = default;
+
+    bool isPlayerCareerOver(const HotseatPlayerContext& ctx) const;
+    bool isVmCareerOver() const;
+    bool hasSurvivingPlayerAfterEndSeason(int excludePlayerIdx = -1) const;
+    void advanceEndSeasonToNextPlayer(int nextIdx);
+    void packDepartedTeamIntoTmdFile(const HotseatPlayerContext& ctx);
+    void executeHotseatSeasonTransition();
 
     bool m_active = false;
     int m_numPlayers = 0;
@@ -472,7 +511,20 @@ private:
     bool m_pendingOfferPrompt = false;
     bool m_inPlayMatchFlow = false;
     bool m_initializingSeason = false;
+    bool m_endSeasonPendingInit = false;
+    bool m_endSeasonActive = false;
+    int m_endSeasonPlayerIndex = 0;
+    std::array<bool, kMaxHotseatPlayers> m_endSeasonEliminated{};
+    std::vector<uint16_t> m_claimedJobOfferTeams;
     std::array<HotseatPlayerContext, kMaxHotseatPlayers> m_players;
+
+    struct PendingSeasonPlayerState {
+        int16_t oldTeamId = 0;
+        int16_t newTeamId = 0;
+        int32_t acceptedFunds = 0;
+        bool switched = false;
+    };
+    std::vector<PendingSeasonPlayerState> m_pendingSeasonTransitions;
     std::vector<TransferOffer> m_transferOffers;
 
     // Hotseat Setup Wizard & Selection

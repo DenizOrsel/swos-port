@@ -1111,7 +1111,7 @@ std::pair<CToken *, CToken *> IdaAsmParser::outputCallInstruction(CToken *token,
 
     constexpr int kProcNameMaxLength = ProcHookList::kProcNameLength;
 
-    static char tokenBuff[2 * sizeof(Token) + 4 + kProcNameMaxLength] = {
+    thread_local char tokenBuff[2 * sizeof(Token) + 4 + kProcNameMaxLength] = {
         (char)Token::T_CALL, 0, Token::kInstruction, Token::kBranchInstruction, 0, 0, 0, 4, 0, 0, 0, 'c', 'a', 'l', 'l',
         (char)Token::T_ID, 1, Token::kId,
     };

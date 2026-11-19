@@ -74,6 +74,8 @@ auto CareerTest::getCases() -> CaseList
         { "test hotseat trial departure after opponent match", "career-hotseat-trial-departure-2p", {}, bind(&CareerTest::testHotseatTrialDepartureAfterOpponentMatch), 1, false },
         { "test hotseat emergency loan for injured squad", "career-hotseat-emergency-loan", {}, bind(&CareerTest::testHotseatEmergencyLoanForInjuredSquad), 1, false },
         { "test hotseat .CAR and .hot file save and load across euro cups", "career-hotseat-car-load", {}, bind(&CareerTest::testHotseatSaveAndLoadCareerFile), 1, false },
+        { "test hotseat end-of-season menu sequence and shared job offer dedup", "career-hotseat-end-season-job-offers", {}, bind(&CareerTest::testHotseatEndOfSeasonMenuSequenceAndSharedJobOfferDedup), 1, false },
+        { "test hotseat club switch marks old team CPU red and CPU fixtures", "career-hotseat-club-switch-old-cpu", {}, bind(&CareerTest::testHotseatClubSwitchOldTeamCpuRedAndFixtures), 1, false },
     };
 }
 
@@ -3312,4 +3314,562 @@ void CareerTest::testHotseatSaveAndLoadCareerFile()
         SWOS_UnitTest::setMenuCallback();
         cleanupFiles();
     }
+}
+
+namespace {
+
+void seedJobOfferInBuffer(uint8_t *buf, int slot, uint16_t teamId, const char *teamName, int32_t funds)
+{
+    uint8_t *entry = buf + static_cast<size_t>(slot) * 26;
+    std::memset(entry, 0, 26);
+    *reinterpret_cast<uint16_t *>(entry) = teamId;
+    size_t len = std::min(std::strlen(teamName), size_t{17});
+    std::memcpy(entry + 2, teamName, len);
+    *reinterpret_cast<int32_t *>(entry + 20) = funds;
+}
+
+std::vector<uint16_t> collectJobOfferTeamIds(const uint8_t *buf, int16_t count)
+{
+    std::vector<uint16_t> ids;
+    int n = std::clamp<int>(count, 0, 5);
+    for (int i = 0; i < n; ++i) {
+        ids.push_back(*reinterpret_cast<const uint16_t *>(buf + static_cast<size_t>(i) * 26));
+    }
+    return ids;
+}
+
+const TeamFile *findSelectedTeamById(int16_t tid)
+{
+    if (!swos.selTeamsPtr || swos.g_numSelectedTeams <= 0)
+        return nullptr;
+    const auto *teams = reinterpret_cast<const TeamFile *>(SwosVM::offsetToPtr(swos.selTeamsPtr));
+    int count = std::min<int>(swos.g_numSelectedTeams, 68400 / sizeof(TeamFile));
+    for (int i = 0; i < count; ++i) {
+        if (*reinterpret_cast<const int16_t *>(&teams[i]) == tid)
+            return &teams[i];
+    }
+    return nullptr;
+}
+
+void advanceHotseatSeasonToFinish()
+{
+    int steps = 0;
+    bool finished = false;
+    SWOS_UnitTest::setMenuCallback([&] {
+        resetMockSdlMixer();
+        if (++steps > 3000) {
+            SetExitMenuFlag();
+            return false;
+        }
+        auto m = getCurrentMenu();
+        auto packed = getCurrentPackedMenu();
+        uint32_t packedOfs = (packed && SwosVM::isSwosPtr(packed)) ? SwosVM::ptrToOffset(packed) : 0;
+        if (packedOfs == CareerOffsets::kContestMenu) {
+            uint16_t seasonFin = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kSeasonFinished]);
+            if (seasonFin != 0) {
+                finished = true;
+                SetExitMenuFlag();
+                return false;
+            }
+            selectEntry(10); // NEXT MATCH
+            return false;
+        }
+        if (m) {
+            for (int i = 0; i < m->numEntries; ++i) {
+                const auto& e = m->entries()[i];
+                if (!e.invisible && !e.disabled && e.onSelect && e.type == kEntryString && e.string()) {
+                    const char *s = e.string();
+                    if (strstr(s, "RESULT")) {
+                        selectEntry(i);
+                        return false;
+                    }
+                }
+            }
+        }
+        SetExitMenuFlag();
+        return false;
+    });
+
+    swos.g_exitMenu = 0;
+    A6 = CareerOffsets::kContestMenu;
+    SWOS::ShowMenu();
+
+    assertTrue(finished);
+    assertTrue(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kSeasonFinished]) != 0);
+}
+
+} // namespace
+
+void CareerTest::testHotseatEndOfSeasonMenuSequenceAndSharedJobOfferDedup()
+{
+    constexpr int16_t kFenerbahce = 0x0926;
+    constexpr int16_t kGalatasaray = 0x0a26;
+    constexpr int16_t kBesiktas = 0x0526;
+    constexpr int16_t kGaziantepspor = 0x0b26;
+    constexpr int16_t kManUtdForeign = 0x0801;
+    constexpr int16_t kEnglandNational = 0x0050;
+
+    extern void AcceptJobOffer();
+    extern void CareerOverInit();
+    extern void CareerOverFinish();
+    extern void ContinueCareer();
+    extern void ExitCareerMenu();
+
+    SWOS_UnitTest::setMenuCallback([&] {
+        SetExitMenuFlag();
+        return true;
+    });
+
+    initTwoPlayerHotseatFromTeams(kFenerbahce, kGalatasaray);
+    advanceHotseatSeasonToFinish();
+    auto& mgr = HotseatCareerManager::get();
+    mgr.switchToPlayer(0, true);
+
+    // Start season-end while P1 (index 1) was active to verify CareerOver still starts at P0 (index 0)
+    mgr.switchToPlayer(1, true);
+    mgr.onSeasonFinishedForAllPlayers();
+    *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kRetired]) = 1;
+
+    // Also verify IsNewJobOffer filtering rejects foreign, national, and human clubs in hotseat
+    assertFalse(mgr.isValidHotseatJobOffer(kManUtdForeign, 0));
+    assertFalse(mgr.isValidHotseatJobOffer(kEnglandNational, 0));
+    assertFalse(mgr.isValidHotseatJobOffer(kGalatasaray, 0));
+    assertTrue(mgr.isValidHotseatJobOffer(kBesiktas, 0));
+
+    // Seed P0 and P1 job offers directly (avoiding random RNG dependency) including shared Besiktas offer
+    auto& p0 = mgr.player(0);
+    p0.retired = 1;
+    p0.youreSacked = 0;
+    p0.numNewJobOffers = 3;
+    std::memset(p0.newJobOffers, 0, kJobOffersBufferSize);
+    seedJobOfferInBuffer(p0.newJobOffers, 0, kBesiktas, "BESIKTAS", 2'000'000);
+    seedJobOfferInBuffer(p0.newJobOffers, 1, kManUtdForeign, "MAN UTD", 5'000'000);   // filtered (foreign)
+    seedJobOfferInBuffer(p0.newJobOffers, 2, kGalatasaray, "GALATASARAY", 2'000'000); // filtered (human club)
+    p0.numJobOffers = 0;
+    std::memset(p0.jobOffers, 0, kJobOffersBufferSize);
+
+    auto& p1 = mgr.player(1);
+    p1.retired = 1;
+    p1.youreSacked = 0;
+    p1.numNewJobOffers = 2;
+    std::memset(p1.newJobOffers, 0, kJobOffersBufferSize);
+    seedJobOfferInBuffer(p1.newJobOffers, 0, kBesiktas, "BESIKTAS", 2'000'000);
+    seedJobOfferInBuffer(p1.newJobOffers, 1, kGaziantepspor, "GAZIANTEPSPOR", 1'500'000);
+    p1.numJobOffers = 1;
+    std::memset(p1.jobOffers, 0, kJobOffersBufferSize);
+    seedJobOfferInBuffer(p1.jobOffers, 0, kBesiktas, "BESIKTAS", 2'000'000);
+
+    // Sync active P1 VM state before triggering CareerOverMenu via ContestMenuInit -> CareerOverInit
+    mgr.loadSwosContext(p1, true);
+
+    std::vector<int> careerOverPlayersSeen;
+    bool acceptedP0Besiktas = false;
+    bool checkedP1AfterSwitch = false;
+    bool transitionedToSeason2 = false;
+
+    SWOS_UnitTest::setMenuCallback([&] {
+        auto m = getCurrentMenu();
+        auto packed = getCurrentPackedMenu();
+        if (!m || !packed || !SwosVM::isSwosPtr(packed)) {
+            SetExitMenuFlag();
+            return false;
+        }
+        uint32_t ofs = SwosVM::ptrToOffset(packed);
+        if (ofs == CareerOffsets::kCareerOverMenu) {
+            int curP = mgr.activePlayerIndex();
+            careerOverPlayersSeen.push_back(curP);
+
+            if (curP == 0 && !acceptedP0Besiktas) {
+                // Verify P0 has blinking JOB OFFERS (0x2000) and invalid offers were sanitized out
+                assertEqual(static_cast<int>(*reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumNewJobOffers])), 1);
+                assertEqual(static_cast<int>(m->entries()[5].disabled), 0);
+                assertTrue((m->entries()[5].stringFlags & 0x2000u) != 0);
+
+                // Accept P0's Besiktas job offer
+                p0.teamNoOfferAccepted = kBesiktas;
+                p0.teamFundsAccepted = 2'000'000;
+                *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kTeamNoOfferAccepted]) = kBesiktas;
+                *reinterpret_cast<int32_t *>(&SwosVM::g_memByte[CareerOffsets::kTeamFundsAccepted]) = 2'000'000;
+                *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumNewJobOffers]) = 0;
+                *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumJobOffers]) = 0;
+                mgr.onAfterAcceptJobOffer();
+                acceptedP0Besiktas = true;
+
+                // Besiktas must immediately be removed from P1's newJobOffers & jobOffers!
+                auto p1New = collectJobOfferTeamIds(mgr.player(1).newJobOffers, mgr.player(1).numNewJobOffers);
+                assertEqual(static_cast<int>(p1New.size()), 1);
+                assertEqual(p1New[0], static_cast<uint16_t>(kGaziantepspor));
+                assertEqual(static_cast<int>(mgr.player(1).numJobOffers), 0);
+
+                // Click CONTINUE CAREER for P0 -> must advance to P1's careerOverMenu (NOT next season yet!)
+                selectEntry(6);
+                return false;
+            }
+
+            if (curP == 1 && !checkedP1AfterSwitch) {
+                checkedP1AfterSwitch = true;
+                // Verify P1's careerOverMenu opened cleanly with "JOB OFFERS" reset & blinking, Besiktas stripped
+                assertEqual(static_cast<int>(*reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumNewJobOffers])), 1);
+                assertEqual(static_cast<int>(*reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumJobOffers])), 0);
+                assertEqual(static_cast<int>(m->entries()[5].disabled), 0);
+                assertTrue((m->entries()[5].stringFlags & 0x2000u) != 0);
+                assertEqual(static_cast<uint32_t>(m->entries()[5].fg.string.getRaw()), static_cast<uint32_t>(CareerOffsets::kAJobOffers));
+
+                // Test V7 hotseat save & reload mid-end-of-season
+                const std::string hotV7Path = pathInRootDir("THS_EOS_V7.hot");
+                assertTrue(mgr.saveToFile(hotV7Path));
+                int savedP0Accept = mgr.player(0).teamNoOfferAccepted;
+                mgr.reset();
+                assertTrue(mgr.loadFromFile(hotV7Path));
+                std::remove(hotV7Path.c_str());
+                assertTrue(mgr.isEndSeasonActive());
+                assertEqual(mgr.endSeasonPlayerIndex(), 1);
+                assertEqual(mgr.player(0).teamNoOfferAccepted, savedP0Accept);
+
+                // P1 accepts Gaziantepspor and clicks CONTINUE CAREER -> transitions to Season 2
+                *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kTeamNoOfferAccepted]) = kGaziantepspor;
+                *reinterpret_cast<int32_t *>(&SwosVM::g_memByte[CareerOffsets::kTeamFundsAccepted]) = 1'500'000;
+                mgr.onAfterAcceptJobOffer();
+                selectEntry(6);
+                transitionedToSeason2 = true;
+                return false;
+            }
+        } else if (ofs == CareerOffsets::kContestMenu && transitionedToSeason2) {
+            SetExitMenuFlag();
+            return false;
+        }
+        SetExitMenuFlag();
+        return false;
+    });
+
+    swos.g_exitMenu = 0;
+    A6 = CareerOffsets::kContestMenu;
+    SWOS::ShowMenu();
+
+    assertTrue(acceptedP0Besiktas);
+    assertTrue(checkedP1AfterSwitch);
+    assertTrue(transitionedToSeason2);
+    assertTrue(careerOverPlayersSeen.size() >= 2);
+    assertEqual(careerOverPlayersSeen[0], 0); // P1 (index 0) MUST go first
+    assertEqual(careerOverPlayersSeen.back(), 1); // P2 (index 1) MUST follow before Season 2
+    assertEqual(mgr.player(0).teamId, kBesiktas);
+    assertEqual(mgr.player(1).teamId, kGaziantepspor);
+
+    // Part 2: Verify sacked player losing only shared offer sees "YOUR CAREER IS OVER" and surviving player continues
+    mgr.reset();
+    SWOS_UnitTest::setMenuCallback([&] {
+        SetExitMenuFlag();
+        return true;
+    });
+    initTwoPlayerHotseatFromTeams(kFenerbahce, kGalatasaray);
+    advanceHotseatSeasonToFinish();
+    mgr.onSeasonFinishedForAllPlayers();
+    *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kRetired]) = 1;
+    auto& sp0 = mgr.player(0);
+    sp0.retired = 1;
+    sp0.youreSacked = 0;
+    sp0.numNewJobOffers = 1;
+    sp0.numJobOffers = 0;
+    std::memset(sp0.newJobOffers, 0, kJobOffersBufferSize);
+    seedJobOfferInBuffer(sp0.newJobOffers, 0, kBesiktas, "BESIKTAS", 2'000'000);
+
+    auto& sp1 = mgr.player(1);
+    sp1.retired = 1;
+    sp1.youreSacked = 1;
+    sp1.numNewJobOffers = 1;
+    sp1.numJobOffers = 0;
+    std::memset(sp1.newJobOffers, 0, kJobOffersBufferSize);
+    seedJobOfferInBuffer(sp1.newJobOffers, 0, kBesiktas, "BESIKTAS", 2'000'000); // same sole club!
+
+    mgr.switchToPlayer(0, true);
+    bool p1SawCareerOver = false;
+    bool season2ReachedBySurvivor = false;
+    int step = 0;
+    SWOS_UnitTest::setMenuCallback([&] {
+        auto m = getCurrentMenu();
+        auto packed = getCurrentPackedMenu();
+        if (!m || !packed || !SwosVM::isSwosPtr(packed)) {
+            SetExitMenuFlag();
+            return false;
+        }
+        uint32_t ofs = SwosVM::ptrToOffset(packed);
+        if (ofs == CareerOffsets::kCareerOverMenu) {
+            if (mgr.activePlayerIndex() == 0 && step == 0) {
+                step = 1;
+                *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kTeamNoOfferAccepted]) = kBesiktas;
+                *reinterpret_cast<int32_t *>(&SwosVM::g_memByte[CareerOffsets::kTeamFundsAccepted]) = 2'000'000;
+                mgr.onAfterAcceptJobOffer();
+                selectEntry(6); // CONTINUE CAREER for P0
+                return false;
+            }
+            if (mgr.activePlayerIndex() == 1 && step == 1) {
+                step = 2;
+                // Sacked P1 lost sole offer Besiktas -> "YOUR CAREER IS OVER" visible, Continue disabled
+                assertEqual(static_cast<int>(m->entries()[3].invisible), 0);
+                assertEqual(static_cast<int>(m->entries()[6].disabled), 1);
+                p1SawCareerOver = true;
+                selectEntry(8); // EXIT for sacked P1 -> P0 survives into Season 2
+                season2ReachedBySurvivor = true;
+                return false;
+            }
+        } else if (ofs == CareerOffsets::kContestMenu && season2ReachedBySurvivor) {
+            SetExitMenuFlag();
+            return false;
+        }
+        SetExitMenuFlag();
+        return false;
+    });
+    swos.g_exitMenu = 0;
+    A6 = CareerOffsets::kContestMenu;
+    SWOS::ShowMenu();
+
+    assertTrue(p1SawCareerOver);
+    assertTrue(season2ReachedBySurvivor);
+    assertEqual(static_cast<int>(*reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kSelTeamNumber])), static_cast<int>(kBesiktas));
+    const TeamFile *oldFener = findSelectedTeamById(kFenerbahce);
+    const TeamFile *oldGala = findSelectedTeamById(kGalatasaray);
+    const TeamFile *newBesiktas = findSelectedTeamById(kBesiktas);
+    assertTrue(oldFener != nullptr && oldGala != nullptr && newBesiktas != nullptr);
+    assertEqual(static_cast<int>(oldFener->teamControls), static_cast<int>(kComputerTeam));
+    assertEqual(static_cast<int>(oldGala->teamControls), static_cast<int>(kComputerTeam));
+    assertTrue(newBesiktas->teamControls == kPlayerCoach || newBesiktas->teamControls == kCoach);
+
+    mgr.reset();
+    SWOS_UnitTest::setMenuCallback();
+}
+
+void CareerTest::testHotseatClubSwitchOldTeamCpuRedAndFixtures()
+{
+    constexpr int16_t kFenerbahce = 0x0926;
+    constexpr int16_t kGalatasaray = 0x0a26;
+    constexpr int16_t kBesiktas = 0x0526;
+    constexpr int16_t kGaziantepspor = 0x0b26;
+
+    // Subcase A: P0 accepts Besiktas, P1 stays at Galatasaray.
+    // Put both clubs in tmdFileBuffer first (simulating European cups / saved career) to catch stale kCoach in tmdFileBuffer!
+    SWOS_UnitTest::setMenuCallback([&] {
+        SetExitMenuFlag();
+        return true;
+    });
+    initTwoPlayerHotseatFromTeams(kFenerbahce, kGalatasaray);
+    advanceHotseatSeasonToFinish();
+    auto& mgr = HotseatCareerManager::get();
+    mgr.switchToPlayer(0, true);
+
+    // Seed Fenerbahce & Galatasaray into tmdFileBuffer with human controls (reproduces bug where cseg_5A6A1 kept kCoach)
+    {
+        auto *tmd = reinterpret_cast<TeamFile *>(&SwosVM::g_memByte[CareerOffsets::kTmdFileBuffer]);
+        const TeamFile *fenerTf = findSelectedTeamById(kFenerbahce);
+        const TeamFile *galaTf = findSelectedTeamById(kGalatasaray);
+        assertTrue(fenerTf != nullptr && galaTf != nullptr);
+        std::memcpy(&tmd[0], fenerTf, sizeof(TeamFile));
+        tmd[0].teamControls = kCoach;
+        std::memcpy(&tmd[1], galaTf, sizeof(TeamFile));
+        tmd[1].teamControls = kCoach;
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kTmdCareerCount]) = 2;
+    }
+
+    // Tag P1's staying Galatasaray GK player name to confirm staying squad isn't reset to stock disk data
+    {
+        auto *p1Gk = reinterpret_cast<PlayerFile *>(mgr.player(1).careerTeam + sizeof(TeamFileHeader));
+        std::snprintf(p1Gk->playerName, sizeof(p1Gk->playerName), "CUSTOM GALA GK");
+    }
+
+    mgr.onSeasonFinishedForAllPlayers();
+    *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kRetired]) = 1;
+    auto& p0 = mgr.player(0);
+    p0.retired = 1;
+    p0.youreSacked = 0;
+    p0.numNewJobOffers = 1;
+    std::memset(p0.newJobOffers, 0, kJobOffersBufferSize);
+    seedJobOfferInBuffer(p0.newJobOffers, 0, kBesiktas, "BESIKTAS", 3'000'000);
+    mgr.player(1).retired = 1;
+    mgr.player(1).youreSacked = 0;
+    mgr.player(1).numNewJobOffers = 0;
+    mgr.player(1).numJobOffers = 0;
+    mgr.switchToPlayer(0, true);
+
+    bool p0Done = false;
+    bool p1Done = false;
+    bool enteredSeason2Contest = false;
+    SWOS_UnitTest::setMenuCallback([&] {
+        auto packed = getCurrentPackedMenu();
+        if (packed && SwosVM::isSwosPtr(packed)) {
+            uint32_t ofs = SwosVM::ptrToOffset(packed);
+            if (ofs == CareerOffsets::kCareerOverMenu) {
+                if (mgr.activePlayerIndex() == 0 && !p0Done) {
+                    p0Done = true;
+                    *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kTeamNoOfferAccepted]) = kBesiktas;
+                    *reinterpret_cast<int32_t *>(&SwosVM::g_memByte[CareerOffsets::kTeamFundsAccepted]) = 3'000'000;
+                    mgr.onAfterAcceptJobOffer();
+                    selectEntry(6);
+                    return false;
+                }
+                if (mgr.activePlayerIndex() == 1 && !p1Done) {
+                    p1Done = true;
+                    selectEntry(6); // P1 stays at Galatasaray
+                    enteredSeason2Contest = true;
+                    return false;
+                }
+            } else if (ofs == CareerOffsets::kContestMenu && enteredSeason2Contest) {
+                SetExitMenuFlag();
+                return false;
+            }
+        }
+        SetExitMenuFlag();
+        return false;
+    });
+
+    swos.g_exitMenu = 0;
+    A6 = CareerOffsets::kContestMenu;
+    SWOS::ShowMenu();
+
+    assertTrue(p0Done && p1Done && enteredSeason2Contest);
+    assertEqual(mgr.numPlayers(), 2);
+    assertEqual(static_cast<int>(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCurrentSeasonShowing])), 1);
+
+    // P0 now coaches Besiktas (26 players, fresh starting funds)
+    assertEqual(mgr.player(0).teamId, kBesiktas);
+    assertEqual(mgr.player(0).teamName, "BESIKTAS");
+    assertEqual(static_cast<int>(mgr.player(0).careerNumPlayers), 26);
+    assertEqual(static_cast<int>(mgr.player(0).stayingInOldClub), 0);
+
+    // P1 still coaches Galatasaray with Season 1 squad intact
+    assertEqual(mgr.player(1).teamId, kGalatasaray);
+    const auto *p1GkAfter = reinterpret_cast<const PlayerFile *>(mgr.player(1).careerTeam + sizeof(TeamFileHeader));
+    assertEqual(std::string(p1GkAfter->playerName), "CUSTOM GALA GK");
+
+    // Old club Fenerbahce MUST now be kComputerTeam (1 => rendered COLOR_RED) in BOTH g_selectedTeams and tmdFileBuffer!
+    const TeamFile *oldFenerSel = findSelectedTeamById(kFenerbahce);
+    const TeamFile *newBesikSel = findSelectedTeamById(kBesiktas);
+    const TeamFile *stayGalaSel = findSelectedTeamById(kGalatasaray);
+    assertTrue(oldFenerSel != nullptr && newBesikSel != nullptr && stayGalaSel != nullptr);
+    assertEqual(static_cast<int>(oldFenerSel->teamControls), static_cast<int>(kComputerTeam));
+    assertTrue(newBesikSel->teamControls == kPlayerCoach || newBesikSel->teamControls == kCoach);
+    assertTrue(stayGalaSel->teamControls == kPlayerCoach || stayGalaSel->teamControls == kCoach);
+
+    // Also verify Fenerbahce remains included in competitionFileBuffer league teams as a CPU team
+    uint32_t compBufOfs = *reinterpret_cast<const uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kArrayOfPointers]);
+    int16_t leagueTeamsCount = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[compBufOfs + 49]);
+    bool fenerInLeagueTable = false;
+    bool besiktasInLeagueTable = false;
+    bool galaInLeagueTable = false;
+    for (int i = 0; i < leagueTeamsCount && i < 64; ++i) {
+        int16_t tid = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[compBufOfs + 301 + i * 2]);
+        if (tid == kFenerbahce) fenerInLeagueTable = true;
+        if (tid == kBesiktas) besiktasInLeagueTable = true;
+        if (tid == kGalatasaray) galaInLeagueTable = true;
+    }
+    assertTrue(fenerInLeagueTable && besiktasInLeagueTable && galaInLeagueTable);
+
+    uint16_t tmdCnt = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kTmdCareerCount]);
+    const auto *tmdAfter = reinterpret_cast<const TeamFile *>(&SwosVM::g_memByte[CareerOffsets::kTmdFileBuffer]);
+    for (uint16_t i = 0; i < tmdCnt && i < 64; ++i) {
+        int16_t tid = *reinterpret_cast<const int16_t *>(&tmdAfter[i]);
+        if (tid == kFenerbahce) {
+            assertEqual(static_cast<int>(tmdAfter[i].teamControls), static_cast<int>(kComputerTeam));
+        }
+    }
+
+    // Verify Fenerbahce is NOT scheduled as a human turn in Season 2 calendar slots, while Besiktas & Galatasaray ARE
+    bool besiktasScheduled = false;
+    bool galatasarayScheduled = false;
+    bool fenerbahceAsCpuOpponentOnly = true;
+    uint16_t totalCal = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E2]);
+    size_t scanOfs = CareerOffsets::kDsegDB3E6;
+    for (uint16_t c = 0; c < totalCal && scanOfs + 22 <= CareerOffsets::kDsegDB3E6 + 1870; ++c) {
+        if (SwosVM::g_memByte[scanOfs] == 0) { // league fixture entry
+            uint16_t calOfs = static_cast<uint16_t>(scanOfs - CareerOffsets::kDsegDB3E6);
+            auto checkSlot = [&](const uint8_t *slotBytes) {
+                uint16_t t1 = *reinterpret_cast<const uint16_t *>(slotBytes + 2);
+                uint16_t t2 = *reinterpret_cast<const uint16_t *>(slotBytes + 4);
+                if (t1 == kBesiktas || t2 == kBesiktas) besiktasScheduled = true;
+                if (t1 == kGalatasaray || t2 == kGalatasaray) galatasarayScheduled = true;
+                // Fenerbahce should never appear in a CPU-vs-CPU slot inside human calendar entries
+                if ((t1 == kFenerbahce && t2 != kBesiktas && t2 != kGalatasaray) ||
+                    (t2 == kFenerbahce && t1 != kBesiktas && t1 != kGalatasaray)) {
+                    fenerbahceAsCpuOpponentOnly = false;
+                }
+            };
+            auto it = mgr.calendarSlots().find(calOfs);
+            if (it != mgr.calendarSlots().end()) {
+                for (const auto& s : it->second)
+                    checkSlot(s.data());
+            } else if (SwosVM::g_memByte[scanOfs + 5] > 0) {
+                checkSlot(&SwosVM::g_memByte[scanOfs + 10]);
+            }
+        }
+        uint16_t len = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[scanOfs + 2]);
+        if (len < 22) break;
+        scanOfs += len;
+    }
+    assertTrue(besiktasScheduled);
+    assertTrue(galatasarayScheduled);
+    assertTrue(fenerbahceAsCpuOpponentOnly);
+
+    // Subcase B: BOTH players switch clubs cleanly in Season 2 -> Season 3 (Besiktas -> Fenerbahce, Galatasaray -> Gaziantepspor)
+    advanceHotseatSeasonToFinish();
+    mgr.onSeasonFinishedForAllPlayers();
+    *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kRetired]) = 1;
+    mgr.player(0).retired = 1;
+    mgr.player(0).numNewJobOffers = 1;
+    seedJobOfferInBuffer(mgr.player(0).newJobOffers, 0, kFenerbahce, "FENERBAHCE", 2'500'000);
+    mgr.player(1).retired = 1;
+    mgr.player(1).numNewJobOffers = 1;
+    seedJobOfferInBuffer(mgr.player(1).newJobOffers, 0, kGaziantepspor, "GAZIANTEPSPOR", 1'500'000);
+    mgr.switchToPlayer(0, true);
+
+    bool s3P0Done = false, s3P1Done = false, enteredS3 = false;
+    SWOS_UnitTest::setMenuCallback([&] {
+        auto packed = getCurrentPackedMenu();
+        if (packed && SwosVM::isSwosPtr(packed)) {
+            uint32_t ofs = SwosVM::ptrToOffset(packed);
+            if (ofs == CareerOffsets::kCareerOverMenu) {
+                if (mgr.activePlayerIndex() == 0 && !s3P0Done) {
+                    s3P0Done = true;
+                    *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kTeamNoOfferAccepted]) = kFenerbahce;
+                    *reinterpret_cast<int32_t *>(&SwosVM::g_memByte[CareerOffsets::kTeamFundsAccepted]) = 2'500'000;
+                    mgr.onAfterAcceptJobOffer();
+                    selectEntry(6);
+                    return false;
+                }
+                if (mgr.activePlayerIndex() == 1 && !s3P1Done) {
+                    s3P1Done = true;
+                    *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kTeamNoOfferAccepted]) = kGaziantepspor;
+                    *reinterpret_cast<int32_t *>(&SwosVM::g_memByte[CareerOffsets::kTeamFundsAccepted]) = 1'500'000;
+                    mgr.onAfterAcceptJobOffer();
+                    selectEntry(6);
+                    enteredS3 = true;
+                    return false;
+                }
+            } else if (ofs == CareerOffsets::kContestMenu && enteredS3) {
+                SetExitMenuFlag();
+                return false;
+            }
+        }
+        SetExitMenuFlag();
+        return false;
+    });
+    swos.g_exitMenu = 0;
+    A6 = CareerOffsets::kContestMenu;
+    SWOS::ShowMenu();
+
+    assertTrue(s3P0Done && s3P1Done && enteredS3);
+    assertEqual(mgr.player(0).teamId, kFenerbahce);
+    assertEqual(mgr.player(1).teamId, kGaziantepspor);
+    assertEqual(static_cast<int>(mgr.player(0).careerNumPlayers), 26);
+    assertEqual(static_cast<int>(mgr.player(1).careerNumPlayers), 26);
+
+    const TeamFile *oldBesikS3 = findSelectedTeamById(kBesiktas);
+    const TeamFile *oldGalaS3 = findSelectedTeamById(kGalatasaray);
+    const TeamFile *newFenerS3 = findSelectedTeamById(kFenerbahce);
+    const TeamFile *newGaziS3 = findSelectedTeamById(kGaziantepspor);
+    assertTrue(oldBesikS3 && oldGalaS3 && newFenerS3 && newGaziS3);
+    assertEqual(static_cast<int>(oldBesikS3->teamControls), static_cast<int>(kComputerTeam));
+    assertEqual(static_cast<int>(oldGalaS3->teamControls), static_cast<int>(kComputerTeam));
+    assertTrue(newFenerS3->teamControls == kPlayerCoach || newFenerS3->teamControls == kCoach);
+    assertTrue(newGaziS3->teamControls == kPlayerCoach || newGaziS3->teamControls == kCoach);
+
+    mgr.reset();
+    SWOS_UnitTest::setMenuCallback();
 }

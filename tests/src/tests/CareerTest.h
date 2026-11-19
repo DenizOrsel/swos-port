@@ -45,4 +45,6 @@ private:
     void testHotseatTrialDepartureAfterOpponentMatch();
     void testHotseatEmergencyLoanForInjuredSquad();
     void testHotseatSaveAndLoadCareerFile();
+    void testHotseatEndOfSeasonMenuSequenceAndSharedJobOfferDedup();
+    void testHotseatClubSwitchOldTeamCpuRedAndFixtures();
 };

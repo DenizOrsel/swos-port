@@ -462,6 +462,21 @@ cseg_5A227, function
 cseg_5A666, function
 GetPlayer, function
 diyStatsName, dword
+ContinueCareerNextSeason, function
+InitializeNewSeason, function
+cseg_91428, function
+cseg_942F2, function
+cseg_943FA, function
+cseg_5A6A1, function
+cseg_5DB56, function
+SearchTeamInTmdFile, function
+ShowLeavingMessage, function
+ShowGreetingMessage, function
+ShowChairmanOpinionAboutTheSeason, function
+ShowWishYouSuccessMessage, function
+ShowLastSeasonMessage, function
+ShowEnjoyLastSeasonMessage, function
+ShowRetirementMessage, function
 
 # transfer negotiation variables
 teamOffering, word
@@ -861,6 +876,7 @@ cseg_9307A
 cseg_9339D
 ShowPlayMatchMenu
 cseg_52956
+CareerOverInit
 
 #
 # insert a call to given C++ function into a proc at a given line
@@ -914,6 +930,9 @@ cseg_5A227, 73, Hotseat_ResolveMarketListTeamPtr
 cseg_5A666, 10, @remove
 cseg_5A666, 14, @remove
 cseg_5A666, 15, Hotseat_LookupForeignPoolPlayer
+IsNewJobOffer, @@out, Hotseat_FilterNewJobOffer
+AcceptJobOffer, @@out, Hotseat_OnAfterAcceptJobOffer
+cseg_5B705, 283, Hotseat_OnAfterJobOfferRoll
 GetPlayer, @@get_player_offset, Hotseat_ResolveGetPlayerTeamPtr
 
 
@@ -937,6 +956,11 @@ SelectFileToSaveDialog, int
 
 # main menu
 SWOSMainMenuInit
+
+# career end season
+ContinueCareer
+ExitCareerMenu
+JobOffersMenuRetired
 
 # menus
 MenuCheckControls

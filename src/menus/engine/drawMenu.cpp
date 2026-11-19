@@ -437,6 +437,14 @@ static void drawStringMenuItem(MenuEntry *entry, const char *string)
                 if (HotseatCareerManager::get().canEndTurn())
                     string = "END TURN";
             }
+        } else if (offset == CareerOffsets::kCareerOverMenu) {
+            if (entry->ordinal == 0 && HotseatCareerManager::get().numPlayers() > 1) {
+                int pIdx = HotseatCareerManager::get().activePlayerIndex() + 1;
+                snprintf(hotseatTextBuf, sizeof(hotseatTextBuf), "P%d: %s",
+                         pIdx,
+                         HotseatCareerManager::get().activePlayer().managerName.c_str());
+                string = hotseatTextBuf;
+            }
         } else if (offset == 496147) {
             if (entry->ordinal == 0 && string && *string && HotseatCareerManager::get().numPlayers() > 1) {
                 if (strncmp(string, "[P", 2) != 0) {

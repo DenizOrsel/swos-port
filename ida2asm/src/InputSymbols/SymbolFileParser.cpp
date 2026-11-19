@@ -2,7 +2,7 @@
 #include "AmigaRegs.h"
 #include "Util.h"
 
-constexpr int kImportsCapacity = 6'000;
+constexpr int kImportsCapacity = 12'000;
 constexpr int kExportsCapacity  = 10'000;
 constexpr int kExportTypesCapacity = 33'000;
 constexpr int kMaxExportEntries = 600;

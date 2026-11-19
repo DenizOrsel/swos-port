@@ -8,18 +8,32 @@
 #include <algorithm>
 #include <fstream>
 
+extern void CareerInitVars();
+extern void CalcMenuEntryAddress();
+extern void ShowRetirementMessage();
+extern void ShowLeavingMessage();
+extern void ShowChairmanOpinionAboutTheSeason();
+extern void ContinueCareerNextSeason();
+extern void cseg_91428();
+extern void cseg_5DB56();
+extern void cseg_943FA();
+extern void InitializeNewSeason();
+
 namespace {
 
 constexpr char kHotseatFileMagicV3[16] = "SWOS_HOTSEAT_V3";
 constexpr char kHotseatFileMagicV4[16] = "SWOS_HOTSEAT_V4";
 constexpr char kHotseatFileMagicV5[16] = "SWOS_HOTSEAT_V5";
 constexpr char kHotseatFileMagicV6[16] = "SWOS_HOTSEAT_V6";
+constexpr char kHotseatFileMagicV7[16] = "SWOS_HOTSEAT_V7";
 constexpr int32_t kMaxSerializedOffers = 1024;
 constexpr size_t kTeamFileHeaderSize = sizeof(TeamFileHeader);
 constexpr size_t kPlayerFileSize = sizeof(PlayerFile);
 constexpr int kMaxHomeMarketEntries = 25;
 constexpr int kMaxForeignMarketEntries = 15;
 constexpr int kPoolPlyrCount = 900;
+constexpr size_t kJobOfferEntrySize = 26;
+constexpr int kMaxJobOffersPerQueue = 5;
 
 #pragma pack(push, 1)
 struct MarketEntry {
@@ -441,6 +455,12 @@ void HotseatCareerManager::reset()
     m_pendingOfferPrompt = false;
     m_inPlayMatchFlow = false;
     m_initializingSeason = false;
+    m_endSeasonPendingInit = false;
+    m_endSeasonActive = false;
+    m_endSeasonPlayerIndex = 0;
+    m_endSeasonEliminated.fill(false);
+    m_claimedJobOfferTeams.clear();
+    m_pendingSeasonTransitions.clear();
     m_transferOffers.clear();
     m_calendarSlots.clear();
     resetEuroCups();
@@ -526,9 +546,21 @@ void HotseatCareerManager::initializeHotseat(const std::vector<int16_t>& teamIds
 
 void HotseatCareerManager::saveCurrentSwosContext(HotseatPlayerContext& ctx)
 {
+    int16_t prevTeamId = ctx.teamId;
     int16_t vmTeamId = *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kSelTeamNumber]);
     if (vmTeamId != 0 || ctx.teamId == 0)
         ctx.teamId = vmTeamId;
+    if (vmTeamId != 0 && (ctx.teamName.empty() || (prevTeamId != 0 && vmTeamId != prevTeamId))) {
+        const auto *tf = reinterpret_cast<const TeamFile *>(&SwosVM::g_memByte[CareerOffsets::kCareerTeam]);
+        if (*reinterpret_cast<const int16_t *>(tf) == vmTeamId && tf->teamName[0] != '\0') {
+            char nameBuf[18] = {0};
+            std::memcpy(nameBuf, tf->teamName, sizeof(tf->teamName));
+            std::string tname(nameBuf);
+            trimTrailingSwosPadding(tname);
+            if (!tname.empty())
+                ctx.teamName = tname;
+        }
+    }
     ctx.coachOrPlayer = *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kCoachOrPlayer]);
     ctx.careerTeamLeague = *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerTeamLeague]);
     ctx.mrOrMs = *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kMrOrMs]);
@@ -826,6 +858,31 @@ void HotseatCareerManager::ensureHotseatTeamControlsInSelectedTeams()
         int pIdx = findHotseatPlayerByTeamId(tid);
         if (pIdx >= 0) {
             selTeams[t].teamControls = (m_players[pIdx].coachOrPlayer == 1) ? kPlayerCoach : kCoach;
+        } else if (selTeams[t].teamControls == kCoach || selTeams[t].teamControls == kPlayerCoach) {
+            selTeams[t].teamControls = kComputerTeam;
+        }
+    }
+}
+
+void HotseatCareerManager::resetNonHotseatTeamControlsInTmdFile()
+{
+    if (!isActive())
+        return;
+
+    int maxTmdTeams = (static_cast<int>(CareerOffsets::kDiyFileBufferCopy) -
+                       static_cast<int>(CareerOffsets::kTmdFileBuffer)) /
+                      static_cast<int>(sizeof(TeamFile));
+    int tmdCount = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kTmdCareerCount]);
+    tmdCount = std::clamp(tmdCount, 0, maxTmdTeams);
+
+    auto *tmdTeams = reinterpret_cast<TeamFile *>(&SwosVM::g_memByte[CareerOffsets::kTmdFileBuffer]);
+    for (int i = 0; i < tmdCount; ++i) {
+        int16_t tid = *reinterpret_cast<const int16_t *>(&tmdTeams[i]);
+        int pIdx = findHotseatPlayerByTeamId(tid);
+        if (pIdx >= 0) {
+            tmdTeams[i].teamControls = (m_players[pIdx].coachOrPlayer == 1) ? kPlayerCoach : kCoach;
+        } else if (tmdTeams[i].teamControls == kCoach || tmdTeams[i].teamControls == kPlayerCoach) {
+            tmdTeams[i].teamControls = kComputerTeam;
         }
     }
 }
@@ -1602,6 +1659,354 @@ void HotseatCareerManager::onWeeklyTickForAllPlayers()
     loadSwosContext(m_players[activeIdx], false);
 }
 
+static void removeTeamFromJobOfferBuffer(uint8_t *buf, int16_t& count, uint16_t teamId)
+{
+    int n = std::clamp<int>(count, 0, kMaxJobOffersPerQueue);
+    int writeIdx = 0;
+    for (int i = 0; i < n; ++i) {
+        const uint8_t *src = buf + static_cast<size_t>(i) * kJobOfferEntrySize;
+        uint16_t entryTeamId = *reinterpret_cast<const uint16_t *>(src);
+        if (entryTeamId == teamId)
+            continue;
+        if (writeIdx != i) {
+            std::memmove(buf + static_cast<size_t>(writeIdx) * kJobOfferEntrySize, src, kJobOfferEntrySize);
+        }
+        ++writeIdx;
+    }
+    if (writeIdx < kMaxJobOffersPerQueue) {
+        std::memset(buf + static_cast<size_t>(writeIdx) * kJobOfferEntrySize, 0,
+                    static_cast<size_t>(kMaxJobOffersPerQueue - writeIdx) * kJobOfferEntrySize);
+    }
+    count = static_cast<int16_t>(writeIdx);
+}
+
+static int32_t computeJobOfferStartingBalance(int32_t amountOffered)
+{
+    if (amountOffered == -1)
+        return -1;
+
+    save68kRegisters();
+    SWOS::Rand2();
+    uint16_t rnd = static_cast<uint16_t>(D0.asWord());
+    restore68kRegisters();
+
+    uint32_t thousands = static_cast<uint32_t>(amountOffered) / 1000u;
+    uint32_t pct = ((static_cast<uint32_t>(rnd) * 25u) >> 8) + 80u;
+    uint32_t scaledThousands = (thousands * pct) / 100u;
+    return static_cast<int32_t>(scaledThousands * 1000u);
+}
+
+static void applyCareerTeamResetInit(uint8_t *teamBuf, bool newClub)
+{
+    auto *hdr = reinterpret_cast<TeamFileHeader *>(teamBuf);
+    hdr->someFlag = 1;
+    hdr->writesZeroHere = 0;
+    hdr->andWith0xFE &= 0xFE;
+
+    for (int slot = 0; slot < 32; ++slot) {
+        auto *pf = reinterpret_cast<PlayerFile *>(teamBuf + kTeamFileHeaderSize + static_cast<size_t>(slot) * kPlayerFileSize);
+        pf->cardsInjuries = 0;
+        if (newClub) {
+            pf->positionAndFace &= 0xFD;
+            pf->someFlag = 0;
+        }
+        pf->positionAndFace &= 0xFB;
+        pf->unk_2 = 0;
+        pf->unk_3 = 0;
+        pf->unk_4 = 0;
+        pf->unk_5 = 0;
+    }
+}
+
+static void updateExistingTmdFileEntry(uint16_t teamId, const uint8_t *teamFileBytes, TeamControls controls)
+{
+    int maxTmdTeams = (static_cast<int>(CareerOffsets::kDiyFileBufferCopy) -
+                       static_cast<int>(CareerOffsets::kTmdFileBuffer)) /
+                      static_cast<int>(sizeof(TeamFile));
+    int tmdCount = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kTmdCareerCount]);
+    tmdCount = std::clamp(tmdCount, 0, maxTmdTeams);
+
+    auto *tmdTeams = reinterpret_cast<TeamFile *>(&SwosVM::g_memByte[CareerOffsets::kTmdFileBuffer]);
+    for (int i = 0; i < tmdCount; ++i) {
+        if (*reinterpret_cast<const uint16_t *>(&tmdTeams[i]) == teamId) {
+            std::memcpy(&tmdTeams[i], teamFileBytes, sizeof(TeamFile));
+            tmdTeams[i].teamControls = controls;
+            break;
+        }
+    }
+}
+
+bool HotseatCareerManager::isValidHotseatJobOffer(uint16_t teamId, int forPlayerIdx /* = -1 */) const
+{
+    if (!isActive() || m_numPlayers <= 1)
+        return true;
+
+    if (teamId == 0 || teamId == 0xFFFF)
+        return false;
+
+    uint8_t country = static_cast<uint8_t>(teamId & 0xFFu);
+    if (country >= 80) // national teams incompatible with shared-country hotseat club career
+        return false;
+
+    uint8_t compCountry = SwosVM::g_memByte[CareerOffsets::kCompCountryNumber];
+    if (compCountry != 0 && country != compCountry)
+        return false;
+
+    if (forPlayerIdx < 0)
+        forPlayerIdx = m_activePlayerIndex;
+
+    // Exclude clubs currently managed by any hotseat player, or claimed by another player
+    for (int i = 0; i < m_numPlayers; ++i) {
+        if (static_cast<uint16_t>(m_players[i].teamId) == teamId)
+            return false;
+        if (i != forPlayerIdx && m_players[i].teamNoOfferAccepted != -1 &&
+            static_cast<uint16_t>(m_players[i].teamNoOfferAccepted) == teamId) {
+            return false;
+        }
+    }
+
+    int16_t forAccepted = (forPlayerIdx >= 0 && forPlayerIdx < m_numPlayers)
+        ? m_players[forPlayerIdx].teamNoOfferAccepted : -1;
+    if (forAccepted == -1 || static_cast<uint16_t>(forAccepted) != teamId) {
+        for (uint16_t claimedId : m_claimedJobOfferTeams) {
+            if (claimedId == teamId)
+                return false;
+        }
+    }
+
+    // Keep domestic job offers inside the shared league division when league cache is loaded
+    if (swos.selTeamsPtr && swos.g_numSelectedTeams > 0) {
+        const auto *selTeams = reinterpret_cast<const TeamFile *>(SwosVM::offsetToPtr(swos.selTeamsPtr));
+        if (selTeams) {
+            uint16_t activeLeague = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD6CDC]);
+            int count = std::min<int>(swos.g_numSelectedTeams, 68400 / sizeof(TeamFile));
+            for (int t = 0; t < count; ++t) {
+                if (*reinterpret_cast<const uint16_t *>(&selTeams[t]) == teamId) {
+                    if (selTeams[t].league != static_cast<uint8_t>(activeLeague))
+                        return false;
+                    break;
+                }
+            }
+        }
+    }
+
+    return true;
+}
+
+void HotseatCareerManager::removeJobOfferForAllOtherPlayers(uint16_t teamId, int acceptingPlayerIdx)
+{
+    if (!isActive() || teamId == 0 || teamId == 0xFFFF)
+        return;
+
+    if (std::find(m_claimedJobOfferTeams.begin(), m_claimedJobOfferTeams.end(), teamId) == m_claimedJobOfferTeams.end()) {
+        m_claimedJobOfferTeams.push_back(teamId);
+    }
+
+    for (int i = 0; i < m_numPlayers; ++i) {
+        if (i == acceptingPlayerIdx)
+            continue;
+        removeTeamFromJobOfferBuffer(m_players[i].newJobOffers, m_players[i].numNewJobOffers, teamId);
+        removeTeamFromJobOfferBuffer(m_players[i].jobOffers, m_players[i].numJobOffers, teamId);
+        if (i == m_activePlayerIndex) {
+            std::memcpy(&SwosVM::g_memByte[CareerOffsets::kNewJobOffers], m_players[i].newJobOffers, kJobOffersBufferSize);
+            std::memcpy(&SwosVM::g_memByte[CareerOffsets::kJobOffers], m_players[i].jobOffers, kJobOffersBufferSize);
+            *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumNewJobOffers]) = m_players[i].numNewJobOffers;
+            *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumJobOffers]) = m_players[i].numJobOffers;
+        }
+    }
+}
+
+void HotseatCareerManager::sanitizeJobOffersForContext(HotseatPlayerContext& ctx, int playerIdx)
+{
+    if (!isActive() || m_numPlayers <= 1)
+        return;
+
+    auto sanitizeBuf = [&](uint8_t *buf, int16_t& count) {
+        int n = std::clamp<int>(count, 0, kMaxJobOffersPerQueue);
+        int writeIdx = 0;
+        for (int i = 0; i < n; ++i) {
+            const uint8_t *src = buf + static_cast<size_t>(i) * kJobOfferEntrySize;
+            uint16_t tid = *reinterpret_cast<const uint16_t *>(src);
+            if (!isValidHotseatJobOffer(tid, playerIdx))
+                continue;
+            if (writeIdx != i) {
+                std::memmove(buf + static_cast<size_t>(writeIdx) * kJobOfferEntrySize, src, kJobOfferEntrySize);
+            }
+            ++writeIdx;
+        }
+        if (writeIdx < kMaxJobOffersPerQueue) {
+            std::memset(buf + static_cast<size_t>(writeIdx) * kJobOfferEntrySize, 0,
+                        static_cast<size_t>(kMaxJobOffersPerQueue - writeIdx) * kJobOfferEntrySize);
+        }
+        count = static_cast<int16_t>(writeIdx);
+    };
+
+    sanitizeBuf(ctx.newJobOffers, ctx.numNewJobOffers);
+    sanitizeBuf(ctx.jobOffers, ctx.numJobOffers);
+
+    if (ctx.teamNoOfferAccepted != -1) {
+        uint16_t accTid = static_cast<uint16_t>(ctx.teamNoOfferAccepted);
+        bool conflict = false;
+        for (int j = 0; j < m_numPlayers; ++j) {
+            if (j != playerIdx && (static_cast<uint16_t>(m_players[j].teamId) == accTid ||
+                (m_players[j].teamNoOfferAccepted != -1 && static_cast<uint16_t>(m_players[j].teamNoOfferAccepted) == accTid))) {
+                conflict = true;
+                break;
+            }
+        }
+        if (conflict) {
+            ctx.teamNoOfferAccepted = -1;
+            ctx.teamFundsAccepted = 0;
+        }
+    }
+
+    if (playerIdx == m_activePlayerIndex) {
+        std::memcpy(&SwosVM::g_memByte[CareerOffsets::kNewJobOffers], ctx.newJobOffers, kJobOffersBufferSize);
+        std::memcpy(&SwosVM::g_memByte[CareerOffsets::kJobOffers], ctx.jobOffers, kJobOffersBufferSize);
+        *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumNewJobOffers]) = ctx.numNewJobOffers;
+        *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumJobOffers]) = ctx.numJobOffers;
+        *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kTeamNoOfferAccepted]) = ctx.teamNoOfferAccepted;
+        *reinterpret_cast<int32_t *>(&SwosVM::g_memByte[CareerOffsets::kTeamFundsAccepted]) = ctx.teamFundsAccepted;
+    }
+}
+
+void HotseatCareerManager::sanitizeJobOffersForAllPlayers()
+{
+    if (!isActive() || m_numPlayers <= 1)
+        return;
+
+    m_claimedJobOfferTeams.clear();
+    for (int i = 0; i < m_numPlayers; ++i) {
+        if (m_players[i].teamNoOfferAccepted != -1) {
+            m_claimedJobOfferTeams.push_back(static_cast<uint16_t>(m_players[i].teamNoOfferAccepted));
+        }
+    }
+    for (int i = 0; i < m_numPlayers; ++i) {
+        sanitizeJobOffersForContext(m_players[i], i);
+    }
+}
+
+void HotseatCareerManager::resetCareerOverMenuState() const
+{
+    auto currentMenu = getCurrentMenu();
+    auto packed = getCurrentPackedMenu();
+    if (!currentMenu || !packed || !SwosVM::isSwosPtr(packed) ||
+        SwosVM::ptrToOffset(packed) != CareerOffsets::kCareerOverMenu) {
+        return;
+    }
+
+    auto *entries = currentMenu->entries();
+    if (currentMenu->numEntries > 3) {
+        entries[3].invisible = 1; // "YOUR CAREER IS OVER"
+    }
+    if (currentMenu->numEntries > 4) {
+        entries[4].disabled = 0;
+        entries[4].bg.entryColor = (entries[4].bg.entryColor & 0xFFF0u) | 14u;
+    }
+    if (currentMenu->numEntries > 5) {
+        entries[5].invisible = 0;
+        entries[5].disabled = 0;
+        entries[5].bg.entryColor = (entries[5].bg.entryColor & 0xFFF0u) | 14u;
+        entries[5].stringFlags &= static_cast<uint16_t>(~0x2000u);
+        entries[5].fg.string.setRaw(CareerOffsets::kAJobOffers);
+    }
+    if (currentMenu->numEntries > 6) {
+        entries[6].disabled = 0;
+        entries[6].bg.entryColor = (entries[6].bg.entryColor & 0xFFF0u) | 14u;
+        entries[6].fg.string.setRaw(CareerOffsets::kAContinueCareer);
+    }
+    if (currentMenu->numEntries > 7) {
+        entries[7].invisible = 0;
+    }
+}
+
+bool HotseatCareerManager::isPlayerCareerOver(const HotseatPlayerContext& ctx) const
+{
+    return ctx.youreSacked != 0 &&
+           ctx.teamNoOfferAccepted == -1 &&
+           ctx.numNewJobOffers == 0 &&
+           ctx.numJobOffers == 0;
+}
+
+bool HotseatCareerManager::isVmCareerOver() const
+{
+    int16_t sacked = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kYoureSacked]);
+    int16_t accepted = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kTeamNoOfferAccepted]);
+    int16_t newCnt = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumNewJobOffers]);
+    int16_t oldCnt = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumJobOffers]);
+    return sacked != 0 && accepted == -1 && newCnt == 0 && oldCnt == 0;
+}
+
+bool HotseatCareerManager::hasSurvivingPlayerAfterEndSeason(int excludePlayerIdx /* = -1 */) const
+{
+    for (int i = 0; i < m_numPlayers; ++i) {
+        if (i == excludePlayerIdx || m_endSeasonEliminated[i])
+            continue;
+        const auto& p = m_players[i];
+        bool curOver = (i == m_activePlayerIndex) ? isVmCareerOver() : isPlayerCareerOver(p);
+        if (!curOver)
+            return true;
+    }
+    return false;
+}
+
+void HotseatCareerManager::advanceEndSeasonToNextPlayer(int nextIdx)
+{
+    m_endSeasonPlayerIndex = nextIdx;
+    switchToPlayer(nextIdx, true);
+    sanitizeJobOffersForContext(m_players[nextIdx], nextIdx);
+    resetCareerOverMenuState();
+    save68kRegisters();
+    A6 = CareerOffsets::kCareerOverMenu;
+    SWOS::ActivateMenu();
+    restore68kRegisters();
+}
+
+void HotseatCareerManager::packDepartedTeamIntoTmdFile(const HotseatPlayerContext& ctx)
+{
+    if (ctx.isNationalSelector != 0 || ctx.teamId == 0)
+        return;
+
+    loadSwosContext(ctx, false);
+
+    // cseg_5A6A1 reads matchday playerNumbers from selTeamsPtr + 60 (g_selectedTeams[0]).
+    // Ensure g_selectedTeams[0].playerNumbers matches the departing club's own playerNumbers.
+    uint8_t savedSel0PlayerNumbers[kNumPlayersInTeam] = {};
+    TeamFile *selTeams = swos.selTeamsPtr
+        ? reinterpret_cast<TeamFile *>(SwosVM::offsetToPtr(swos.selTeamsPtr))
+        : nullptr;
+    if (selTeams) {
+        std::memcpy(savedSel0PlayerNumbers, selTeams[0].playerNumbers, kNumPlayersInTeam);
+        const auto *ctxTf = reinterpret_cast<const TeamFile *>(ctx.careerTeam);
+        std::memcpy(selTeams[0].playerNumbers, ctxTf->playerNumbers, kNumPlayersInTeam);
+    }
+
+    extern void cseg_5A6A1();
+    save68kRegisters();
+    cseg_5A6A1();
+    restore68kRegisters();
+
+    if (selTeams) {
+        std::memcpy(selTeams[0].playerNumbers, savedSel0PlayerNumbers, kNumPlayersInTeam);
+    }
+
+    uint16_t tid = static_cast<uint16_t>(ctx.teamId);
+    auto *vmCareerTf = reinterpret_cast<TeamFile *>(&SwosVM::g_memByte[CareerOffsets::kCareerTeam]);
+    vmCareerTf->teamControls = kComputerTeam;
+    updateExistingTmdFileEntry(tid, &SwosVM::g_memByte[CareerOffsets::kCareerTeam], kComputerTeam);
+
+    if (selTeams && swos.g_numSelectedTeams > 0) {
+        int count = std::min<int>(swos.g_numSelectedTeams, 68400 / sizeof(TeamFile));
+        for (int t = 0; t < count; ++t) {
+            if (*reinterpret_cast<const uint16_t *>(&selTeams[t]) == tid) {
+                std::memcpy(&selTeams[t], &SwosVM::g_memByte[CareerOffsets::kCareerTeam], sizeof(TeamFile));
+                selTeams[t].teamControls = kComputerTeam;
+                break;
+            }
+        }
+    }
+}
+
 void HotseatCareerManager::onSeasonFinishedForAllPlayers()
 {
     static bool s_inSeasonEnd = false;
@@ -1620,6 +2025,17 @@ void HotseatCareerManager::onSeasonFinishedForAllPlayers()
     saveCurrentSwosContext(m_players[activeIdx]);
     syncPlayersWithSelectedTeams(true);
 
+    m_endSeasonPendingInit = true;
+    m_endSeasonActive = false;
+    m_endSeasonPlayerIndex = 0;
+    m_endSeasonEliminated.fill(false);
+    m_claimedJobOfferTeams.clear();
+    for (int i = 0; i < m_numPlayers; ++i) {
+        if (m_players[i].teamNoOfferAccepted != -1) {
+            m_claimedJobOfferTeams.push_back(static_cast<uint16_t>(m_players[i].teamNoOfferAccepted));
+        }
+    }
+
     for (int i = 0; i < m_numPlayers; ++i) {
         if (i == activeIdx)
             continue;
@@ -1629,22 +2045,337 @@ void HotseatCareerManager::onSeasonFinishedForAllPlayers()
         cseg_3C07C();
         restore68kRegisters();
         saveCurrentSwosContext(m_players[i]);
+        sanitizeJobOffersForContext(m_players[i], i);
     }
 
     loadSwosContext(m_players[activeIdx], true);
 }
 
+void HotseatCareerManager::onCareerOverInit()
+{
+    if (!isActive() || m_numPlayers <= 1 || swos.g_gameType != kGameTypeCareer)
+        return;
+
+    resetCareerOverMenuState();
+
+    if (m_endSeasonPendingInit) {
+        m_endSeasonPendingInit = false;
+        saveCurrentSwosContext(m_players[m_activePlayerIndex]);
+        sanitizeJobOffersForAllPlayers();
+        m_endSeasonActive = true;
+        m_endSeasonPlayerIndex = 0;
+        m_endSeasonEliminated.fill(false);
+
+        if (m_activePlayerIndex != 0) {
+            switchToPlayer(0, true);
+        } else {
+            sanitizeJobOffersForContext(m_players[0], 0);
+        }
+    } else if (m_endSeasonActive) {
+        if (m_endSeasonPlayerIndex >= 0 && m_endSeasonPlayerIndex < m_numPlayers &&
+            m_activePlayerIndex != m_endSeasonPlayerIndex) {
+            switchToPlayer(m_endSeasonPlayerIndex, true);
+        }
+        sanitizeJobOffersForContext(m_players[m_activePlayerIndex], m_activePlayerIndex);
+    }
+}
+
+void HotseatCareerManager::onAfterJobOfferRoll()
+{
+    if (!isActive() || m_numPlayers <= 1 || swos.g_gameType != kGameTypeCareer)
+        return;
+
+    if (D0.asWord() < 21) {
+        D0 = 21;
+    }
+}
+
+void HotseatCareerManager::onFilterNewJobOffer()
+{
+    if (!isActive() || m_numPlayers <= 1 || swos.g_gameType != kGameTypeCareer)
+        return;
+
+    if (!SwosVM::flags.zero && !isValidHotseatJobOffer(D0.asWord(), m_activePlayerIndex)) {
+        SwosVM::flags.zero = true;
+    }
+}
+
+void HotseatCareerManager::onAfterAcceptJobOffer()
+{
+    if (!isActive() || m_numPlayers <= 1 || swos.g_gameType != kGameTypeCareer)
+        return;
+
+    saveCurrentSwosContext(m_players[m_activePlayerIndex]);
+    int16_t acceptedTid = m_players[m_activePlayerIndex].teamNoOfferAccepted;
+    if (acceptedTid != -1) {
+        removeJobOfferForAllOtherPlayers(static_cast<uint16_t>(acceptedTid), m_activePlayerIndex);
+    }
+}
+
+bool HotseatCareerManager::onJobOffersMenuRetiredSackedEmpty()
+{
+    if (!isActive() || m_numPlayers <= 1 || swos.g_gameType != kGameTypeCareer)
+        return false;
+
+    saveCurrentSwosContext(m_players[m_activePlayerIndex]);
+    if (hasSurvivingPlayerAfterEndSeason(m_activePlayerIndex)) {
+        // Keep careerOverMenu open so the sacked player sees "YOUR CAREER IS OVER"
+        // and exits their own turn without wiping remaining hotseat players.
+        return true;
+    }
+    return false;
+}
+
+void HotseatCareerManager::onExitCareerMenu()
+{
+    if (!isActive() || m_numPlayers <= 1 || swos.g_gameType != kGameTypeCareer) {
+        if (isVmCareerOver()) {
+            D0 = 0;
+            ::CareerInitVars();
+        }
+        SetExitMenuFlag();
+        return;
+    }
+
+    int k = m_activePlayerIndex;
+    saveCurrentSwosContext(m_players[k]);
+
+    if (m_endSeasonActive && isPlayerCareerOver(m_players[k])) {
+        m_endSeasonEliminated[k] = true;
+        if (k + 1 < m_numPlayers) {
+            advanceEndSeasonToNextPlayer(k + 1);
+            return;
+        }
+        if (hasSurvivingPlayerAfterEndSeason(-1)) {
+            executeHotseatSeasonTransition();
+            save68kRegisters();
+            A6 = CareerOffsets::kContestMenu;
+            SWOS::ActivateMenu();
+            restore68kRegisters();
+            return;
+        }
+        m_endSeasonActive = false;
+        D0 = 0;
+        ::CareerInitVars();
+        SetExitMenuFlag();
+        return;
+    }
+
+    m_endSeasonActive = false;
+    m_endSeasonPendingInit = false;
+    SetExitMenuFlag();
+}
+
+void HotseatCareerManager::onContinueCareer()
+{
+    uint16_t seasonShowing = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCurrentSeasonShowing]);
+
+    if (!isActive() || m_numPlayers <= 1 || swos.g_gameType != kGameTypeCareer) {
+        if (seasonShowing == 19) {
+            ::ShowRetirementMessage();
+            D0 = 0;
+            ::CareerInitVars();
+            SetExitMenuFlag();
+        } else {
+            ::ContinueCareerNextSeason();
+            A6 = CareerOffsets::kContestMenu;
+            SWOS::ActivateMenu();
+        }
+        return;
+    }
+
+    int k = m_activePlayerIndex;
+    saveCurrentSwosContext(m_players[k]);
+
+    if (seasonShowing == 19) {
+        if (k + 1 < m_numPlayers) {
+            advanceEndSeasonToNextPlayer(k + 1);
+            return;
+        }
+        m_endSeasonActive = false;
+        m_endSeasonPendingInit = false;
+        ::ShowRetirementMessage();
+        D0 = 0;
+        ::CareerInitVars();
+        SetExitMenuFlag();
+        return;
+    }
+
+    if (m_players[k].teamNoOfferAccepted != -1) {
+        removeJobOfferForAllOtherPlayers(static_cast<uint16_t>(m_players[k].teamNoOfferAccepted), k);
+        if (m_players[k].youreSacked == 0) {
+            save68kRegisters();
+            ::ShowLeavingMessage();
+            restore68kRegisters();
+        }
+    } else {
+        save68kRegisters();
+        ::ShowChairmanOpinionAboutTheSeason();
+        restore68kRegisters();
+    }
+
+    if (k + 1 < m_numPlayers) {
+        advanceEndSeasonToNextPlayer(k + 1);
+        return;
+    }
+
+    executeHotseatSeasonTransition();
+    save68kRegisters();
+    A6 = CareerOffsets::kContestMenu;
+    SWOS::ActivateMenu();
+    restore68kRegisters();
+}
+
+static void loadSwitchedClubVia5DB56(int16_t targetNewTid, int32_t startBal)
+{
+    // Invalidate all FindTeamInCache shortcuts so cseg_5DB56 loads the destination club fresh rather than reusing stale careerTeam/selTeam cache
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDseg11F9CC]) = 0;
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCurrentTeamNumber]) = 0xFFFF;
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kSelTeamNumber]) = 0xFFFF;
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerTeam]) = 0;
+
+    save68kRegisters();
+    D0 = static_cast<uint16_t>(targetNewTid);
+    D1 = static_cast<uint32_t>(startBal);
+    ::cseg_5DB56();
+    restore68kRegisters();
+}
+
+void HotseatCareerManager::executeHotseatSeasonTransition()
+{
+    m_endSeasonActive = false;
+    m_endSeasonPendingInit = false;
+
+    std::vector<HotseatPlayerContext> prePlayers;
+    std::vector<PendingSeasonPlayerState> survivorPlans;
+    std::vector<HotseatPlayerContext> survivorPreCtx;
+    std::vector<HotseatPlayerContext> departedContexts;
+
+    for (int i = 0; i < m_numPlayers; ++i) {
+        prePlayers.push_back(m_players[i]);
+        bool elim = m_endSeasonEliminated[i];
+        int16_t accTid = (!elim) ? m_players[i].teamNoOfferAccepted : -1;
+        bool switched = (!elim && accTid != -1);
+        if (elim || switched) {
+            departedContexts.push_back(m_players[i]);
+        }
+        if (!elim) {
+            PendingSeasonPlayerState plan;
+            plan.oldTeamId = m_players[i].teamId;
+            plan.newTeamId = switched ? accTid : m_players[i].teamId;
+            plan.acceptedFunds = m_players[i].teamFundsAccepted;
+            plan.switched = switched;
+            survivorPlans.push_back(plan);
+            survivorPreCtx.push_back(m_players[i]);
+        }
+    }
+
+    if (survivorPreCtx.empty()) {
+        m_pendingSeasonTransitions.clear();
+        return;
+    }
+
+    // Sync all Season S squads to g_selectedTeams and any existing tmdFileBuffer entries before cseg_91428
+    syncPlayersWithSelectedTeams(true);
+    for (int i = 0; i < m_numPlayers; ++i) {
+        if (m_players[i].teamId != 0) {
+            TeamControls desiredControls = (m_players[i].coachOrPlayer == 1) ? kPlayerCoach : kCoach;
+            updateExistingTmdFileEntry(static_cast<uint16_t>(m_players[i].teamId),
+                                       m_players[i].careerTeam, desiredControls);
+        }
+    }
+
+    // Run end-of-season global competition simulation & promotion/relegation once
+    {
+        loadSwosContext(survivorPreCtx[0], true);
+        *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kTeamNoOfferAccepted]) = -1;
+        save68kRegisters();
+        ::cseg_91428();
+        restore68kRegisters();
+    }
+
+    // Pack every departed / eliminated club cleanly and mark them CPU in tmdFileBuffer & g_selectedTeams
+    for (const auto& dep : departedContexts) {
+        packDepartedTeamIntoTmdFile(dep);
+    }
+
+    // Update active player roster to survivors using their Season S+1 teamIds before InitializeNewSeason
+    // so cseg_8B8B8_OnEnter and initAdditionalEuroCups assign controls/fixtures for new clubs only.
+    int survivorCount = static_cast<int>(survivorPreCtx.size());
+    for (int i = 0; i < m_numPlayers; ++i) {
+        if (i < survivorCount) {
+            m_players[i] = survivorPreCtx[i];
+            m_players[i].teamId = survivorPlans[i].newTeamId;
+            if (survivorPlans[i].switched)
+                m_players[i].teamName.clear();
+            m_players[i].teamNoOfferAccepted = -1;
+            m_players[i].teamFundsAccepted = 0;
+        } else {
+            m_players[i] = HotseatPlayerContext();
+        }
+    }
+    m_numPlayers = survivorCount;
+    m_activePlayerIndex = 0;
+    m_claimedJobOfferTeams.clear();
+    m_endSeasonEliminated.fill(false);
+
+    resetNonHotseatTeamControlsInTmdFile();
+    ensureHotseatTeamControlsInSelectedTeams();
+
+    m_pendingSeasonTransitions = survivorPlans;
+
+    // Stage anchor player (survivor 0) into VM and switch club or calculate new-season budget
+    loadSwosContext(survivorPreCtx[0], false);
+    *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kTeamNoOfferAccepted]) = -1;
+    if (survivorPlans[0].switched) {
+        int32_t startBal = computeJobOfferStartingBalance(survivorPlans[0].acceptedFunds);
+        uint16_t numTmdCounter = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD6E00]);
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD6E00]) = static_cast<uint16_t>(numTmdCounter + 1);
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumPlayersOnTransferMarket]) = 0;
+        loadSwitchedClubVia5DB56(survivorPlans[0].newTeamId, startBal);
+        reinterpret_cast<TeamFile *>(&SwosVM::g_memByte[CareerOffsets::kCareerTeam])->teamControls =
+            (survivorPreCtx[0].coachOrPlayer == 1) ? kPlayerCoach : kCoach;
+    } else {
+        save68kRegisters();
+        ::cseg_943FA();
+        restore68kRegisters();
+    }
+
+    resetNonHotseatTeamControlsInTmdFile();
+
+    save68kRegisters();
+    ::InitializeNewSeason();
+    restore68kRegisters();
+
+    if (m_numPlayers == 1) {
+        // Surviving single player seamlessly continues in native single-player mode
+        m_pendingSeasonTransitions.clear();
+        m_active = false;
+    }
+}
+
 void HotseatCareerManager::onNewSeasonInitialized()
 {
-    if (m_initializingSeason || !isActive() || m_numPlayers <= 1)
+    if (m_initializingSeason || !isActive() || m_numPlayers < 1)
         return;
 
     ScopedInitializingSeason seasonGuard(*this);
     extern void cseg_5DEB9();
     extern void cseg_3D204();
+    extern void cseg_64A65();
+
+    if (m_numPlayers == 1) {
+        m_pendingSeasonTransitions.clear();
+        m_players[0].teamId = *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kSelTeamNumber]);
+        resetNonHotseatTeamControlsInTmdFile();
+        ensureHotseatTeamControlsInSelectedTeams();
+        return;
+    }
 
     int activeIdx = m_activePlayerIndex;
     saveCurrentSwosContext(m_players[activeIdx]);
+    m_players[activeIdx].matchPlayedThisTurn = false;
+    m_players[activeIdx].turnCompleted = false;
 
     uint16_t snapSeasonShowing = *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCurrentSeasonShowing]);
     uint16_t snapSeasonNum = *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCurrentSeasonNumber]);
@@ -1654,13 +2385,34 @@ void HotseatCareerManager::onNewSeasonInitialized()
     uint8_t snapE0048 = SwosVM::g_memByte[CareerOffsets::kDsegE0048];
     uint16_t snapCalIdx = *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3DE]);
 
-    // Refresh non-active squads & divisions updated during inter-season promotion/relegation
-    syncPlayersWithSelectedTeams(false);
+    // Save Season S+1 full team list loaded by InitializeNewSeason so non-anchor club switches never clobber it
+    std::vector<uint8_t> savedSelTeams(68400);
+    std::memcpy(savedSelTeams.data(), swos.g_selectedTeams, 68400);
+    int16_t savedNumSelTeams = swos.g_numSelectedTeams;
+    auto findReloadedTeamLeague = [&](int16_t targetId, uint16_t fallbackLeague) -> uint16_t {
+        const auto *teams = reinterpret_cast<const TeamFile *>(savedSelTeams.data());
+        int count = std::min<int>(savedNumSelTeams, 68400 / sizeof(TeamFile));
+        for (int t = 0; t < count; ++t) {
+            if (*reinterpret_cast<const int16_t *>(&teams[t]) == targetId)
+                return teams[t].league;
+        }
+        return fallbackLeague;
+    };
 
     const auto& activeCtx = m_players[activeIdx];
     for (int i = 0; i < m_numPlayers; ++i) {
         if (i == activeIdx)
             continue;
+
+        bool switched = (i < static_cast<int>(m_pendingSeasonTransitions.size()))
+            ? m_pendingSeasonTransitions[i].switched
+            : (m_players[i].teamNoOfferAccepted != -1);
+        int16_t targetNewTid = (i < static_cast<int>(m_pendingSeasonTransitions.size()))
+            ? m_pendingSeasonTransitions[i].newTeamId
+            : (m_players[i].teamNoOfferAccepted != -1 ? m_players[i].teamNoOfferAccepted : m_players[i].teamId);
+        int32_t acceptedFunds = (i < static_cast<int>(m_pendingSeasonTransitions.size()))
+            ? m_pendingSeasonTransitions[i].acceptedFunds
+            : m_players[i].teamFundsAccepted;
 
         auto& p = m_players[i];
         p.currentSeasonShowing = snapSeasonShowing;
@@ -1669,19 +2421,17 @@ void HotseatCareerManager::onNewSeasonInitialized()
         p.dsegD6CA2 = snapD6CA2;
         p.dsegD7E66 = snapD7E66;
         p.dsegE0048 = snapE0048;
-        p.dsegD6B62 = activeCtx.dsegD6B62;
+        p.dsegD6B62 = 0;
         p.dsegD6B64 = activeCtx.dsegD6B64;
         p.dsegD6B94 = activeCtx.dsegD6B94;
-        p.dsegD6C46 = activeCtx.dsegD6C46;
-        p.additionalInvestments = activeCtx.additionalInvestments;
-        p.dsegD6CDC = activeCtx.dsegD6CDC;
+        p.dsegD6C46 = switched ? 0 : activeCtx.dsegD6C46;
+        p.additionalInvestments = switched ? 0 : activeCtx.additionalInvestments;
         p.teamNoOfferAccepted = -1;
         p.teamFundsAccepted = 0;
         p.dsegD6D0C = 0;
         p.playMatchBlink = 0;
         p.retired = 0;
         p.youreSacked = 0;
-        p.stayingInOldClub = (snapSeasonShowing == 0) ? 0 : static_cast<int16_t>(p.stayingInOldClub + 1);
         p.numJobOffers = 0;
         p.numNewJobOffers = 0;
         p.dsegD6CA0 = 0;
@@ -1705,6 +2455,78 @@ void HotseatCareerManager::onNewSeasonInitialized()
         p.goalsTaken = 0;
         std::memset(p.seasonStatsBlock, 0, sizeof(p.seasonStatsBlock));
 
+        if (switched && targetNewTid != 0 && targetNewTid != -1) {
+            loadSwosContext(p, false);
+            int32_t startBal = computeJobOfferStartingBalance(acceptedFunds);
+
+            loadSwitchedClubVia5DB56(targetNewTid, startBal);
+
+            // cseg_5DB56 overwrites g_numSelectedTeams = 1; restore full Season S+1 league list
+            std::memcpy(swos.g_selectedTeams, savedSelTeams.data(), 68400);
+            swos.g_numSelectedTeams = savedNumSelTeams;
+
+            uint16_t reloadedLeague = findReloadedTeamLeague(
+                targetNewTid, *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerTeamLeague]));
+            reinterpret_cast<TeamFile *>(&SwosVM::g_memByte[CareerOffsets::kCareerTeam])->league =
+                static_cast<uint8_t>(reloadedLeague);
+            reinterpret_cast<TeamFile *>(&SwosVM::g_memByte[CareerOffsets::kCareerTeam])->teamControls =
+                (p.coachOrPlayer == 1) ? kPlayerCoach : kCoach;
+            writeTeamCoachName(&SwosVM::g_memByte[CareerOffsets::kCareerTeam], p.managerName, p.managerSurname);
+            *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerTeamLeague]) = reloadedLeague;
+            *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD6CDC]) = reloadedLeague;
+            *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kStayingInOldClub]) = 0;
+            *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD761A]) = 0xFFFF;
+            *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD761C]) = 0;
+            *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8B6A]) = 0xFFFF;
+            std::memset(&SwosVM::g_memByte[CareerOffsets::kDsegD6BA6], 0, sizeof(p.playerWages));
+            std::memset(&SwosVM::g_memByte[CareerOffsets::kDsegD6C26], 0, sizeof(p.playerTrialWeeks));
+            std::memset(&SwosVM::g_memByte[CareerOffsets::kTrainingMatchSavedPlayers], 0, kCurrentMatchPlayersSize);
+            std::memcpy(&SwosVM::g_memByte[CareerOffsets::kTrainingMatchSavedPlayers],
+                        &SwosVM::g_memByte[CareerOffsets::kCurrentMatchPlayers], kNumPlayersInTeam);
+            std::memset(&SwosVM::g_memByte[CareerOffsets::kLastMatchPlayers], 0, kCurrentMatchPlayersSize);
+            std::memcpy(&SwosVM::g_memByte[CareerOffsets::kLastMatchPlayers],
+                        &SwosVM::g_memByte[CareerOffsets::kCurrentMatchPlayers], kNumPlayersInTeam);
+
+            applyCareerTeamResetInit(&SwosVM::g_memByte[CareerOffsets::kCareerTeam], true);
+            save68kRegisters();
+            cseg_64A65();
+            restore68kRegisters();
+
+            *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kSeasonFinished]) = 0;
+            *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerFinished]) = 0;
+            saveCurrentSwosContext(p);
+            syncPlayersWithSelectedTeams(true);
+            relinkCompetitionTeamPointers();
+
+            save68kRegisters();
+            cseg_5DEB9();
+            cseg_3D204();
+            restore68kRegisters();
+            saveCurrentSwosContext(p);
+        } else {
+            // Staying club: preserve full 30-player Season S squad while applying Season S+1 division & reset
+            p.stayingInOldClub = (snapSeasonShowing == 0) ? 0 : static_cast<int16_t>(p.stayingInOldClub + 1);
+            uint16_t newLeague = findReloadedTeamLeague(p.teamId, p.careerTeamLeague);
+            p.careerTeamLeague = newLeague;
+            p.dsegD6CDC = newLeague;
+            reinterpret_cast<TeamFile *>(p.careerTeam)->league = static_cast<uint8_t>(newLeague);
+            reinterpret_cast<TeamFile *>(p.careerTeam)->teamControls = (p.coachOrPlayer == 1) ? kPlayerCoach : kCoach;
+            applyCareerTeamResetInit(p.careerTeam, false);
+
+            loadSwosContext(p, false);
+            *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kSeasonFinished]) = 0;
+            *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerFinished]) = 0;
+            syncPlayersWithSelectedTeams(true);
+            relinkCompetitionTeamPointers();
+
+            save68kRegisters();
+            ::cseg_943FA();
+            cseg_5DEB9();
+            cseg_3D204();
+            restore68kRegisters();
+            saveCurrentSwosContext(p);
+        }
+
         size_t histOfs = static_cast<size_t>(snapSeasonShowing) * kCareerHistoryEntrySize;
         if (histOfs + kCareerHistoryEntrySize <= kCareerHistoryBufferSize) {
             std::memcpy(&p.careerHistory[histOfs], activeCtx.careerHistory + histOfs, kCareerHistoryEntrySize);
@@ -1716,18 +2538,9 @@ void HotseatCareerManager::onNewSeasonInitialized()
                 : 0;
             *reinterpret_cast<uint32_t *>(&p.careerHistory[histOfs + 34]) = euroStrOfs;
         }
-
-        loadSwosContext(p, true);
-        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kSeasonFinished]) = 0;
-        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerFinished]) = 0;
-
-        save68kRegisters();
-        cseg_5DEB9();
-        cseg_3D204();
-        restore68kRegisters();
-
-        saveCurrentSwosContext(p);
     }
+
+    m_pendingSeasonTransitions.clear();
 
     // Clear stale Cup 2 / Euro Cup VM buffers when unused by any active competition
     if (*reinterpret_cast<const uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8CAA + 8]) == 0) {
@@ -1745,6 +2558,8 @@ void HotseatCareerManager::onNewSeasonInitialized()
     m_roundCalendarIndex = snapCalIdx;
 
     syncPlayersWithSelectedTeams(true);
+    ensureHotseatTeamControlsInSelectedTeams();
+    resetNonHotseatTeamControlsInTmdFile();
     syncTransferMarketPoolsForCurrentPlayer();
 
     int firstPlayer = findNextPlayerForCurrentCalendarSlot();
@@ -3068,7 +3883,7 @@ bool HotseatCareerManager::saveToFile(const std::string& path)
 
     HotseatFileHeader hdr;
     std::memset(&hdr, 0, sizeof(hdr));
-    std::memcpy(hdr.magic, kHotseatFileMagicV6, 15);
+    std::memcpy(hdr.magic, kHotseatFileMagicV7, 15);
     hdr.numPlayers = m_numPlayers;
     hdr.activePlayerIndex = m_activePlayerIndex;
     hdr.nextOfferId = m_nextOfferId;
@@ -3132,6 +3947,24 @@ bool HotseatCareerManager::saveToFile(const std::string& path)
             return false;
     }
 
+    // V7 end-of-season review & claimed job offer tracking
+    uint8_t endSeasonActiveByte = m_endSeasonActive ? 1 : 0;
+    int32_t endSeasonIdx = m_endSeasonPlayerIndex;
+    if (!writeBinary(out, endSeasonActiveByte) || !writeBinary(out, endSeasonIdx))
+        return false;
+    for (int i = 0; i < kMaxHotseatPlayers; ++i) {
+        uint8_t elim = m_endSeasonEliminated[i] ? 1 : 0;
+        if (!writeBinary(out, elim))
+            return false;
+    }
+    int32_t numClaimed = static_cast<int32_t>(m_claimedJobOfferTeams.size());
+    if (!writeBinary(out, numClaimed))
+        return false;
+    for (int32_t i = 0; i < numClaimed; ++i) {
+        if (!writeBinary(out, m_claimedJobOfferTeams[i]))
+            return false;
+    }
+
     out.flush();
     if (!out.good())
         return false;
@@ -3148,6 +3981,8 @@ void HotseatCareerManager::onAfterProcessCareerFile()
 
     stageActiveCalendarSlotToVm();
     syncPlayersWithSelectedTeams(true);
+    ensureHotseatTeamControlsInSelectedTeams();
+    resetNonHotseatTeamControlsInTmdFile();
     relinkCompetitionTeamPointers();
     syncTransferMarketPoolsForCurrentPlayer();
 }
@@ -3167,7 +4002,9 @@ bool HotseatCareerManager::loadFromFile(const std::string& path)
     }
 
     int fileVersion = 0;
-    if (std::memcmp(hdr.magic, kHotseatFileMagicV6, 15) == 0) {
+    if (std::memcmp(hdr.magic, kHotseatFileMagicV7, 15) == 0) {
+        fileVersion = 7;
+    } else if (std::memcmp(hdr.magic, kHotseatFileMagicV6, 15) == 0) {
         fileVersion = 6;
     } else if (std::memcmp(hdr.magic, kHotseatFileMagicV5, 15) == 0) {
         fileVersion = 5;
@@ -3318,6 +4155,43 @@ bool HotseatCareerManager::loadFromFile(const std::string& path)
                 }
             }
         }
+    }
+
+    if (fileVersion >= 7) {
+        uint8_t endSeasonActiveByte = 0;
+        int32_t endSeasonIdx = 0;
+        if (!readBinary(in, endSeasonActiveByte) || !readBinary(in, endSeasonIdx)) {
+            reset();
+            logWarn("HotseatCareerManager: Corrupted V7 end-of-season header in %s", path.c_str());
+            return false;
+        }
+        m_endSeasonActive = (endSeasonActiveByte != 0);
+        m_endSeasonPlayerIndex = std::clamp(endSeasonIdx, 0, std::max(0, m_numPlayers - 1));
+        for (int i = 0; i < kMaxHotseatPlayers; ++i) {
+            uint8_t elim = 0;
+            if (!readBinary(in, elim)) {
+                reset();
+                return false;
+            }
+            m_endSeasonEliminated[i] = (elim != 0);
+        }
+        int32_t numClaimed = 0;
+        if (!readBinary(in, numClaimed) || numClaimed < 0 || numClaimed > 64) {
+            reset();
+            return false;
+        }
+        m_claimedJobOfferTeams.clear();
+        for (int32_t i = 0; i < numClaimed; ++i) {
+            uint16_t tid = 0;
+            if (!readBinary(in, tid)) {
+                reset();
+                return false;
+            }
+            m_claimedJobOfferTeams.push_back(tid);
+        }
+    } else if (m_numPlayers > 1 && m_players[m_activePlayerIndex].retired != 0) {
+        m_endSeasonActive = true;
+        m_endSeasonPlayerIndex = m_activePlayerIndex;
     }
 
     m_emergencyLoanDepth = 0;
@@ -3980,22 +4854,28 @@ void cseg_29B4A_OnEnter()
     }
 }
 
-void cseg_375C2_OnEnter()
+static void activateEuroCupForVmSelectedTeam()
 {
     auto& mgr = HotseatCareerManager::get();
-    if (mgr.isActive() && mgr.numPlayers() > 1 && mgr.anyEuroCupActive() &&
-        mgr.activePlayerIndex() >= 0 && mgr.activePlayerIndex() < mgr.numPlayers()) {
-        mgr.activateEuroCup(mgr.activePlayer().euroCupIndex, true);
-    }
+    if (!mgr.isActive() || mgr.numPlayers() <= 1 || !mgr.anyEuroCupActive())
+        return;
+
+    int16_t selTid = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kSelTeamNumber]);
+    int ownerIdx = mgr.findHotseatPlayerByTeamId(selTid);
+    if (ownerIdx < 0)
+        ownerIdx = mgr.activePlayerIndex();
+    if (ownerIdx >= 0 && ownerIdx < mgr.numPlayers())
+        mgr.activateEuroCup(mgr.player(ownerIdx).euroCupIndex, true);
+}
+
+void cseg_375C2_OnEnter()
+{
+    activateEuroCupForVmSelectedTeam();
 }
 
 void cseg_39392_OnEnter()
 {
-    auto& mgr = HotseatCareerManager::get();
-    if (mgr.isActive() && mgr.numPlayers() > 1 && mgr.anyEuroCupActive() &&
-        mgr.activePlayerIndex() >= 0 && mgr.activePlayerIndex() < mgr.numPlayers()) {
-        mgr.activateEuroCup(mgr.activePlayer().euroCupIndex, true);
-    }
+    activateEuroCupForVmSelectedTeam();
 }
 
 void cseg_92D55_OnEnter()
@@ -4776,6 +5656,74 @@ void ShowPlayMatchMenu_OnEnter()
 void Hotseat_OnAfterShowPlayMatchMenu()
 {
     HotseatCareerManager::get().onAfterShowPlayMatchMenu();
+}
+
+void CareerOverInit_OnEnter()
+{
+    HotseatCareerManager::get().onCareerOverInit();
+}
+
+void Hotseat_FilterNewJobOffer()
+{
+    HotseatCareerManager::get().onFilterNewJobOffer();
+}
+
+void Hotseat_OnAfterAcceptJobOffer()
+{
+    HotseatCareerManager::get().onAfterAcceptJobOffer();
+}
+
+void Hotseat_OnAfterJobOfferRoll()
+{
+    HotseatCareerManager::get().onAfterJobOfferRoll();
+}
+
+void ContinueCareer()
+{
+    HotseatCareerManager::get().onContinueCareer();
+}
+
+void ExitCareerMenu()
+{
+    HotseatCareerManager::get().onExitCareerMenu();
+}
+
+void JobOffersMenuRetired()
+{
+    int16_t accepted = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kTeamNoOfferAccepted]);
+    int16_t newOffers = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumNewJobOffers]);
+    int16_t oldOffers = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumJobOffers]);
+
+    if (accepted != -1) {
+        A6 = CareerOffsets::kGotJobOfferMenu;
+        SWOS::ShowMenu();
+    } else if (newOffers != 0 || oldOffers != 0) {
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDseg17C228]) = 1;
+        A6 = CareerOffsets::kJobOffersMenu;
+        SWOS::ShowMenu();
+
+        accepted = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kTeamNoOfferAccepted]);
+        int16_t sacked = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kYoureSacked]);
+        newOffers = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumNewJobOffers]);
+        oldOffers = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumJobOffers]);
+        if (accepted == -1 && sacked != 0 && newOffers == 0 && oldOffers == 0) {
+            if (!HotseatCareerManager::get().onJobOffersMenuRetiredSackedEmpty()) {
+                D0 = 0;
+                ::CareerInitVars();
+                SetExitMenuFlag();
+                return;
+            }
+        }
+    } else {
+        return;
+    }
+
+    D0 = 5;
+    ::CalcMenuEntryAddress();
+    if (SwosVM::readMemory(A0.asDword() + 6, 2) != 0) {
+        D0 = 8;
+        SWOS::SetCurrentEntry();
+    }
 }
 
 } // namespace SWOS
