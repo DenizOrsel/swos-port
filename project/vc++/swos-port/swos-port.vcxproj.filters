@@ -83,6 +83,9 @@
     <Filter Include="Source Files\game\ai">
       <UniqueIdentifier>{4ab1af79-cb50-4449-a9fe-12666a0d3d9a}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source Files\game\hotseat">
+      <UniqueIdentifier>{e7a9d4f2-6b3c-4d1e-9a5f-2c8e1b4d70a1}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\..\src\main.cpp">
@@ -447,6 +450,33 @@
     </ClCompile>
     <ClCompile Include="..\..\..\src\game\ai\ai.cpp">
       <Filter>Source Files\game\ai</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\game\hotseat\hotseatEndSeason.cpp">
+      <Filter>Source Files\game\hotseat</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\game\hotseat\hotseatEuroCups.cpp">
+      <Filter>Source Files\game\hotseat</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\game\hotseat\hotseatHelpers.cpp">
+      <Filter>Source Files\game\hotseat</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\game\hotseat\hotseatHooks.cpp">
+      <Filter>Source Files\game\hotseat</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\game\hotseat\hotseatSave.cpp">
+      <Filter>Source Files\game\hotseat</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\game\hotseat\hotseatScheduler.cpp">
+      <Filter>Source Files\game\hotseat</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\game\hotseat\hotseatSetup.cpp">
+      <Filter>Source Files\game\hotseat</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\game\hotseat\hotseatTransfers.cpp">
+      <Filter>Source Files\game\hotseat</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\src\game\hotseat\hotseatWorld.cpp">
+      <Filter>Source Files\game\hotseat</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -830,6 +860,12 @@
     </ClInclude>
     <ClInclude Include="..\..\..\src\game\ai\ai.h">
       <Filter>Source Files\game\ai</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\game\hotseatCareer.h">
+      <Filter>Source Files\game</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\src\game\hotseat\hotseatInternal.h">
+      <Filter>Source Files\game\hotseat</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

@@ -74,6 +74,12 @@ auto BaseTest::doRunTests(const TestOptions &options, const TestNamesSet& testLi
         if (!testListContains(test->name()))
             continue;
 
+        if (test->requiresSwosData() && !hasSwosDataFiles()) {
+            std::cout << "Skipping " << test->displayName() << " tests [" << test->name() <<
+                "] (SWOS data files absent; pass --swos-dir=<dir>)\n";
+            continue;
+        }
+
         std::cout << "Running " << test->displayName() << " tests [" << test->name() << "]\n";
         test->init();
 

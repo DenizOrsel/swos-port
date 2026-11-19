@@ -95,6 +95,9 @@
     <Filter Include="Source Files\project-files\game\ai">
       <UniqueIdentifier>{893052cd-8900-47b0-9a44-2e9f8838e63d}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source Files\project-files\game\hotseat">
+      <UniqueIdentifier>{a2c6e8f1-4d93-4b70-8c1e-3f5a9d72b604}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\src\main.cpp">
@@ -167,6 +170,9 @@
       <Filter>Source Files\tests</Filter>
     </ClCompile>
     <ClCompile Include="..\src\tests\SelectFilesMenuTest.cpp">
+      <Filter>Source Files\tests</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\tests\CareerTest.cpp">
       <Filter>Source Files\tests</Filter>
     </ClCompile>
     <ClCompile Include="..\..\src\audio\chants.cpp">
@@ -502,6 +508,33 @@
     <ClCompile Include="..\..\src\game\ai\ai.cpp">
       <Filter>Source Files\project-files\game\ai</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\src\game\hotseat\hotseatEndSeason.cpp">
+      <Filter>Source Files\project-files\game\hotseat</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\game\hotseat\hotseatEuroCups.cpp">
+      <Filter>Source Files\project-files\game\hotseat</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\game\hotseat\hotseatHelpers.cpp">
+      <Filter>Source Files\project-files\game\hotseat</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\game\hotseat\hotseatHooks.cpp">
+      <Filter>Source Files\project-files\game\hotseat</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\game\hotseat\hotseatSave.cpp">
+      <Filter>Source Files\project-files\game\hotseat</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\game\hotseat\hotseatScheduler.cpp">
+      <Filter>Source Files\project-files\game\hotseat</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\game\hotseat\hotseatSetup.cpp">
+      <Filter>Source Files\project-files\game\hotseat</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\game\hotseat\hotseatTransfers.cpp">
+      <Filter>Source Files\project-files\game\hotseat</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\game\hotseat\hotseatWorld.cpp">
+      <Filter>Source Files\project-files\game\hotseat</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\src\controls\controlOptionsMenu.h">
@@ -544,6 +577,9 @@
       <Filter>Source Files\tests</Filter>
     </ClInclude>
     <ClInclude Include="..\src\tests\SelectFilesMenuTest.h">
+      <Filter>Source Files\tests</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\tests\CareerTest.h">
       <Filter>Source Files\tests</Filter>
     </ClInclude>
     <ClInclude Include="..\src\mocks\mockFile.h">
@@ -863,6 +899,12 @@
     </ClInclude>
     <ClInclude Include="..\..\src\game\ai\ai.h">
       <Filter>Source Files\project-files\game\ai</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\game\hotseatCareer.h">
+      <Filter>Source Files\project-files\game</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\game\hotseat\hotseatInternal.h">
+      <Filter>Source Files\project-files\game\hotseat</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

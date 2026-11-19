@@ -11,6 +11,7 @@ public:
     const char *name() const override;
     const char *displayName() const override;
     CaseList getCases() override;
+    bool requiresSwosData() const override { return true; }
 
 private:
     void testCareerLiverpool();

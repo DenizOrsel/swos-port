@@ -8,6 +8,7 @@
 #include "mockRender.h"
 #include "mockRenderSprites.h"
 #include "sdlProcs.h"
+#include "file.h"
 
 using RenderCopyType = int (*)(SDL_Renderer *, SDL_Texture *, const SDL_Rect *, const SDL_FRect *);
 
@@ -16,6 +17,13 @@ static bool m_menuDrawn;
 
 static void initMenuBackgroundDrawHook();
 static int hookRenderCopyF(SDL_Renderer *renderer, SDL_Texture *texture, const SDL_Rect *srcRect, const SDL_FRect *dstRect);
+
+bool hasSwosDataFiles()
+{
+    return dirExists(pathInRootDir("data").c_str()) &&
+           fileExists(pathInRootDir("data/TEAM.008").c_str()) &&
+           fileExists(pathInRootDir("data/POOLPLYR.DAT").c_str());
+}
 
 void initializeTestEnvironment()
 {
@@ -26,7 +34,11 @@ void initializeTestEnvironment()
         initMockSpriteRenderer();
         initMainMenuGlobals();
         SDL_StopTextInput();
-        startMainMenuLoop();
+        if (hasSwosDataFiles() && dirExists(pathInRootDir("assets").c_str())) {
+            startMainMenuLoop();
+        } else {
+            getHotseatExtraMemoryOffset();
+        }
     } catch (const SWOS_UnitTest::BaseException& e) {
         std::cout << "Initialization error: " << e.error();
         exit(1);

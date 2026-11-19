@@ -114,6 +114,9 @@
     <CustomBuild Include="..\..\..\src\menus\mnu\audioOptions.mnu">
       <Filter>mnu</Filter>
     </CustomBuild>
+    <CustomBuild Include="..\..\..\src\menus\mnu\careerPlayerCount.mnu">
+      <Filter>mnu</Filter>
+    </CustomBuild>
     <CustomBuild Include="..\..\..\src\menus\mnu\controlOptions.mnu">
       <Filter>mnu</Filter>
     </CustomBuild>

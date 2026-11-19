@@ -37,6 +37,7 @@ protected:
     virtual const char *displayName() const = 0;
     virtual CaseList getCases() = 0;
     virtual bool shouldRunLast() const { return false; }
+    virtual bool requiresSwosData() const { return false; }
 
     template <typename T>
     const CaseProc bind(void (T::*f)())
