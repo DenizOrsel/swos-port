@@ -6,7 +6,8 @@
 #include <vector>
 #include <map>
 
-constexpr int kMaxHotseatPlayers = 4;
+constexpr int kMaxHotseatPlayers = 32;
+constexpr int kLegacyV7MaxHotseatPlayers = 4;
 constexpr int kCareerTeamBufferSize = 1292;
 constexpr int kCareerHistoryBufferSize = 2120;
 constexpr int kUserTacticsSize = 370;
@@ -482,6 +483,7 @@ public:
     void sanitizeJobOffersForAllPlayers();
     void resetCareerOverMenuState() const;
     void resetNonHotseatTeamControlsInTmdFile();
+    void ensurePlayerSlots(int count);
     void onCareerOverInit();
     void onAfterAcceptJobOffer();
     void onAfterJobOfferRoll();
@@ -514,9 +516,9 @@ private:
     bool m_endSeasonPendingInit = false;
     bool m_endSeasonActive = false;
     int m_endSeasonPlayerIndex = 0;
-    std::array<bool, kMaxHotseatPlayers> m_endSeasonEliminated{};
+    std::vector<uint8_t> m_endSeasonEliminated;
     std::vector<uint16_t> m_claimedJobOfferTeams;
-    std::array<HotseatPlayerContext, kMaxHotseatPlayers> m_players;
+    std::vector<HotseatPlayerContext> m_players;
 
     struct PendingSeasonPlayerState {
         int16_t oldTeamId = 0;
@@ -553,7 +555,7 @@ private:
     uint16_t m_prevHomeMarketCount = 0;
     uint16_t m_prevForeignMarketCount = 0;
     uint32_t m_vmPoolPlayerScratchOfs = 0;
-    std::array<uint32_t, kMaxHotseatPlayers> m_vmTeamMirrorOfs{};
+    std::vector<uint32_t> m_vmTeamMirrorOfs;
 
     struct PlayMatchSetupState {
         int savedActiveIdx = -1;
@@ -569,7 +571,7 @@ private:
     };
     int m_emergencyLoanDepth = 0;
     std::vector<PlayMatchSetupState> m_playMatchSetupStack;
-    std::array<H2hPackedTeamMap, kMaxHotseatPlayers> m_h2hPackMaps;
+    std::vector<H2hPackedTeamMap> m_h2hPackMaps;
 
     void unpackH2hPackedTeam(int playerIdx);
     void unpackAllH2hPackedTeams();
@@ -578,9 +580,13 @@ private:
 void trimTrailingSwosPadding(std::string& s);
 void trimTrailingSwosPadding(char *s);
 void startCareerMode();
+void onInitPlayerCountMenu();
 void onSelect1Player();
 void onSelect2Players();
 void onSelect3Players();
 void onSelect4Players();
+void onDecreaseCustomPlayers();
+void onIncreaseCustomPlayers();
+void onSelectCustomPlayers();
 void onSelectExitPlayerCount();
 

@@ -23,7 +23,7 @@ swosCpp = custom_target('swos-cpp',
         '@OUTPUT0@',
         'c++',
         kSwosCppFiles.length().to_string(),
-        '--extra-memory-size=60000',
+        '--extra-memory-size=124000',
         '--disable-alignment-checks',
     ],
 )

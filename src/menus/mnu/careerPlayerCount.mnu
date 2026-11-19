@@ -7,15 +7,18 @@
 Menu careerPlayerCountMenu
 {
     initialEntry: twoPlayers
+    onInit: ~onInitPlayerCountMenu
 
     kMenuWidth = 140
-    kMenuHeight = 16
+    kMenuHeight = 15
     kMenuX = 85
-    kStartY = 55
+    kStartY = 46
+    kStepperBtnWidth = 18
+    kStepperCenterWidth = kMenuWidth - 2 * kStepperBtnWidth - 2
 
     Entry header {
         x: 60
-        y: 22
+        y: 18
         width: 190
         height: 16
 
@@ -40,7 +43,7 @@ Menu careerPlayerCountMenu
 
     Entry twoPlayers {
         x: kMenuX
-        y: @prevEndY + 6
+        y: @prevEndY + 5
         width: kMenuWidth
         height: kMenuHeight
 
@@ -55,7 +58,7 @@ Menu careerPlayerCountMenu
 
     Entry threePlayers {
         x: kMenuX
-        y: @prevEndY + 6
+        y: @prevEndY + 5
         width: kMenuWidth
         height: kMenuHeight
 
@@ -70,27 +73,76 @@ Menu careerPlayerCountMenu
 
     Entry fourPlayers {
         x: kMenuX
-        y: @prevEndY + 6
+        y: @prevEndY + 5
         width: kMenuWidth
         height: kMenuHeight
 
         color: @kLightBrownWithOrangeFrame
         upEntry: threePlayers
-        downEntry: exitButton
+        downEntry: customPlayers
 
         textFlags: @kBigText | @kCenterAligned
         text: "4 PLAYERS"
         onSelect: ~onSelect4Players
     }
 
+    Entry decreasePlayers {
+        x: kMenuX
+        y: @prevEndY + 6
+        width: kStepperBtnWidth
+        height: kMenuHeight
+
+        color: @kDarkBlue
+        upEntry: fourPlayers
+        rightEntry: customPlayers
+        downEntry: exitButton
+
+        textFlags: @kBigText | @kCenterAligned
+        text: "-"
+        onSelect: ~onDecreaseCustomPlayers
+    }
+
+    Entry customPlayers {
+        x: @prevEndX + 1
+        y: @prevY
+        width: kStepperCenterWidth
+        height: kMenuHeight
+
+        color: @kLightBrownWithOrangeFrame
+        upEntry: fourPlayers
+        leftEntry: decreasePlayers
+        rightEntry: increasePlayers
+        downEntry: exitButton
+
+        textFlags: @kBigText | @kCenterAligned
+        text: "5 PLAYERS"
+        onSelect: ~onSelectCustomPlayers
+    }
+
+    Entry increasePlayers {
+        x: @prevEndX + 1
+        y: @prevY
+        width: kStepperBtnWidth
+        height: kMenuHeight
+
+        color: @kDarkBlue
+        upEntry: fourPlayers
+        leftEntry: customPlayers
+        downEntry: exitButton
+
+        textFlags: @kBigText | @kCenterAligned
+        text: "+"
+        onSelect: ~onIncreaseCustomPlayers
+    }
+
     Entry exitButton {
         x: kMenuX
-        y: @prevEndY + 12
+        y: @prevEndY + 10
         width: kMenuWidth
         height: kMenuHeight
 
         color: @kRed
-        upEntry: fourPlayers
+        upEntry: customPlayers
 
         textFlags: @kBigText | @kCenterAligned
         text: "EXIT"

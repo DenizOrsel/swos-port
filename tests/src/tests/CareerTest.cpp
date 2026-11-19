@@ -8,6 +8,7 @@
 #include "game.h"
 #include "options.h"
 #include "hotseatCareer.h"
+#include "init.h"
 #include "file.h"
 #include "menuAlloc.h"
 #include "continueAbortMenu.h"
@@ -76,6 +77,7 @@ auto CareerTest::getCases() -> CaseList
         { "test hotseat .CAR and .hot file save and load across euro cups", "career-hotseat-car-load", {}, bind(&CareerTest::testHotseatSaveAndLoadCareerFile), 1, false },
         { "test hotseat end-of-season menu sequence and shared job offer dedup", "career-hotseat-end-season-job-offers", {}, bind(&CareerTest::testHotseatEndOfSeasonMenuSequenceAndSharedJobOfferDedup), 1, false },
         { "test hotseat club switch marks old team CPU red and CPU fixtures", "career-hotseat-club-switch-old-cpu", {}, bind(&CareerTest::testHotseatClubSwitchOldTeamCpuRedAndFixtures), 1, false },
+        { "test hotseat 8 players isolated mirrors and V8 save load", "career-hotseat-8players", {}, bind(&CareerTest::testHotseatEightPlayersMirrorsAndSaveV8), 1, false },
     };
 }
 
@@ -3872,4 +3874,83 @@ void CareerTest::testHotseatClubSwitchOldTeamCpuRedAndFixtures()
 
     mgr.reset();
     SWOS_UnitTest::setMenuCallback();
+}
+
+void CareerTest::testHotseatEightPlayersMirrorsAndSaveV8()
+{
+    auto& mgr = HotseatCareerManager::get();
+    mgr.reset();
+
+    std::vector<int16_t> eightTeams;
+    for (int i = 0; i < 8; ++i) {
+        eightTeams.push_back(static_cast<int16_t>(0x0100 * (i + 1) + 0x26));
+    }
+    mgr.initializeHotseat(eightTeams);
+    assertEqual(mgr.numPlayers(), 8);
+
+    const uint32_t dosMemOfs = swos.dosMemOfs60c00h.getRaw();
+    const uint32_t hotBase = getHotseatExtraMemoryOffset();
+    const uint32_t hotEnd = hotBase + static_cast<uint32_t>(getHotseatExtraMemorySize());
+    assertTrue(hotBase >= dosMemOfs + 21890);
+
+    for (int i = 0; i < 8; ++i) {
+        auto& ctx = mgr.player(i);
+        ctx.teamName = "CLUB_" + std::to_string(i + 1);
+        ctx.newBalance = 2'000'000 + i * 250'000;
+        ctx.careerNumPlayers = 18;
+        for (uint8_t s = 0; s < 18; ++s) {
+            ctx.currentMatchPlayers[s] = s;
+            ctx.trainingMatchSavedPlayers[s] = s;
+            auto *pf = reinterpret_cast<PlayerFile *>(
+                ctx.careerTeam + sizeof(TeamFileHeader) + static_cast<size_t>(s) * sizeof(PlayerFile));
+            std::memset(pf, 0, sizeof(PlayerFile));
+            snprintf(pf->playerName, sizeof(pf->playerName), "P%d_%u", i + 1, s);
+            pf->shirtNumber = static_cast<byte>(s + 1);
+        }
+        *reinterpret_cast<int16_t *>(ctx.careerTeam) = ctx.teamId;
+        uint32_t mirrorOfs = mgr.ensureHotseatTeamMirror(i);
+        assertTrue(mirrorOfs >= hotBase + 672);
+        assertTrue(mirrorOfs + kCareerTeamBufferSize <= hotEnd);
+    }
+
+    // Overwriting dosMemOfs60c00h (as SaveSelectedTeams does) must not corrupt isolated hotseat mirrors
+    std::vector<uint8_t> savedDosMem(21890);
+    std::memcpy(savedDosMem.data(), swos.dosMemOfs60c00h.asCharPtr(), savedDosMem.size());
+    std::memset(swos.dosMemOfs60c00h.asCharPtr(), 0xAA, 21890);
+    for (int i = 0; i < 8; ++i) {
+        uint32_t mirrorOfs = mgr.ensureHotseatTeamMirror(i);
+        assertEqual(*reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[mirrorOfs]), eightTeams[i]);
+    }
+    std::memcpy(swos.dosMemOfs60c00h.asCharPtr(), savedDosMem.data(), savedDosMem.size());
+
+    // Verify transfer queue between P1 and P8 across 8-player roster
+    mgr.loadSwosContext(mgr.player(0), false);
+    HotseatCareerManager::TransferOffer offer;
+    offer.fromPlayerIndex = 0;
+    offer.toPlayerIndex = 7;
+    offer.playerOrdinal = 5;
+    snprintf(offer.playerName, sizeof(offer.playerName), "P8_5");
+    offer.offerAmount = 500'000;
+    int offerId = mgr.queueTransferOffer(offer);
+    assertTrue(mgr.resolveTransferOffer(offerId, true));
+    assertEqual(static_cast<int>(mgr.player(0).careerNumPlayers), 19);
+    assertEqual(static_cast<int>(mgr.player(7).careerNumPlayers), 17);
+
+    // Verify V8 save/load round-trip with 8 players
+    const std::string hotPath = "hotseat_8p_test.hot";
+    std::remove(hotPath.c_str());
+    assertTrue(mgr.saveToFile(hotPath));
+
+    mgr.reset();
+    assertEqual(mgr.numPlayers(), 0);
+    assertTrue(mgr.loadFromFile(hotPath));
+    std::remove(hotPath.c_str());
+
+    assertEqual(mgr.numPlayers(), 8);
+    assertEqual(mgr.player(7).teamId, eightTeams[7]);
+    assertEqual(mgr.player(7).teamName, "CLUB_8");
+    assertEqual(static_cast<int>(mgr.player(0).careerNumPlayers), 19);
+    assertEqual(static_cast<int>(mgr.player(7).careerNumPlayers), 17);
+
+    mgr.reset();
 }

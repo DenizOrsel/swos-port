@@ -413,8 +413,9 @@ static void drawStringMenuItem(MenuEntry *entry, const char *string)
             if (slot >= 0) {
                 std::string tName(string);
                 trimTrailingSwosPadding(tName);
-                if (tName.size() > 11)
-                    tName.resize(11);
+                size_t maxLen = (slot + 1 >= 10) ? 10 : 11;
+                if (tName.size() > maxLen)
+                    tName.resize(maxLen);
                 snprintf(customTeamBuf, sizeof(customTeamBuf), "%s (P%d)", tName.c_str(), slot + 1);
                 string = customTeamBuf;
             }

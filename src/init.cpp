@@ -33,8 +33,12 @@ constexpr int kSentinelSize = sizeof(kSentinelMagic);
 constexpr int kDosMemBufferSize = 21'890 + kSentinelSize;
 // allocate buffer to hold every SWOS sprite (but only structs, no data)
 constexpr int kSpritesBufferSize = kNumSprites * sizeof(SpriteGraphics) + kSentinelSize;
+// isolated extra region inside extended VM memory for hotseat mirrors and scratch buffers
+constexpr int kHotseatExtraMemSize = 64'000;
 
-SDL_UNUSED constexpr int kTotalExtraMemorySize = kDosMemBufferSize + kSpritesBufferSize;
+SDL_UNUSED constexpr int kTotalExtraMemorySize = kDosMemBufferSize + kSpritesBufferSize + kHotseatExtraMemSize;
+
+static uint32_t s_hotseatExtraMemOffset = 0;
 
 static void init();
 static void initRandomSeed();
@@ -88,6 +92,7 @@ void checkMemory()
 
     assert(*swos.g_spriteGraphicsPtr == reinterpret_cast<SpriteGraphics *>(extraMemStart + kDosMemBufferSize));
     verifyBlock(extraMemStart + kDosMemBufferSize, kSpritesBufferSize);
+    verifyBlock(extraMemStart + SwosVM::kExtendedMemSize - kHotseatExtraMemSize, kHotseatExtraMemSize);
 
 #ifdef _MSCVER
     _ASSERTE(_CrtCheckMemory());
@@ -116,11 +121,30 @@ static void setupExtraMemory()
     swos.dosMemOfs60c00h = extraMemStart;   // names don't match offsets anymore, but are left for historical preservation ;)
     *swos.g_spriteGraphicsPtr = reinterpret_cast<SpriteGraphics *>(extraMemStart + kDosMemBufferSize);
 
+    auto hotseatMemStart = extraMemStart + SwosVM::kExtendedMemSize - kHotseatExtraMemSize;
+    s_hotseatExtraMemOffset = static_cast<uint32_t>(reinterpret_cast<const uint8_t *>(hotseatMemStart) - SwosVM::g_memByte);
+
 #ifdef DEBUG
     SwosVM::initSafeMemoryAreas();
     memcpy(swos.dosMemOfs60c00h + kDosMemBufferSize - kSentinelSize, kSentinelMagic, kSentinelSize);
     memcpy((*swos.g_spriteGraphicsPtr).asCharPtr() + kSpritesBufferSize - kSentinelSize, kSentinelMagic, kSentinelSize);
+    memcpy(hotseatMemStart + kHotseatExtraMemSize - kSentinelSize, kSentinelMagic, kSentinelSize);
 #endif
+}
+
+uint32_t getHotseatExtraMemoryOffset()
+{
+    if (s_hotseatExtraMemOffset == 0) {
+        auto extraMemStart = SwosVM::getExtraMemoryArea();
+        auto hotseatMemStart = extraMemStart + SwosVM::kExtendedMemSize - kHotseatExtraMemSize;
+        s_hotseatExtraMemOffset = static_cast<uint32_t>(reinterpret_cast<const uint8_t *>(hotseatMemStart) - SwosVM::g_memByte);
+    }
+    return s_hotseatExtraMemOffset;
+}
+
+size_t getHotseatExtraMemorySize()
+{
+    return static_cast<size_t>(kHotseatExtraMemSize - kSentinelSize);
 }
 
 static void init()

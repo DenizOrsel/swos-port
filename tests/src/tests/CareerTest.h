@@ -47,4 +47,5 @@ private:
     void testHotseatSaveAndLoadCareerFile();
     void testHotseatEndOfSeasonMenuSequenceAndSharedJobOfferDedup();
     void testHotseatClubSwitchOldTeamCpuRedAndFixtures();
+    void testHotseatEightPlayersMirrorsAndSaveV8();
 };
