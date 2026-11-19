@@ -859,6 +859,8 @@ cseg_39392
 cseg_92D55
 cseg_9307A
 cseg_9339D
+ShowPlayMatchMenu
+cseg_52956
 
 #
 # insert a call to given C++ function into a proc at a given line
@@ -875,6 +877,7 @@ AdjustPlayerSkills, @@set_goalie_skill, FixTwoCPUsGameCrash
 ViewOpponentsSelect, 63, RecalculateReachableEntries
 ReturnFromViewOpponent, 9, RecalculateReachableEntries
 InitializeNewSeason, @@out, Hotseat_OnNewSeasonInitialized
+ProcessCareerFile, @@out, Hotseat_OnAfterProcessCareerFile
 PlayMatchMenu, cseg_347F4, Hotseat_OnAfterPlayMatch
 NextMatch, cseg_34933, Hotseat_OnAfterPlayMatch
 cseg_8B8D9, cseg_8BBD3, Hotseat_OnLeagueCalendarSlotAdded
@@ -888,6 +891,9 @@ cseg_32128, cseg_321C3, Hotseat_OnDomesticCupTeamSelect
 cseg_3252E, cseg_325BD, Hotseat_OnTournamentTeamSelect
 CareerGameListCommon, 36, Hotseat_ResolveGameListSlotPtr
 cseg_52A3E, 58, Hotseat_OnAfterReplacementPlayer
+cseg_52956, 48, Hotseat_OnAfterEmergencyLoan
+cseg_52588, @@out, Hotseat_OnAfterEnsureCareerPlayers
+ShowPlayMatchMenu, 32, Hotseat_OnAfterShowPlayMatchMenu
 cseg_52EA6, 114, Hotseat_SyncTransferMarkets
 cseg_52EA6, 217, Hotseat_SyncTransferMarkets
 RemovePlayerFromTeam, 10, Hotseat_SyncTransferMarkets

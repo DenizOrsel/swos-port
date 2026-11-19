@@ -205,7 +205,7 @@ static int writeFileImp()
     auto bufferSize = D1;
 
     int ok = saveFile(filename, buffer, bufferSize);
-    if (ok && filename && HotseatCareerManager::get().isActive()) {
+    if (ok && filename) {
         std::string fname(filename);
         if (fname.size() >= 4) {
             std::string ext = fname.substr(fname.size() - 4);
@@ -213,7 +213,12 @@ static int writeFileImp()
             if (ext == ".car") {
                 std::string hotPath = fname.substr(0, fname.size() - 4) + ".hot";
                 std::string fullHotPath = isAbsolutePath(hotPath.c_str()) ? hotPath : (m_rootDir + hotPath);
-                HotseatCareerManager::get().saveToFile(fullHotPath);
+                if (HotseatCareerManager::get().isActive()) {
+                    if (!HotseatCareerManager::get().saveToFile(fullHotPath))
+                        ok = 0;
+                } else if (fileExists(fullHotPath.c_str())) {
+                    std::remove(fullHotPath.c_str());
+                }
             }
         }
     }

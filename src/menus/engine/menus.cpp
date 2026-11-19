@@ -230,66 +230,142 @@ void selectEntry(MenuEntry *entry, int controlMask /* = kShortFireMask */)
                 int buyerIdx = mgr.activePlayerIndex();
                 if (sellerIdx >= 0 && sellerIdx != buyerIdx) {
                     mgr.saveCurrentSwosContext(mgr.player(buyerIdx));
+                    const auto& buyer = mgr.player(buyerIdx);
                     const auto& seller = mgr.player(sellerIdx);
 
-                    uint16_t playerIdx = swos.dseg_17A6CE;
+                    int16_t wanted1 = static_cast<int16_t>(swos.dseg_17A6CE);
+                    int16_t wanted2 = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumExtraPlayersWanted]);
+                    int16_t exch1 = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kDseg17A6D2]);
+                    int16_t exch2 = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kDseg17A6D4]);
+                    if (wanted2 < 0 || wanted2 == wanted1) wanted2 = -1;
+                    if (exch1 < 0) exch1 = -1;
+                    if (exch2 < 0 || exch2 == exch1) exch2 = -1;
+
                     uint16_t offerAmountK = swos.offerAmount;
                     uint32_t cashAmount = static_cast<uint32_t>(offerAmountK) * 1000;
 
-                    if (seller.careerNumPlayers <= kMinCareerSquadPlayers) {
+                    int numWanted = (wanted1 >= 0 ? 1 : 0) + (wanted2 >= 0 ? 1 : 0);
+                    int numExchange = (exch1 >= 0 ? 1 : 0) + (exch2 >= 0 ? 1 : 0);
+                    int sellerAfter = static_cast<int>(seller.careerNumPlayers) - numWanted + numExchange;
+                    int buyerAfter = static_cast<int>(buyer.careerNumPlayers) + numWanted - numExchange;
+
+                    if (sellerAfter < kMinCareerSquadPlayers) {
+                        const char *msg2 = (seller.careerNumPlayers <= kMinCareerSquadPlayers && numExchange == 0)
+                            ? "16 PLAYERS LEFT AND"
+                            : "AT LEAST 16 PLAYERS";
+                        const char *msg3 = (seller.careerNumPlayers <= kMinCareerSquadPlayers && numExchange == 0)
+                            ? "CANNOT SELL WITHOUT EXCHANGE!"
+                            : "FOR THIS TRANSFER!";
                         showContinueAbortPrompt("BID BLOCKED", "OK", nullptr,
-                            { "THAT CLUB ONLY HAS", "16 PLAYERS LEFT AND", "CANNOT SELL ANYONE!" }, false);
+                            { "THAT CLUB MUST KEEP", msg2, msg3 }, false);
+                        SetExitMenuFlag();
+                        return;
+                    }
+                    if (sellerAfter > kMaxCareerSquadPlayers) {
+                        showContinueAbortPrompt("BID BLOCKED", "OK", nullptr,
+                            { "TARGET CLUB SQUAD", "WOULD EXCEED THE", "30 PLAYER LIMIT!" }, false);
+                        SetExitMenuFlag();
+                        return;
+                    }
+                    if (buyerAfter > kMaxCareerSquadPlayers) {
+                        showContinueAbortPrompt("BID BLOCKED", "OK", nullptr,
+                            { "YOUR SQUAD WOULD", "EXCEED THE 30", "PLAYER LIMIT!" }, false);
+                        SetExitMenuFlag();
+                        return;
+                    }
+                    if (buyerAfter < kMinCareerSquadPlayers) {
+                        showContinueAbortPrompt("BID BLOCKED", "OK", nullptr,
+                            { "YOUR CLUB MUST KEEP", "AT LEAST 16 PLAYERS!" }, false);
                         SetExitMenuFlag();
                         return;
                     }
 
-                    char playerName[32] = "PLAYER";
-                    if (playerIdx < seller.careerNumPlayers && playerIdx < kMaxCareerSquadPlayers) {
-                        const auto *sellerPlayers = reinterpret_cast<const PlayerFile *>(seller.careerTeam + sizeof(TeamFileHeader));
-                        snprintf(playerName, sizeof(playerName), "%.22s", sellerPlayers[playerIdx].playerName);
-                        trimTrailingSwosPadding(playerName);
-                    } else if (sellerTeamFile && playerIdx < kNumPlayersInTeam) {
-                        snprintf(playerName, sizeof(playerName), "%.22s", sellerTeamFile->players[playerIdx].playerName);
-                        trimTrailingSwosPadding(playerName);
-                    }
-
-                    if (mgr.player(buyerIdx).newBalance < static_cast<int32_t>(cashAmount)) {
+                    if (buyer.newBalance < static_cast<int32_t>(cashAmount)) {
                         showContinueAbortPrompt("INSUFFICIENT FUNDS", "OK", nullptr,
                             { "YOU DO NOT HAVE", "ENOUGH FUNDS FOR THIS", "TRANSFER BID!" }, false);
                         SetExitMenuFlag();
                         return;
                     }
 
+                    auto extractPlayerName = [](const uint8_t *teamBuf, int ord, const TeamFile *fallbackTf,
+                                                char *out, size_t outSize) {
+                        snprintf(out, outSize, "PLAYER");
+                        if (ord < 0 || ord >= kMaxCareerSquadPlayers)
+                            return;
+                        if (teamBuf) {
+                            const auto *players = reinterpret_cast<const PlayerFile *>(teamBuf + sizeof(TeamFileHeader));
+                            snprintf(out, outSize, "%.22s", players[ord].playerName);
+                            trimTrailingSwosPadding(out);
+                            if (out[0] != '\0')
+                                return;
+                        }
+                        if (fallbackTf && ord < kNumPlayersInTeam) {
+                            snprintf(out, outSize, "%.22s", fallbackTf->players[ord].playerName);
+                            trimTrailingSwosPadding(out);
+                            if (out[0] != '\0')
+                                return;
+                        }
+                        snprintf(out, outSize, "PLAYER");
+                    };
+
                     HotseatCareerManager::TransferOffer offer;
                     offer.fromPlayerIndex = buyerIdx;
                     offer.toPlayerIndex = sellerIdx;
-                    offer.playerOrdinal = playerIdx;
+                    offer.playerOrdinal = wanted1;
+                    offer.extraWantedOrdinal = wanted2;
+                    offer.exchangeOrdinal1 = exch1;
+                    offer.exchangeOrdinal2 = exch2;
                     offer.offerAmount = cashAmount;
                     offer.pending = true;
                     offer.accepted = false;
                     offer.rejected = false;
                     offer.isCounterOffer = false;
-                    strncpy(offer.playerName, playerName, sizeof(offer.playerName) - 1);
+                    extractPlayerName(seller.careerTeam, wanted1, sellerTeamFile, offer.playerName, sizeof(offer.playerName));
+                    if (wanted2 >= 0) {
+                        extractPlayerName(seller.careerTeam, wanted2, sellerTeamFile, offer.extraWantedName, sizeof(offer.extraWantedName));
+                    }
+                    if (exch1 >= 0) {
+                        extractPlayerName(buyer.careerTeam, exch1, nullptr, offer.exchangeName1, sizeof(offer.exchangeName1));
+                    }
+                    if (exch2 >= 0) {
+                        extractPlayerName(buyer.careerTeam, exch2, nullptr, offer.exchangeName2, sizeof(offer.exchangeName2));
+                    }
 
                     int offerId = mgr.queueTransferOffer(offer);
 
                     // Prevent SWOS CPU negotiation logic from running
                     swos.dseg_17A6DE = 0;
 
-                    char line1[64], line2[64], line3[64];
-                    snprintf(line1, sizeof(line1), "OFFER OF \x9c%uK SENT TO", cashAmount / 1000);
-                    snprintf(line2, sizeof(line2), "PLAYER %d (%s)", sellerIdx + 1,
+                    char line1[96], line2[64], line3[96];
+                    if (offer.exchangeOrdinal1 >= 0 && offer.exchangeOrdinal2 >= 0) {
+                        snprintf(line1, sizeof(line1), "OFFER: \x9c%uK + %s + %s",
+                                 cashAmount / 1000, offer.exchangeName1, offer.exchangeName2);
+                    } else if (offer.exchangeOrdinal1 >= 0) {
+                        snprintf(line1, sizeof(line1), "OFFER: \x9c%uK + %s",
+                                 cashAmount / 1000, offer.exchangeName1);
+                    } else {
+                        snprintf(line1, sizeof(line1), "OFFER OF \x9c%uK SENT TO", cashAmount / 1000);
+                    }
+                    snprintf(line2, sizeof(line2), "TO PLAYER %d (%s)", sellerIdx + 1,
                              mgr.player(sellerIdx).managerSurname.c_str());
-                    snprintf(line3, sizeof(line3), "FOR %s", playerName);
+                    if (offer.extraWantedOrdinal >= 0) {
+                        snprintf(line3, sizeof(line3), "FOR %s + %s", offer.playerName, offer.extraWantedName);
+                    } else {
+                        snprintf(line3, sizeof(line3), "FOR %s", offer.playerName);
+                    }
                     std::vector<const char*> msgLines = { line1, line2, line3, "QUEUED FOR THEIR TURN!" };
                     showContinueAbortPrompt("BID TRANSMITTED", "CONTINUE", nullptr, msgLines, false);
 
-                    logInfo("Hotseat: Player %d queued transfer offer #%d of £%u for %s to Player %d",
-                            buyerIdx + 1, offerId, cashAmount, playerName, sellerIdx + 1);
+                    logInfo("Hotseat: Player %d queued transfer offer #%d (£%u, exch=%d,%d) for %s (extra=%d) to Player %d",
+                            buyerIdx + 1, offerId, cashAmount, offer.exchangeOrdinal1, offer.exchangeOrdinal2,
+                            offer.playerName, offer.extraWantedOrdinal, sellerIdx + 1);
 
                     SetExitMenuFlag();
                     return;
                 }
+            }
+            if (isConfirmOffer) {
+                HotseatCareerManager::get().ensureVmTrainingMatchSavedPlayersSynced();
             }
         }
 

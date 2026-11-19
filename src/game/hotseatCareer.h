@@ -95,6 +95,8 @@ namespace CareerOffsets {
     constexpr size_t kCurrentMatchPlayers = 92766;      // 32 bytes
     constexpr size_t kCareerTeam = 92798;               // 1292 bytes
     constexpr size_t kCareerNumPlayers = 94090;         // uint16_t
+    constexpr size_t kDsegD761A = 94092;                // uint16_t
+    constexpr size_t kDsegD761C = 94094;                // uint16_t
     constexpr size_t kTmdCareerCount = 36606;           // uint16_t (careerFileBuffer)
     constexpr size_t kTmdFileBuffer = 36608;            // loaded TMD teams buffer
     constexpr size_t kPoolplyrDatBuffer = 200176;       // 900 * 58 bytes (POOLPLYR.DAT)
@@ -102,6 +104,16 @@ namespace CareerOffsets {
     constexpr size_t kDseg17A3D0 = 503556;              // char[23] generated player name buffer
     constexpr size_t kCareerHistory = 94096;            // 2120 bytes
     constexpr size_t kDsegD7E66 = 96216;                // uint16_t (last billed week)
+    constexpr size_t kDsegD8B6A = 99548;                // uint16_t (saved dseg_D761A)
+    constexpr size_t kTrainingMatchSavedPlayers = 99550;// uint8_t[32] (canonical squad order)
+    constexpr size_t kDsegD8B8C = 99582;                // uint8_t[32] (saved shirt numbers)
+    constexpr size_t kDsegD8BAC = 99614;                // uint8_t (saved tactics)
+    constexpr size_t kDsegD8BAE = 99616;                // uint16_t
+    constexpr size_t kDsegD8BB0 = 99618;                // uint16_t
+    constexpr size_t kLastMatchPlayers = 99620;         // uint8_t[32]
+    constexpr size_t kDsegD8BD2 = 99652;                // uint8_t[32]
+    constexpr size_t kCurrentTactics = 99684;           // uint8_t
+    constexpr size_t kDsegD8BF3 = 99685;                // uint8_t
     constexpr size_t kSeasonFinished = 99864;           // uint16_t
     constexpr size_t kCareerFinished = 99866;           // uint16_t
     constexpr size_t kDsegD8CAA = 99868;                // uint32_t[5] (active competition ptrs)
@@ -139,6 +151,9 @@ namespace CareerOffsets {
     constexpr size_t kDseg17457E = 482097;              // uint32_t (current match slot ptr)
     constexpr size_t kCurrentSeasonNumber = 484815;     // uint16_t (display copy)
     constexpr size_t kSeasonFinancesBlock = 484991;     // uint8_t[24] (dseg_1750CC..E0)
+    constexpr size_t kNumExtraPlayersWanted = 504324;   // int16_t (2nd wanted player ordinal)
+    constexpr size_t kDseg17A6D2 = 504326;              // int16_t (1st exchange player ordinal)
+    constexpr size_t kDseg17A6D4 = 504328;              // int16_t (2nd exchange player ordinal)
 }
 
 constexpr int kCurrentMatchPlayersSize = 32;
@@ -236,6 +251,20 @@ struct HotseatPlayerContext {
     uint8_t careerTeam[kCareerTeamBufferSize] = {0};
     uint8_t careerHistory[kCareerHistoryBufferSize] = {0};
 
+    // Canonical SWOS match-save/restore & team-change buffers (must stay per-player!)
+    uint16_t dsegD761A = 0xFFFF;
+    uint16_t dsegD761C = 0;
+    uint16_t dsegD8B6A = 0xFFFF;
+    uint8_t trainingMatchSavedPlayers[kCurrentMatchPlayersSize] = {0};
+    uint8_t dsegD8B8C[kCurrentMatchPlayersSize] = {0};
+    uint8_t dsegD8BAC = 0;
+    uint16_t dsegD8BAE = 0;
+    uint16_t dsegD8BB0 = 0;
+    uint8_t lastMatchPlayers[kCurrentMatchPlayersSize] = {0};
+    uint8_t dsegD8BD2[kCurrentMatchPlayersSize] = {0};
+    uint8_t currentTactics = 0;
+    uint8_t dsegD8BF3 = 0;
+
     // User custom tactics (USER A to F)
     uint8_t userTactics[6][kUserTacticsSize] = {{0}};
 
@@ -312,6 +341,7 @@ public:
     // Context Swapping & Competition Pointer Linking
     void saveCurrentSwosContext(HotseatPlayerContext& ctx);
     void loadSwosContext(const HotseatPlayerContext& ctx, bool relink = true);
+    void ensureVmTrainingMatchSavedPlayersSynced();
     void switchToPlayer(int index, bool relink = true);
     void relinkCompetitionTeamPointers();
     void syncPlayersWithSelectedTeams(bool writeToSelected);
@@ -381,6 +411,12 @@ public:
         int toPlayerIndex = -1;
         int playerOrdinal = -1;
         char playerName[32] = {0};
+        int extraWantedOrdinal = -1;
+        char extraWantedName[32] = {0};
+        int exchangeOrdinal1 = -1;
+        char exchangeName1[32] = {0};
+        int exchangeOrdinal2 = -1;
+        char exchangeName2[32] = {0};
         uint32_t offerAmount = 0;
         bool pending = true;
         bool accepted = false;
@@ -403,9 +439,15 @@ public:
     // Persistence
     bool saveToFile(const std::string& path);
     bool loadFromFile(const std::string& path);
+    void onAfterProcessCareerFile();
 
-    // Transfer departure trialist replacement & market exclusion/sync helpers
+    // Transfer departure trialist replacement, emergency loan, & market exclusion/sync helpers
     void onAfterCreateReplacementPlayer();
+    void onBeforeEmergencyLoan();
+    void onAfterEmergencyLoan();
+    void onAfterEnsureCareerPlayers();
+    void onBeforeShowPlayMatchMenu();
+    void onAfterShowPlayMatchMenu();
     void onBeforeAddDomesticMarket();
     void onAfterAddDomesticMarket();
     void onBeforeAddForeignMarket();
@@ -460,6 +502,25 @@ private:
     uint16_t m_prevForeignMarketCount = 0;
     uint32_t m_vmPoolPlayerScratchOfs = 0;
     std::array<uint32_t, kMaxHotseatPlayers> m_vmTeamMirrorOfs{};
+
+    struct PlayMatchSetupState {
+        int savedActiveIdx = -1;
+        int team1HotseatIdx = -1;
+        uint32_t origA1 = 0;
+        uint32_t origA2 = 0;
+        bool didSwitch = false;
+    };
+    struct H2hPackedTeamMap {
+        bool active = false;
+        uint32_t vmTeamOfs = 0;
+        uint8_t slotToOrd[16]{};
+    };
+    int m_emergencyLoanDepth = 0;
+    std::vector<PlayMatchSetupState> m_playMatchSetupStack;
+    std::array<H2hPackedTeamMap, kMaxHotseatPlayers> m_h2hPackMaps;
+
+    void unpackH2hPackedTeam(int playerIdx);
+    void unpackAllH2hPackedTeams();
 };
 
 void trimTrailingSwosPadding(std::string& s);

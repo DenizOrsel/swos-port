@@ -590,14 +590,26 @@ static void abortSelectFile()
     SetExitMenuFlag();
 }
 
-static void updateSaveFilename(const char *filename)
+static std::string matchExistingFilenameCase(const std::string& candidate)
 {
-    if (m_saveExtension && m_saveFilenameBuffer) {
-        auto p = m_saveFilenameBuffer;
-        while (*filename)
-            *p++ = *filename++;
+    for (const auto& file : m_filenames) {
+        if (_stricmp(file.name.c_str(), candidate.c_str()) == 0)
+            return file.name;
+    }
+    return candidate;
+}
 
-        strcpy(p, m_saveExtension);
+// Resolve save filename with its extension and preserve existing filename casing when overwriting.
+static void commitSaveFilename(const char *filename)
+{
+    if (filename && *filename) {
+        std::string resolved = matchExistingFilenameCase(
+            std::string(filename) + (m_saveExtension ? m_saveExtension : ""));
+        if (m_saveFilenameBuffer)
+            strcpy(m_saveFilenameBuffer, resolved.c_str());
+        m_selectedFilename = std::move(resolved);
+    } else {
+        m_selectedFilename.clear();
     }
 }
 
@@ -608,12 +620,7 @@ static void inputFilenameToSave()
 
     if (inputText(*entry, kMaxSaveFilenameChars, kFileCharset)) {
         assert(m_saveFilenameBuffer && m_saveExtension);
-
-        if (m_saveFilenameBuffer) {
-            updateSaveFilename(entryString);
-            m_selectedFilename = m_saveFilenameBuffer;
-        }
-
+        commitSaveFilename(entryString);
         SetExitMenuFlag();
     }
 }
@@ -621,8 +628,7 @@ static void inputFilenameToSave()
 static void saveFileSelected()
 {
     auto inputFilenameEntry = getMenuEntry(inputSaveFilename);
-    m_selectedFilename = inputFilenameEntry->string();
-    updateSaveFilename(m_selectedFilename.c_str());
+    commitSaveFilename(inputFilenameEntry->string());
 
     SetExitMenuFlag();
 }

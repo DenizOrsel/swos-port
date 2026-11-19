@@ -111,6 +111,7 @@ private:
     void convertProcPointers();
     void fixPushSmall();
     void ensureSizeInformation();
+    bool resolveOperandSizeFromReferences(RawOperandInfo& op, bool throwOnUnknown);
     size_t getStructVariableSize(const String& structName, const String& fieldName) const;
     void overrideOrPropagateStructVarSize();
     void fillComponents(OperandInfo& dst, const RawOperandInfo& op, size_t opSize, bool needsMemoryFetch) const;

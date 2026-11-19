@@ -13,6 +13,7 @@ namespace {
 constexpr char kHotseatFileMagicV3[16] = "SWOS_HOTSEAT_V3";
 constexpr char kHotseatFileMagicV4[16] = "SWOS_HOTSEAT_V4";
 constexpr char kHotseatFileMagicV5[16] = "SWOS_HOTSEAT_V5";
+constexpr char kHotseatFileMagicV6[16] = "SWOS_HOTSEAT_V6";
 constexpr int32_t kMaxSerializedOffers = 1024;
 constexpr size_t kTeamFileHeaderSize = sizeof(TeamFileHeader);
 constexpr size_t kPlayerFileSize = sizeof(PlayerFile);
@@ -164,8 +165,8 @@ void generateNonEmptyPlayerName(uint8_t country, uint16_t excludeTeamId,
     }
 }
 
-void populateNamedTrialPlayerSlot(uint8_t *teamBuf, uint8_t *trialWeeksBuf,
-                                  int ordinal, uint16_t teamId, bool runSwosSkillGen)
+void populateReplacementPlayerSlot(uint8_t *teamBuf, uint8_t *trialWeeksBuf,
+                                   int ordinal, uint16_t teamId, bool runSwosSkillGen, bool isEmergencyLoan)
 {
     if (!teamBuf || ordinal < 0 || ordinal >= 30)
         return;
@@ -174,6 +175,7 @@ void populateNamedTrialPlayerSlot(uint8_t *teamBuf, uint8_t *trialWeeksBuf,
     uint8_t posBits = pf->positionAndFace & 0xE0;
     uint8_t faceBits = pf->positionAndFace & 0x18;
     uint8_t nat = pf->nationality;
+    uint8_t savedShirt = pf->shirtNumber;
     bool hasValidName = isValidPlayerName(pf->playerName);
     char preservedName[sizeof(pf->playerName)]{};
     if (hasValidName)
@@ -197,21 +199,27 @@ void populateNamedTrialPlayerSlot(uint8_t *teamBuf, uint8_t *trialWeeksBuf,
         pf->nationality = nat;
     }
 
-    // Clear LOAN/temp low bits (0x07) while retaining position (0xE0) and face skin (0x18)
-    pf->positionAndFace = static_cast<byte>(posBits | faceBits);
-    pf->cardsInjuries = 0;
-    pf->someFlag = 0x9B; // TRIAL status
+    if (pf->shirtNumber == 0)
+        pf->shirtNumber = savedShirt ? savedShirt : 16;
 
-    uint8_t weeks = 45;
-    {
-        save68kRegisters();
-        SWOS::Rand();
-        uint16_t r = static_cast<uint16_t>(D0) & 0xFF;
-        weeks = static_cast<uint8_t>(40 + ((r * 50) >> 8));
-        restore68kRegisters();
-    }
+    // Emergency loan players preserve LOAN bit (0x02) and someFlag=0 so SWOS cleans them up when fit depth returns;
+    // transfer-departure replacements become permanent TRIAL players (someFlag=0x9B) with a contract timer.
+    pf->positionAndFace = static_cast<byte>(posBits | faceBits | (isEmergencyLoan ? 0x02 : 0x00));
+    pf->cardsInjuries = 0;
+    pf->someFlag = isEmergencyLoan ? 0 : 0x9B;
+
     if (trialWeeksBuf) {
-        trialWeeksBuf[ordinal] = static_cast<uint8_t>(static_cast<int8_t>(-static_cast<int>(weeks)));
+        if (isEmergencyLoan) {
+            trialWeeksBuf[ordinal] = 0;
+        } else {
+            uint8_t weeks = 45;
+            save68kRegisters();
+            SWOS::Rand();
+            uint16_t r = static_cast<uint16_t>(D0) & 0xFF;
+            weeks = static_cast<uint8_t>(40 + ((r * 50) >> 8));
+            restore68kRegisters();
+            trialWeeksBuf[ordinal] = static_cast<uint8_t>(static_cast<int8_t>(-static_cast<int>(weeks)));
+        }
     }
 
     if (posBits != 0 && pf->passing == 0 && pf->shootingHeading == 0 &&
@@ -224,6 +232,12 @@ void populateNamedTrialPlayerSlot(uint8_t *teamBuf, uint8_t *trialWeeksBuf,
     if (pf->price == 0) {
         pf->price = 2;
     }
+}
+
+void populateNamedTrialPlayerSlot(uint8_t *teamBuf, uint8_t *trialWeeksBuf,
+                                  int ordinal, uint16_t teamId, bool runSwosSkillGen)
+{
+    populateReplacementPlayerSlot(teamBuf, trialWeeksBuf, ordinal, teamId, runSwosSkillGen, false);
 }
 
 void writeTeamCoachName(uint8_t *teamBuf, const std::string& firstName, const std::string& surname)
@@ -330,6 +344,60 @@ bool hasInitializedMatchPlayers(const uint8_t *matchPlayers, uint16_t count)
     return false;
 }
 
+void syncTrainingMatchSavedPlayers(uint8_t *savedPlayers, uint8_t *shirtSnapshot, uint8_t *teamBuf,
+                                   uint16_t count, const uint8_t *matchPlayers)
+{
+    uint16_t n = std::min<uint16_t>(count, static_cast<uint16_t>(kCurrentMatchPlayersSize));
+    if (n == 0 || !matchPlayers || !savedPlayers)
+        return;
+
+    if (hasInitializedMatchPlayers(matchPlayers, n)) {
+        // Check if savedPlayers[0..n-1] already contains every ordinal in matchPlayers[0..n-1].
+        bool inMatch[kCurrentMatchPlayersSize] = {false};
+        for (uint16_t i = 0; i < n; ++i) {
+            if (matchPlayers[i] < kCurrentMatchPlayersSize)
+                inMatch[matchPlayers[i]] = true;
+        }
+
+        bool seenSaved[kCurrentMatchPlayersSize] = {false};
+        for (uint16_t i = 0; i < n; ++i) {
+            uint8_t ord = savedPlayers[i];
+            if (ord < kCurrentMatchPlayersSize && inMatch[ord])
+                seenSaved[ord] = true;
+        }
+
+        bool allPresent = true;
+        for (uint16_t i = 0; i < n; ++i) {
+            uint8_t ord = matchPlayers[i];
+            if (ord < kCurrentMatchPlayersSize && !seenSaved[ord]) {
+                allPresent = false;
+                break;
+            }
+        }
+
+        if (!allPresent) {
+            std::memset(savedPlayers, 0, kCurrentMatchPlayersSize);
+            std::memcpy(savedPlayers, matchPlayers, n);
+        }
+
+        if (teamBuf && n >= kNumPlayersInTeam) {
+            std::memcpy(reinterpret_cast<TeamFile *>(teamBuf)->playerNumbers, matchPlayers, kNumPlayersInTeam);
+        }
+    }
+
+    if (shirtSnapshot && teamBuf) {
+        for (uint16_t i = 0; i < n; ++i) {
+            uint8_t ord = hasInitializedMatchPlayers(matchPlayers, n) ? matchPlayers[i] : static_cast<uint8_t>(i);
+            if (ord < kMaxCareerSquadPlayers && shirtSnapshot[ord] == 0) {
+                const auto *pf = reinterpret_cast<const PlayerFile *>(
+                    teamBuf + kTeamFileHeaderSize + static_cast<size_t>(ord) * kPlayerFileSize);
+                if (pf->shirtNumber != 0)
+                    shirtSnapshot[ord] = pf->shirtNumber;
+            }
+        }
+    }
+}
+
 void formatCurrencyAmount(char *buf, size_t bufSize, uint32_t amount)
 {
     if (amount >= 1000000) {
@@ -390,6 +458,11 @@ void HotseatCareerManager::reset()
     m_assignedSlotInfos.clear();
     m_prevHomeMarketCount = 0;
     m_prevForeignMarketCount = 0;
+    m_emergencyLoanDepth = 0;
+    m_playMatchSetupStack.clear();
+    for (auto& pm : m_h2hPackMaps) {
+        pm = H2hPackedTeamMap{};
+    }
     if (m_vmPoolPlayerScratchOfs)
         std::memset(&SwosVM::g_memByte[m_vmPoolPlayerScratchOfs], 0, 60);
     for (uint32_t ofs : m_vmTeamMirrorOfs) {
@@ -537,6 +610,22 @@ void HotseatCareerManager::saveCurrentSwosContext(HotseatPlayerContext& ctx)
     std::memcpy(ctx.careerTeam, &SwosVM::g_memByte[CareerOffsets::kCareerTeam], kCareerTeamBufferSize);
     std::memcpy(ctx.careerHistory, &SwosVM::g_memByte[CareerOffsets::kCareerHistory], kCareerHistoryBufferSize);
     std::memcpy(ctx.userTactics, &SwosVM::g_memByte[CareerOffsets::kUserTacticsStart], 6 * kUserTacticsSize);
+
+    ctx.dsegD761A = *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD761A]);
+    ctx.dsegD761C = *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD761C]);
+    ctx.dsegD8B6A = *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8B6A]);
+    std::memcpy(ctx.trainingMatchSavedPlayers, &SwosVM::g_memByte[CareerOffsets::kTrainingMatchSavedPlayers], kCurrentMatchPlayersSize);
+    std::memcpy(ctx.dsegD8B8C, &SwosVM::g_memByte[CareerOffsets::kDsegD8B8C], kCurrentMatchPlayersSize);
+    ctx.dsegD8BAC = SwosVM::g_memByte[CareerOffsets::kDsegD8BAC];
+    ctx.dsegD8BAE = *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8BAE]);
+    ctx.dsegD8BB0 = *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8BB0]);
+    std::memcpy(ctx.lastMatchPlayers, &SwosVM::g_memByte[CareerOffsets::kLastMatchPlayers], kCurrentMatchPlayersSize);
+    std::memcpy(ctx.dsegD8BD2, &SwosVM::g_memByte[CareerOffsets::kDsegD8BD2], kCurrentMatchPlayersSize);
+    ctx.currentTactics = SwosVM::g_memByte[CareerOffsets::kCurrentTactics];
+    ctx.dsegD8BF3 = SwosVM::g_memByte[CareerOffsets::kDsegD8BF3];
+
+    syncTrainingMatchSavedPlayers(ctx.trainingMatchSavedPlayers, ctx.dsegD8B8C, ctx.careerTeam,
+                                  ctx.careerNumPlayers, ctx.currentMatchPlayers);
 }
 
 void HotseatCareerManager::loadSwosContext(const HotseatPlayerContext& ctx, bool relink /* = true */)
@@ -641,6 +730,25 @@ void HotseatCareerManager::loadSwosContext(const HotseatPlayerContext& ctx, bool
     std::memcpy(&SwosVM::g_memByte[CareerOffsets::kCareerHistory], ctx.careerHistory, kCareerHistoryBufferSize);
     std::memcpy(&SwosVM::g_memByte[CareerOffsets::kUserTacticsStart], ctx.userTactics, 6 * kUserTacticsSize);
 
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD761A]) = ctx.dsegD761A;
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD761C]) = ctx.dsegD761C;
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8B6A]) = ctx.dsegD8B6A;
+    std::memcpy(&SwosVM::g_memByte[CareerOffsets::kTrainingMatchSavedPlayers], ctx.trainingMatchSavedPlayers, kCurrentMatchPlayersSize);
+    std::memcpy(&SwosVM::g_memByte[CareerOffsets::kDsegD8B8C], ctx.dsegD8B8C, kCurrentMatchPlayersSize);
+    SwosVM::g_memByte[CareerOffsets::kDsegD8BAC] = ctx.dsegD8BAC;
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8BAE]) = ctx.dsegD8BAE;
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8BB0]) = ctx.dsegD8BB0;
+    std::memcpy(&SwosVM::g_memByte[CareerOffsets::kLastMatchPlayers], ctx.lastMatchPlayers, kCurrentMatchPlayersSize);
+    std::memcpy(&SwosVM::g_memByte[CareerOffsets::kDsegD8BD2], ctx.dsegD8BD2, kCurrentMatchPlayersSize);
+    SwosVM::g_memByte[CareerOffsets::kCurrentTactics] = ctx.currentTactics;
+    SwosVM::g_memByte[CareerOffsets::kDsegD8BF3] = ctx.dsegD8BF3;
+
+    syncTrainingMatchSavedPlayers(&SwosVM::g_memByte[CareerOffsets::kTrainingMatchSavedPlayers],
+                                  &SwosVM::g_memByte[CareerOffsets::kDsegD8B8C],
+                                  &SwosVM::g_memByte[CareerOffsets::kCareerTeam],
+                                  ctx.careerNumPlayers,
+                                  &SwosVM::g_memByte[CareerOffsets::kCurrentMatchPlayers]);
+
     if (m_numPlayers > 1 && anyEuroCupActive() && ctx.teamId != 0) {
         activateEuroCup(ctx.euroCupIndex, false);
     }
@@ -650,10 +758,24 @@ void HotseatCareerManager::loadSwosContext(const HotseatPlayerContext& ctx, bool
     }
 }
 
+void HotseatCareerManager::ensureVmTrainingMatchSavedPlayersSynced()
+{
+    uint16_t count = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]);
+    syncTrainingMatchSavedPlayers(&SwosVM::g_memByte[CareerOffsets::kTrainingMatchSavedPlayers],
+                                  &SwosVM::g_memByte[CareerOffsets::kDsegD8B8C],
+                                  &SwosVM::g_memByte[CareerOffsets::kCareerTeam],
+                                  count,
+                                  &SwosVM::g_memByte[CareerOffsets::kCurrentMatchPlayers]);
+}
+
 void HotseatCareerManager::syncPlayersWithSelectedTeams(bool writeToSelected)
 {
     if (!isActive() || !swos.selTeamsPtr || swos.g_numSelectedTeams <= 0)
         return;
+
+    if (writeToSelected) {
+        unpackAllH2hPackedTeams();
+    }
 
     auto *selTeams = reinterpret_cast<TeamFile *>(SwosVM::offsetToPtr(swos.selTeamsPtr));
     if (!selTeams)
@@ -1414,6 +1536,8 @@ void HotseatCareerManager::onAfterPlayMatch()
     if (!isActive() || m_numPlayers <= 1 || swos.g_gameType != kGameTypeCareer)
         return;
 
+    unpackAllH2hPackedTeams();
+
     if (m_activePlayerIndex >= 0 && m_activePlayerIndex < m_numPlayers) {
         saveCurrentSwosContext(m_players[m_activePlayerIndex]);
         syncPlayersWithSelectedTeams(true);
@@ -1436,6 +1560,8 @@ void HotseatCareerManager::onWeeklyTickForAllPlayers()
     static bool s_inWeeklyTick = false;
     if (s_inWeeklyTick || !isActive() || m_numPlayers <= 1 || swos.g_gameType != kGameTypeCareer)
         return;
+
+    unpackAllH2hPackedTeams();
 
     struct Guard {
         bool& flag;
@@ -2058,6 +2184,293 @@ static void getBuyerAndSellerIndices(const HotseatCareerManager::TransferOffer& 
     }
 }
 
+namespace {
+
+struct CopiedTransferPlayer {
+    PlayerFile player{};
+    uint32_t wage = 0;
+};
+
+struct PendingOfferRemap {
+    bool removed = false;
+    int oldOrd = -1;
+    int newOrd = -1;
+};
+
+void collectUniqueValidOrdinals(int primary, int secondary, std::vector<int>& out)
+{
+    out.clear();
+    if (primary >= 0)
+        out.push_back(primary);
+    if (secondary >= 0 && secondary != primary)
+        out.push_back(secondary);
+}
+
+bool isOrdinalActiveInClub(const HotseatPlayerContext& ctx, int ord)
+{
+    if (ord < 0 || ord >= kMaxCareerSquadPlayers)
+        return false;
+    uint16_t count = ctx.careerNumPlayers;
+    if (count == 0)
+        return false;
+    uint16_t limit = std::min<uint16_t>(count, static_cast<uint16_t>(kCurrentMatchPlayersSize));
+    if (hasInitializedMatchPlayers(ctx.currentMatchPlayers, limit)) {
+        for (uint16_t i = 0; i < limit; ++i) {
+            if (ctx.currentMatchPlayers[i] == static_cast<uint8_t>(ord))
+                return true;
+        }
+        return false;
+    }
+    return ord < static_cast<int>(count);
+}
+
+bool appendPlayerToClub(HotseatPlayerContext& club, const CopiedTransferPlayer& incoming)
+{
+    uint16_t count = std::max<uint16_t>(club.careerNumPlayers, static_cast<uint16_t>(kMinCareerSquadPlayers));
+    if (count >= kMaxCareerSquadPlayers)
+        return false;
+
+    bool hasMatchPlayers = hasInitializedMatchPlayers(club.currentMatchPlayers, count);
+    size_t slot = count;
+    if (hasMatchPlayers) {
+        for (size_t cand = 0; cand < kMaxCareerSquadPlayers; ++cand) {
+            bool used = false;
+            for (uint16_t k = 0; k < count && k < kCurrentMatchPlayersSize; ++k) {
+                if (club.currentMatchPlayers[k] == cand) {
+                    used = true;
+                    break;
+                }
+            }
+            if (!used) {
+                slot = cand;
+                break;
+            }
+        }
+    }
+
+    size_t dstOffset = kTeamFileHeaderSize + slot * kPlayerFileSize;
+    if (dstOffset + kPlayerFileSize > kCareerTeamBufferSize)
+        return false;
+
+    std::memcpy(&club.careerTeam[dstOffset], &incoming.player, kPlayerFileSize);
+    auto *newPlayer = reinterpret_cast<PlayerFile *>(&club.careerTeam[dstOffset]);
+    newPlayer->positionAndFace = static_cast<byte>(newPlayer->positionAndFace & ~0x02u);
+
+    if (newPlayer->shirtNumber != 0) {
+        bool usedNumbers[33] = { false };
+        for (uint16_t k = 0; k < count; ++k) {
+            size_t idx = hasMatchPlayers ? club.currentMatchPlayers[k] : k;
+            if (kTeamFileHeaderSize + idx * kPlayerFileSize + kPlayerFileSize <= kCareerTeamBufferSize) {
+                uint8_t num = reinterpret_cast<const PlayerFile *>(&club.careerTeam[kTeamFileHeaderSize + idx * kPlayerFileSize])->shirtNumber;
+                if (num < 33)
+                    usedNumbers[num] = true;
+            }
+        }
+        if (newPlayer->shirtNumber < 33 && usedNumbers[newPlayer->shirtNumber]) {
+            for (uint8_t sn = 1; sn < 33; ++sn) {
+                if (!usedNumbers[sn]) {
+                    newPlayer->shirtNumber = sn;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (hasMatchPlayers && count < kCurrentMatchPlayersSize) {
+        club.currentMatchPlayers[count] = static_cast<uint8_t>(slot);
+    }
+    if (slot < kPlayerWagesCount) {
+        club.playerWages[slot] = incoming.wage;
+        club.playerTrialWeeks[slot] = 0;
+        club.dsegD8B8C[slot] = newPlayer->shirtNumber;
+    }
+    club.careerNumPlayers = count + 1;
+    return true;
+}
+
+PendingOfferRemap removeOrdinalFromClub(HotseatPlayerContext& club, int soldOrd, std::vector<int>& pendingRemovals)
+{
+    PendingOfferRemap result;
+    uint16_t count = club.careerNumPlayers;
+    if (count == 0 || soldOrd < 0 || soldOrd >= kMaxCareerSquadPlayers)
+        return result;
+
+    result.removed = true;
+    result.oldOrd = soldOrd;
+
+    size_t lastOrdinal = count - 1;
+    bool denseCompact = (static_cast<size_t>(soldOrd) != lastOrdinal) &&
+                        isOrdinalActiveInClub(club, static_cast<int>(lastOrdinal));
+
+    size_t soldOffset = kTeamFileHeaderSize + static_cast<size_t>(soldOrd) * kPlayerFileSize;
+    size_t clearOffset = kTeamFileHeaderSize + (denseCompact ? lastOrdinal : static_cast<size_t>(soldOrd)) * kPlayerFileSize;
+
+    if (denseCompact && soldOffset + kPlayerFileSize <= kCareerTeamBufferSize &&
+        clearOffset + kPlayerFileSize <= kCareerTeamBufferSize) {
+        std::memcpy(&club.careerTeam[soldOffset], &club.careerTeam[clearOffset], kPlayerFileSize);
+        if (soldOrd < kPlayerWagesCount && lastOrdinal < kPlayerWagesCount) {
+            club.playerWages[soldOrd] = club.playerWages[lastOrdinal];
+            club.playerTrialWeeks[soldOrd] = club.playerTrialWeeks[lastOrdinal];
+            club.dsegD8B8C[soldOrd] = club.dsegD8B8C[lastOrdinal];
+        }
+        result.newOrd = static_cast<int>(lastOrdinal);
+    }
+
+    if (clearOffset + kPlayerFileSize <= kCareerTeamBufferSize) {
+        std::memset(&club.careerTeam[clearOffset], 0, kPlayerFileSize);
+    }
+    size_t clearedOrd = denseCompact ? lastOrdinal : static_cast<size_t>(soldOrd);
+    if (clearedOrd < kPlayerWagesCount) {
+        club.playerWages[clearedOrd] = 0;
+        club.playerTrialWeeks[clearedOrd] = 0;
+        club.dsegD8B8C[clearedOrd] = 0;
+    }
+
+    // Update transfer-market listing ordinals
+    {
+        uint16_t listedWords[5] = {};
+        int kept = 0;
+        int numListed = std::min<int>(club.numPlayersOnTransferMarket, 5);
+        const auto *listedPtr = reinterpret_cast<const uint16_t *>(club.playersOnTransferMarket);
+        for (int k = 0; k < numListed; ++k) {
+            uint16_t ord = listedPtr[k];
+            if (ord == static_cast<uint16_t>(soldOrd))
+                continue;
+            if (denseCompact && ord == static_cast<uint16_t>(lastOrdinal))
+                ord = static_cast<uint16_t>(soldOrd);
+            listedWords[kept++] = ord;
+        }
+        std::memset(club.playersOnTransferMarket, 0, sizeof(club.playersOnTransferMarket));
+        std::memcpy(club.playersOnTransferMarket, listedWords, kept * sizeof(uint16_t));
+        club.numPlayersOnTransferMarket = static_cast<uint16_t>(kept);
+    }
+
+    if (hasInitializedMatchPlayers(club.currentMatchPlayers, count)) {
+        uint16_t limit = std::min<uint16_t>(count, static_cast<uint16_t>(kCurrentMatchPlayersSize));
+        int removePos = -1;
+        for (uint16_t k = 0; k < limit; ++k) {
+            if (club.currentMatchPlayers[k] == static_cast<uint8_t>(soldOrd)) {
+                removePos = static_cast<int>(k);
+            } else if (denseCompact && club.currentMatchPlayers[k] == static_cast<uint8_t>(lastOrdinal)) {
+                club.currentMatchPlayers[k] = static_cast<uint8_t>(soldOrd);
+            }
+        }
+        if (removePos >= 0) {
+            if (removePos < 16 && limit > 16) {
+                int repPos = 16;
+                for (uint16_t k = 16; k < limit; ++k) {
+                    if (denseCompact && club.currentMatchPlayers[k] == static_cast<uint8_t>(soldOrd)) {
+                        repPos = static_cast<int>(k);
+                        break;
+                    }
+                }
+                club.currentMatchPlayers[removePos] = club.currentMatchPlayers[repPos];
+                removePos = repPos;
+            }
+            for (int k = removePos; k + 1 < limit; ++k) {
+                club.currentMatchPlayers[k] = club.currentMatchPlayers[k + 1];
+            }
+            club.currentMatchPlayers[limit - 1] = 0;
+        }
+    }
+
+    if (denseCompact) {
+        for (int& pendingOrd : pendingRemovals) {
+            if (pendingOrd == static_cast<int>(lastOrdinal))
+                pendingOrd = soldOrd;
+        }
+    }
+
+    club.careerNumPlayers = count - 1;
+    return result;
+}
+
+void applyClubTransferChanges(HotseatPlayerContext& club,
+                              std::vector<int>& outOrdinals,
+                              const std::vector<CopiedTransferPlayer>& inPlayers,
+                              std::vector<PendingOfferRemap>& remapsOut)
+{
+    size_t outIdx = 0;
+    // Remove excess players down to 16 first so adding never temporarily exceeds 30
+    while (outIdx < outOrdinals.size() && club.careerNumPlayers > kMinCareerSquadPlayers) {
+        int ord = outOrdinals[outIdx++];
+        remapsOut.push_back(removeOrdinalFromClub(club, ord, outOrdinals));
+    }
+
+    for (const auto& incoming : inPlayers) {
+        appendPlayerToClub(club, incoming);
+    }
+
+    while (outIdx < outOrdinals.size() && club.careerNumPlayers > 0) {
+        int ord = outOrdinals[outIdx++];
+        remapsOut.push_back(removeOrdinalFromClub(club, ord, outOrdinals));
+    }
+
+    syncTrainingMatchSavedPlayers(club.trainingMatchSavedPlayers, club.dsegD8B8C, club.careerTeam,
+                                  club.careerNumPlayers, club.currentMatchPlayers);
+}
+
+void updatePendingOffersForClubChange(std::vector<HotseatCareerManager::TransferOffer>& offers,
+                                      int acceptedOfferId,
+                                      int changedPlayerIdx,
+                                      const std::vector<PendingOfferRemap>& remaps)
+{
+    auto updateField = [&](int& fieldOrd, bool& cancel) {
+        if (fieldOrd < 0)
+            return;
+        for (const auto& remap : remaps) {
+            if (!remap.removed)
+                continue;
+            if (fieldOrd == remap.oldOrd) {
+                cancel = true;
+                return;
+            }
+            if (remap.newOrd >= 0 && fieldOrd == remap.newOrd) {
+                fieldOrd = remap.oldOrd;
+            }
+        }
+    };
+
+    for (auto& other : offers) {
+        if (other.id == acceptedOfferId || !other.pending)
+            continue;
+        int ob = -1, os = -1;
+        getBuyerAndSellerIndices(other, ob, os);
+        bool cancel = false;
+        if (os == changedPlayerIdx) {
+            updateField(other.playerOrdinal, cancel);
+            updateField(other.extraWantedOrdinal, cancel);
+        }
+        if (!cancel && ob == changedPlayerIdx) {
+            updateField(other.exchangeOrdinal1, cancel);
+            updateField(other.exchangeOrdinal2, cancel);
+        }
+        if (cancel) {
+            other.pending = false;
+            other.accepted = false;
+            other.rejected = true;
+        }
+    }
+}
+
+void formatExchangeSummary(const HotseatCareerManager::TransferOffer& offer,
+                           const char *amtStr, char *out, size_t outSize)
+{
+    bool hasEx1 = offer.exchangeOrdinal1 >= 0 && offer.exchangeName1[0] != '\0';
+    bool hasEx2 = offer.exchangeOrdinal2 >= 0 && offer.exchangeName2[0] != '\0';
+    if (hasEx1 && hasEx2) {
+        snprintf(out, outSize, "%s + %s + %s", amtStr, offer.exchangeName1, offer.exchangeName2);
+    } else if (hasEx1) {
+        snprintf(out, outSize, "%s + %s", amtStr, offer.exchangeName1);
+    } else if (hasEx2) {
+        snprintf(out, outSize, "%s + %s", amtStr, offer.exchangeName2);
+    } else {
+        snprintf(out, outSize, "%s", amtStr);
+    }
+}
+
+} // namespace
+
 bool HotseatCareerManager::canAcceptTransferOffer(int offerId, std::string *reasonOut /* = nullptr */) const
 {
     const auto offerPtr = getTransferOfferById(offerId);
@@ -2081,16 +2494,45 @@ bool HotseatCareerManager::canAcceptTransferOffer(int offerId, std::string *reas
         if (reasonOut) *reasonOut = "BUYER LACKS SUFFICIENT FUNDS.";
         return false;
     }
-    if (buyer.careerNumPlayers >= kMaxCareerSquadPlayers) {
+
+    std::vector<int> wantedOrds, exchangeOrds;
+    collectUniqueValidOrdinals(offerPtr->playerOrdinal, offerPtr->extraWantedOrdinal, wantedOrds);
+    collectUniqueValidOrdinals(offerPtr->exchangeOrdinal1, offerPtr->exchangeOrdinal2, exchangeOrds);
+
+    if (wantedOrds.empty()) {
+        if (reasonOut) *reasonOut = "PLAYER NO LONGER IN SELLER SQUAD.";
+        return false;
+    }
+    for (int ord : wantedOrds) {
+        if (!isOrdinalActiveInClub(seller, ord)) {
+            if (reasonOut) *reasonOut = "PLAYER NO LONGER IN SELLER SQUAD.";
+            return false;
+        }
+    }
+    for (int ord : exchangeOrds) {
+        if (!isOrdinalActiveInClub(buyer, ord)) {
+            if (reasonOut) *reasonOut = "EXCHANGE PLAYER NO LONGER IN BUYER SQUAD.";
+            return false;
+        }
+    }
+
+    int buyerAfter = static_cast<int>(buyer.careerNumPlayers) + static_cast<int>(wantedOrds.size()) - static_cast<int>(exchangeOrds.size());
+    int sellerAfter = static_cast<int>(seller.careerNumPlayers) - static_cast<int>(wantedOrds.size()) + static_cast<int>(exchangeOrds.size());
+
+    if (buyerAfter > kMaxCareerSquadPlayers) {
         if (reasonOut) *reasonOut = "BUYER SQUAD IS FULL (MAX 30).";
         return false;
     }
-    if (seller.careerNumPlayers <= kMinCareerSquadPlayers) {
+    if (buyerAfter < kMinCareerSquadPlayers) {
+        if (reasonOut) *reasonOut = "BUYER MUST KEEP AT LEAST 16 PLAYERS.";
+        return false;
+    }
+    if (sellerAfter < kMinCareerSquadPlayers) {
         if (reasonOut) *reasonOut = "SELLER MUST KEEP AT LEAST 16 PLAYERS.";
         return false;
     }
-    if (offerPtr->playerOrdinal < 0 || offerPtr->playerOrdinal >= static_cast<int>(seller.careerNumPlayers)) {
-        if (reasonOut) *reasonOut = "PLAYER NO LONGER IN SELLER SQUAD.";
+    if (sellerAfter > kMaxCareerSquadPlayers) {
+        if (reasonOut) *reasonOut = "SELLER SQUAD WOULD EXCEED 30 PLAYERS.";
         return false;
     }
     return true;
@@ -2131,148 +2573,37 @@ bool HotseatCareerManager::resolveTransferOffer(int offerId, bool accepted)
     seller.newBalance += static_cast<int32_t>(offerPtr->offerAmount);
     seller.playerSales += static_cast<int32_t>(offerPtr->offerAmount);
 
-    uint16_t buyerCount = std::max<uint16_t>(buyer.careerNumPlayers, kMinCareerSquadPlayers);
-    uint16_t sellerCount = seller.careerNumPlayers;
+    std::vector<int> wantedOrds, exchangeOrds;
+    collectUniqueValidOrdinals(offerPtr->playerOrdinal, offerPtr->extraWantedOrdinal, wantedOrds);
+    collectUniqueValidOrdinals(offerPtr->exchangeOrdinal1, offerPtr->exchangeOrdinal2, exchangeOrds);
 
-    if (buyerCount < kMaxCareerSquadPlayers && sellerCount > kMinCareerSquadPlayers) {
-        bool buyerHasMatchPlayers = hasInitializedMatchPlayers(buyer.currentMatchPlayers, buyerCount);
-        size_t buyerSlot = buyerCount;
-        if (buyerHasMatchPlayers) {
-            for (size_t cand = 0; cand < kMaxCareerSquadPlayers; ++cand) {
-                bool used = false;
-                for (uint16_t k = 0; k < buyerCount && k < kCurrentMatchPlayersSize; ++k) {
-                    if (buyer.currentMatchPlayers[k] == cand) {
-                        used = true;
-                        break;
-                    }
-                }
-                if (!used) {
-                    buyerSlot = cand;
-                    break;
-                }
+    auto snapshotPlayers = [](const HotseatPlayerContext& src, const std::vector<int>& ords) {
+        std::vector<CopiedTransferPlayer> out;
+        out.reserve(ords.size());
+        for (int ord : ords) {
+            CopiedTransferPlayer c;
+            size_t ofs = kTeamFileHeaderSize + static_cast<size_t>(ord) * kPlayerFileSize;
+            if (ofs + kPlayerFileSize <= kCareerTeamBufferSize) {
+                std::memcpy(&c.player, &src.careerTeam[ofs], kPlayerFileSize);
             }
+            c.wage = (ord >= 0 && ord < kPlayerWagesCount) ? src.playerWages[ord] : 0;
+            out.push_back(c);
         }
+        return out;
+    };
 
-        size_t dstOffset = kTeamFileHeaderSize + buyerSlot * kPlayerFileSize;
-        size_t srcOffset = kTeamFileHeaderSize + static_cast<size_t>(offerPtr->playerOrdinal) * kPlayerFileSize;
-        if (dstOffset + kPlayerFileSize <= kCareerTeamBufferSize &&
-            srcOffset + kPlayerFileSize <= kCareerTeamBufferSize) {
-            std::memcpy(&buyer.careerTeam[dstOffset], &seller.careerTeam[srcOffset], kPlayerFileSize);
+    std::vector<CopiedTransferPlayer> wantedCopies = snapshotPlayers(seller, wantedOrds);
+    std::vector<CopiedTransferPlayer> exchangeCopies = snapshotPlayers(buyer, exchangeOrds);
 
-            // Deduplicate shirt number if buyer squad already initialized non-zero shirt numbers
-            auto *newPlayer = reinterpret_cast<PlayerFile *>(&buyer.careerTeam[dstOffset]);
-            if (newPlayer->shirtNumber != 0) {
-                bool usedNumbers[33] = { false };
-                for (uint16_t k = 0; k < buyerCount; ++k) {
-                    size_t idx = buyerHasMatchPlayers ? buyer.currentMatchPlayers[k] : k;
-                    if (kTeamFileHeaderSize + idx * kPlayerFileSize + kPlayerFileSize <= kCareerTeamBufferSize) {
-                        uint8_t num = reinterpret_cast<const PlayerFile *>(&buyer.careerTeam[kTeamFileHeaderSize + idx * kPlayerFileSize])->shirtNumber;
-                        if (num < 33)
-                            usedNumbers[num] = true;
-                    }
-                }
-                if (newPlayer->shirtNumber < 33 && usedNumbers[newPlayer->shirtNumber]) {
-                    for (uint8_t sn = 1; sn < 33; ++sn) {
-                        if (!usedNumbers[sn]) {
-                            newPlayer->shirtNumber = sn;
-                            break;
-                        }
-                    }
-                }
-            }
+    std::vector<PendingOfferRemap> sellerRemaps, buyerRemaps;
+    applyClubTransferChanges(seller, wantedOrds, exchangeCopies, sellerRemaps);
+    applyClubTransferChanges(buyer, exchangeOrds, wantedCopies, buyerRemaps);
 
-            if (buyerHasMatchPlayers && buyerCount < kCurrentMatchPlayersSize) {
-                buyer.currentMatchPlayers[buyerCount] = static_cast<uint8_t>(buyerSlot);
-            }
-            if (buyerSlot < kPlayerWagesCount) {
-                buyer.playerWages[buyerSlot] = (offerPtr->playerOrdinal < kPlayerWagesCount)
-                    ? seller.playerWages[offerPtr->playerOrdinal]
-                    : 0;
-                buyer.playerTrialWeeks[buyerSlot] = 0;
-            }
-            buyer.careerNumPlayers = buyerCount + 1;
-        }
+    updatePendingOffersForClubChange(m_transferOffers, offerId, sellerIdx, sellerRemaps);
+    updatePendingOffersForClubChange(m_transferOffers, offerId, buyerIdx, buyerRemaps);
 
-        // Remove player from seller and compact trailing reserve slot
-        size_t lastOrdinal = sellerCount - 1;
-        size_t lastOffset = kTeamFileHeaderSize + lastOrdinal * kPlayerFileSize;
-        size_t soldOffset = kTeamFileHeaderSize + static_cast<size_t>(offerPtr->playerOrdinal) * kPlayerFileSize;
-
-        if (static_cast<size_t>(offerPtr->playerOrdinal) != lastOrdinal) {
-            std::memcpy(&seller.careerTeam[soldOffset], &seller.careerTeam[lastOffset], kPlayerFileSize);
-            if (offerPtr->playerOrdinal < kPlayerWagesCount && lastOrdinal < kPlayerWagesCount) {
-                seller.playerWages[offerPtr->playerOrdinal] = seller.playerWages[lastOrdinal];
-                seller.playerTrialWeeks[offerPtr->playerOrdinal] = seller.playerTrialWeeks[lastOrdinal];
-            }
-        }
-        std::memset(&seller.careerTeam[lastOffset], 0, kPlayerFileSize);
-        if (lastOrdinal < kPlayerWagesCount) {
-            seller.playerWages[lastOrdinal] = 0;
-            seller.playerTrialWeeks[lastOrdinal] = 0;
-        }
-
-        // Update seller transfer-market listing ordinals when sold/compacted
-        {
-            uint16_t listedWords[5] = {};
-            int kept = 0;
-            int numListed = std::min<int>(seller.numPlayersOnTransferMarket, 5);
-            auto *listedPtr = reinterpret_cast<const uint16_t *>(seller.playersOnTransferMarket);
-            for (int k = 0; k < numListed; ++k) {
-                uint16_t ord = listedPtr[k];
-                if (ord == static_cast<uint16_t>(offerPtr->playerOrdinal))
-                    continue;
-                if (static_cast<size_t>(offerPtr->playerOrdinal) != lastOrdinal &&
-                    ord == static_cast<uint16_t>(lastOrdinal)) {
-                    ord = static_cast<uint16_t>(offerPtr->playerOrdinal);
-                }
-                listedWords[kept++] = ord;
-            }
-            std::memset(seller.playersOnTransferMarket, 0, sizeof(seller.playersOnTransferMarket));
-            std::memcpy(seller.playersOnTransferMarket, listedWords, kept * sizeof(uint16_t));
-            seller.numPlayersOnTransferMarket = static_cast<uint16_t>(kept);
-        }
-
-        if (hasInitializedMatchPlayers(seller.currentMatchPlayers, sellerCount)) {
-            uint16_t limit = std::min<uint16_t>(sellerCount, kCurrentMatchPlayersSize);
-            int removePos = -1;
-            for (uint16_t k = 0; k < limit; ++k) {
-                if (seller.currentMatchPlayers[k] == static_cast<uint8_t>(offerPtr->playerOrdinal)) {
-                    removePos = k;
-                } else if (seller.currentMatchPlayers[k] == static_cast<uint8_t>(lastOrdinal) &&
-                           static_cast<size_t>(offerPtr->playerOrdinal) != lastOrdinal) {
-                    seller.currentMatchPlayers[k] = static_cast<uint8_t>(offerPtr->playerOrdinal);
-                }
-            }
-            if (removePos >= 0) {
-                for (int k = removePos; k + 1 < limit; ++k) {
-                    seller.currentMatchPlayers[k] = seller.currentMatchPlayers[k + 1];
-                }
-                seller.currentMatchPlayers[limit - 1] = 0;
-            }
-        }
-
-        seller.careerNumPlayers = sellerCount - 1;
-
-        const int soldOrdinal = offerPtr->playerOrdinal;
-        for (auto& other : m_transferOffers) {
-            if (other.id == offerId || !other.pending)
-                continue;
-            int ob = -1, os = -1;
-            getBuyerAndSellerIndices(other, ob, os);
-            if (os != sellerIdx)
-                continue;
-            if (other.playerOrdinal == soldOrdinal) {
-                other.pending = false;
-                other.accepted = false;
-                other.rejected = true;
-            } else if (soldOrdinal != static_cast<int>(lastOrdinal) &&
-                       other.playerOrdinal == static_cast<int>(lastOrdinal)) {
-                other.playerOrdinal = soldOrdinal;
-            }
-        }
-    }
-
-    if (buyerIdx == m_activePlayerIndex || sellerIdx == m_activePlayerIndex) {
+    if (m_active && m_activePlayerIndex >= 0 && m_activePlayerIndex < m_numPlayers &&
+        (buyerIdx == m_activePlayerIndex || sellerIdx == m_activePlayerIndex)) {
         loadSwosContext(m_players[m_activePlayerIndex], false);
     }
     if (swos.selTeamsPtr && swos.g_numSelectedTeams > 0) {
@@ -2305,15 +2636,23 @@ bool HotseatCareerManager::processPendingOffersForActivePlayer()
     saveCurrentSwosContext(m_players[m_activePlayerIndex]);
 
     for (const auto& offer : pending) {
-        char line1[64], line2[64], line3[64], line4[64];
-        char amtStr[32];
+        char line1[64], line2[96], line3[96], line4[64];
+        char amtStr[32], termStr[96];
         formatCurrencyAmount(amtStr, sizeof(amtStr), offer.offerAmount);
+        formatExchangeSummary(offer, amtStr, termStr, sizeof(termStr));
+
+        char targetStr[80];
+        if (offer.extraWantedOrdinal >= 0 && offer.extraWantedName[0] != '\0') {
+            snprintf(targetStr, sizeof(targetStr), "%s + %s", offer.playerName, offer.extraWantedName);
+        } else {
+            snprintf(targetStr, sizeof(targetStr), "%s", offer.playerName);
+        }
 
         if (!offer.isCounterOffer) {
             snprintf(line1, sizeof(line1), "PLAYER %d (%s) BIDS",
                      offer.fromPlayerIndex + 1, m_players[offer.fromPlayerIndex].teamName.c_str());
-            snprintf(line2, sizeof(line2), "FOR: %s", offer.playerName);
-            snprintf(line3, sizeof(line3), "AMOUNT: %s", amtStr);
+            snprintf(line2, sizeof(line2), "FOR: %s", targetStr);
+            snprintf(line3, sizeof(line3), "OFFER: %s", termStr);
             snprintf(line4, sizeof(line4), "ACCEPT THIS OFFER?");
 
             std::vector<const char*> lines = { line1, line2, line3, line4 };
@@ -2329,7 +2668,7 @@ bool HotseatCareerManager::processPendingOffersForActivePlayer()
                     showContinueAbortPrompt("TRANSFER FAILED", "CONTINUE", nullptr, { reason.c_str() }, false);
                 }
             } else {
-                snprintf(line1, sizeof(line1), "BID: %s FOR %s", amtStr, offer.playerName);
+                snprintf(line1, sizeof(line1), "BID: %s FOR %s", termStr, targetStr);
                 snprintf(line2, sizeof(line2), "DO YOU WANT TO COUNTER");
                 snprintf(line3, sizeof(line3), "OR REJECT THE BID?");
                 std::vector<const char*> optLines = { line1, line2, line3 };
@@ -2355,19 +2694,21 @@ bool HotseatCareerManager::processPendingOffersForActivePlayer()
         } else {
             snprintf(line1, sizeof(line1), "PLAYER %d (%s) COUNTERED",
                      offer.fromPlayerIndex + 1, m_players[offer.fromPlayerIndex].teamName.c_str());
-            snprintf(line2, sizeof(line2), "FOR: %s", offer.playerName);
-            snprintf(line3, sizeof(line3), "NEW PRICE: %s", amtStr);
+            snprintf(line2, sizeof(line2), "FOR: %s", targetStr);
+            snprintf(line3, sizeof(line3), "NEW TERMS: %s", termStr);
             snprintf(line4, sizeof(line4), "ACCEPT COUNTER-OFFER?");
 
             std::vector<const char*> lines = { line1, line2, line3, line4 };
             bool accept = showContinueAbortPrompt("COUNTER-OFFER", "ACCEPT", "REJECT", lines, false);
             if (accept) {
+                std::string reason;
                 if (resolveTransferOffer(offer.id, true)) {
                     showContinueAbortPrompt("DEAL AGREED", "CONTINUE", nullptr,
                         { "COUNTER-OFFER ACCEPTED!", "FUNDS AND SQUAD UPDATED." }, false);
                 } else {
-                    showContinueAbortPrompt("INSUFFICIENT FUNDS", "CONTINUE", nullptr,
-                        { "CANNOT COMPLETE TRANSFER", "INSUFFICIENT FUNDS OR", "SQUAD LIMIT REACHED." }, false);
+                    canAcceptTransferOffer(offer.id, &reason);
+                    if (reason.empty()) reason = "CANNOT COMPLETE TRANSFER.";
+                    showContinueAbortPrompt("TRANSFER FAILED", "CONTINUE", nullptr, { reason.c_str() }, false);
                 }
             } else {
                 resolveTransferOffer(offer.id, false);
@@ -2592,6 +2933,53 @@ static bool readPlayerContext(std::ifstream& in, HotseatPlayerContext& p, int fi
             return false;
     }
 
+    syncTrainingMatchSavedPlayers(p.trainingMatchSavedPlayers, p.dsegD8B8C, p.careerTeam,
+                                  p.careerNumPlayers, p.currentMatchPlayers);
+    return true;
+}
+
+static bool writePlayerV6Extension(std::ofstream& out, const HotseatPlayerContext& p)
+{
+    bool ok = writeBinary(out, p.dsegD761A) &&
+              writeBinary(out, p.dsegD761C) &&
+              writeBinary(out, p.dsegD8B6A) &&
+              writeBinary(out, p.dsegD8BAC) &&
+              writeBinary(out, p.dsegD8BAE) &&
+              writeBinary(out, p.dsegD8BB0) &&
+              writeBinary(out, p.currentTactics) &&
+              writeBinary(out, p.dsegD8BF3);
+    if (!ok)
+        return false;
+
+    out.write(reinterpret_cast<const char *>(p.trainingMatchSavedPlayers), kCurrentMatchPlayersSize);
+    out.write(reinterpret_cast<const char *>(p.dsegD8B8C), kCurrentMatchPlayersSize);
+    out.write(reinterpret_cast<const char *>(p.lastMatchPlayers), kCurrentMatchPlayersSize);
+    out.write(reinterpret_cast<const char *>(p.dsegD8BD2), kCurrentMatchPlayersSize);
+    return out.good();
+}
+
+static bool readPlayerV6Extension(std::ifstream& in, HotseatPlayerContext& p)
+{
+    bool ok = readBinary(in, p.dsegD761A) &&
+              readBinary(in, p.dsegD761C) &&
+              readBinary(in, p.dsegD8B6A) &&
+              readBinary(in, p.dsegD8BAC) &&
+              readBinary(in, p.dsegD8BAE) &&
+              readBinary(in, p.dsegD8BB0) &&
+              readBinary(in, p.currentTactics) &&
+              readBinary(in, p.dsegD8BF3);
+    if (!ok)
+        return false;
+
+    in.read(reinterpret_cast<char *>(p.trainingMatchSavedPlayers), kCurrentMatchPlayersSize);
+    in.read(reinterpret_cast<char *>(p.dsegD8B8C), kCurrentMatchPlayersSize);
+    in.read(reinterpret_cast<char *>(p.lastMatchPlayers), kCurrentMatchPlayersSize);
+    in.read(reinterpret_cast<char *>(p.dsegD8BD2), kCurrentMatchPlayersSize);
+    if (!in.good())
+        return false;
+
+    syncTrainingMatchSavedPlayers(p.trainingMatchSavedPlayers, p.dsegD8B8C, p.careerTeam,
+                                  p.careerNumPlayers, p.currentMatchPlayers);
     return true;
 }
 
@@ -2625,10 +3013,44 @@ static bool readTransferOffer(std::ifstream& in, HotseatCareerManager::TransferO
     if (!ok)
         return false;
     offer.playerName[sizeof(offer.playerName) - 1] = '\0';
+    offer.extraWantedOrdinal = -1;
+    std::memset(offer.extraWantedName, 0, sizeof(offer.extraWantedName));
+    offer.exchangeOrdinal1 = -1;
+    std::memset(offer.exchangeName1, 0, sizeof(offer.exchangeName1));
+    offer.exchangeOrdinal2 = -1;
+    std::memset(offer.exchangeName2, 0, sizeof(offer.exchangeName2));
     offer.pending = (flags & 1) != 0;
     offer.accepted = (flags & 2) != 0;
     offer.rejected = (flags & 4) != 0;
     offer.isCounterOffer = (flags & 8) != 0;
+    return true;
+}
+
+static bool writeTransferOfferV6Extension(std::ofstream& out, const HotseatCareerManager::TransferOffer& offer)
+{
+    return writeBinary(out, offer.extraWantedOrdinal) &&
+           static_cast<bool>(out.write(offer.extraWantedName, sizeof(offer.extraWantedName))) &&
+           writeBinary(out, offer.exchangeOrdinal1) &&
+           static_cast<bool>(out.write(offer.exchangeName1, sizeof(offer.exchangeName1))) &&
+           writeBinary(out, offer.exchangeOrdinal2) &&
+           static_cast<bool>(out.write(offer.exchangeName2, sizeof(offer.exchangeName2))) &&
+           out.good();
+}
+
+static bool readTransferOfferV6Extension(std::ifstream& in, HotseatCareerManager::TransferOffer& offer)
+{
+    bool ok = readBinary(in, offer.extraWantedOrdinal) &&
+              static_cast<bool>(in.read(offer.extraWantedName, sizeof(offer.extraWantedName))) &&
+              readBinary(in, offer.exchangeOrdinal1) &&
+              static_cast<bool>(in.read(offer.exchangeName1, sizeof(offer.exchangeName1))) &&
+              readBinary(in, offer.exchangeOrdinal2) &&
+              static_cast<bool>(in.read(offer.exchangeName2, sizeof(offer.exchangeName2))) &&
+              in.good();
+    if (!ok)
+        return false;
+    offer.extraWantedName[sizeof(offer.extraWantedName) - 1] = '\0';
+    offer.exchangeName1[sizeof(offer.exchangeName1) - 1] = '\0';
+    offer.exchangeName2[sizeof(offer.exchangeName2) - 1] = '\0';
     return true;
 }
 
@@ -2646,7 +3068,7 @@ bool HotseatCareerManager::saveToFile(const std::string& path)
 
     HotseatFileHeader hdr;
     std::memset(&hdr, 0, sizeof(hdr));
-    std::memcpy(hdr.magic, kHotseatFileMagicV5, 15);
+    std::memcpy(hdr.magic, kHotseatFileMagicV6, 15);
     hdr.numPlayers = m_numPlayers;
     hdr.activePlayerIndex = m_activePlayerIndex;
     hdr.nextOfferId = m_nextOfferId;
@@ -2701,12 +3123,33 @@ bool HotseatCareerManager::saveToFile(const std::string& path)
             return false;
     }
 
+    for (int i = 0; i < m_numPlayers; ++i) {
+        if (!writePlayerV6Extension(out, m_players[i]))
+            return false;
+    }
+    for (int32_t i = 0; i < hdr.numOffers; ++i) {
+        if (!writeTransferOfferV6Extension(out, m_transferOffers[i]))
+            return false;
+    }
+
     out.flush();
     if (!out.good())
         return false;
 
     logInfo("HotseatCareerManager: Successfully saved hotseat state to %s", path.c_str());
     return true;
+}
+
+// Re-synchronize hotseat VM pointers and active player squads after ProcessCareerFile unpacks a .CAR buffer.
+void HotseatCareerManager::onAfterProcessCareerFile()
+{
+    if (!isActive() || swos.g_gameType != kGameTypeCareer)
+        return;
+
+    stageActiveCalendarSlotToVm();
+    syncPlayersWithSelectedTeams(true);
+    relinkCompetitionTeamPointers();
+    syncTransferMarketPoolsForCurrentPlayer();
 }
 
 bool HotseatCareerManager::loadFromFile(const std::string& path)
@@ -2724,7 +3167,9 @@ bool HotseatCareerManager::loadFromFile(const std::string& path)
     }
 
     int fileVersion = 0;
-    if (std::memcmp(hdr.magic, kHotseatFileMagicV5, 15) == 0) {
+    if (std::memcmp(hdr.magic, kHotseatFileMagicV6, 15) == 0) {
+        fileVersion = 6;
+    } else if (std::memcmp(hdr.magic, kHotseatFileMagicV5, 15) == 0) {
         fileVersion = 5;
     } else if (std::memcmp(hdr.magic, kHotseatFileMagicV4, 15) == 0) {
         fileVersion = 4;
@@ -2839,6 +3284,23 @@ bool HotseatCareerManager::loadFromFile(const std::string& path)
         }
     }
 
+    if (fileVersion >= 6) {
+        for (int i = 0; i < m_numPlayers; ++i) {
+            if (!readPlayerV6Extension(in, m_players[i])) {
+                reset();
+                logWarn("HotseatCareerManager: Corrupted V6 player extension %d in %s", i, path.c_str());
+                return false;
+            }
+        }
+        for (int32_t i = 0; i < hdr.numOffers; ++i) {
+            if (!readTransferOfferV6Extension(in, m_transferOffers[i])) {
+                reset();
+                logWarn("HotseatCareerManager: Corrupted V6 offer extension %d in %s", i, path.c_str());
+                return false;
+            }
+        }
+    }
+
     if (fileVersion <= 4 && m_numPlayers > 1) {
         // Repair blank-named reserve slots left by pre-V5 startCareerMode copies
         for (int i = 0; i < m_numPlayers; ++i) {
@@ -2856,6 +3318,12 @@ bool HotseatCareerManager::loadFromFile(const std::string& path)
                 }
             }
         }
+    }
+
+    m_emergencyLoanDepth = 0;
+    m_playMatchSetupStack.clear();
+    for (auto& pm : m_h2hPackMaps) {
+        pm = H2hPackedTeamMap{};
     }
 
     stageActiveCalendarSlotToVm();
@@ -3254,6 +3722,12 @@ void startCareerMode()
         std::memset(p.playerTrialWeeks, 0, sizeof(p.playerTrialWeeks));
         std::memset(p.currentMatchPlayers, 0, kCurrentMatchPlayersSize);
         std::memcpy(p.currentMatchPlayers, orderedTeams[i].playerNumbers, kNumPlayersInTeam);
+        std::memset(p.trainingMatchSavedPlayers, 0, kCurrentMatchPlayersSize);
+        std::memcpy(p.trainingMatchSavedPlayers, orderedTeams[i].playerNumbers, kNumPlayersInTeam);
+        std::memset(p.dsegD8B8C, 0, kCurrentMatchPlayersSize);
+        p.dsegD761A = 0xFFFF;
+        p.dsegD761C = 0;
+        p.dsegD8B6A = 0xFFFF;
         std::memset(&p.careerTeam[sizeof(TeamFile)], 0, kCareerTeamBufferSize - sizeof(TeamFile));
         writeTeamCoachName(p.careerTeam, p.managerName, p.managerSurname);
         std::memcpy(p.userTactics, p0.userTactics, 6 * kUserTacticsSize);
@@ -3290,6 +3764,8 @@ void startCareerMode()
                                              &SwosVM::g_memByte[CareerOffsets::kDsegD6C26],
                                              ord, static_cast<uint16_t>(p.teamId), false);
                 SwosVM::g_memByte[CareerOffsets::kCurrentMatchPlayers + ord] = static_cast<uint8_t>(ord);
+                SwosVM::g_memByte[CareerOffsets::kTrainingMatchSavedPlayers + ord] = static_cast<uint8_t>(ord);
+                SwosVM::g_memByte[CareerOffsets::kDsegD8B8C + ord] = pf->shirtNumber;
             }
             *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]) = 26;
         }
@@ -3382,6 +3858,11 @@ void Hotseat_OnNewSeasonInitialized()
     auto& mgr = HotseatCareerManager::get();
     mgr.restoreCalendarEntryFirstSlots();
     mgr.onNewSeasonInitialized();
+}
+
+void Hotseat_OnAfterProcessCareerFile()
+{
+    HotseatCareerManager::get().onAfterProcessCareerFile();
 }
 
 void Hotseat_OnAfterPlayMatch()
@@ -3747,6 +4228,7 @@ uint32_t HotseatCareerManager::ensurePoolPlayerScratch()
 void HotseatCareerManager::onAfterCreateReplacementPlayer()
 {
     save68kRegisters();
+    const bool isLoan = (m_emergencyLoanDepth > 0);
     int ord = static_cast<int>(static_cast<uint32_t>(A3) - static_cast<uint32_t>(CareerOffsets::kCareerTeam)) /
               static_cast<int>(kPlayerFileSize);
     if (ord < 0 || ord >= 30) {
@@ -3759,11 +4241,226 @@ void HotseatCareerManager::onAfterCreateReplacementPlayer()
             &SwosVM::g_memByte[CareerOffsets::kCareerTeam + kTeamFileHeaderSize + ord * kPlayerFileSize]);
         // Clear any uninitialized-D3 name from cseg_52A3E so it is cleanly generated & guaranteed non-empty
         pf->playerName[0] = '\0';
-        populateNamedTrialPlayerSlot(&SwosVM::g_memByte[CareerOffsets::kCareerTeam],
-                                     &SwosVM::g_memByte[CareerOffsets::kDsegD6C26],
-                                     ord, getVmSelTeamNumber(), true);
+        populateReplacementPlayerSlot(&SwosVM::g_memByte[CareerOffsets::kCareerTeam],
+                                      &SwosVM::g_memByte[CareerOffsets::kDsegD6C26],
+                                      ord, getVmSelTeamNumber(), true, isLoan);
     }
     restore68kRegisters();
+}
+
+void HotseatCareerManager::onBeforeEmergencyLoan()
+{
+    ++m_emergencyLoanDepth;
+}
+
+void HotseatCareerManager::onAfterEmergencyLoan()
+{
+    if (m_emergencyLoanDepth > 0)
+        --m_emergencyLoanDepth;
+}
+
+void HotseatCareerManager::onAfterEnsureCareerPlayers()
+{
+    if (swos.g_gameType != kGameTypeCareer || isVmNationalSelector())
+        return;
+
+    uint32_t teamOfs = A6.asDword();
+    if (teamOfs != CareerOffsets::kCareerTeam)
+        return;
+
+    uint16_t excludeFlags = D4.asWord();
+    uint16_t maxSubs = D5.asWord();
+    int reqBase = swos.g_trainingGame ? 22 : 11;
+    int reqTotal = reqBase + static_cast<int>(maxSubs);
+    int reqOutfieldMin = std::max(0, reqTotal - 2);
+    int reqGkMin = (maxSubs > 5) ? 2 : 1;
+
+    extern void cseg_3A110();
+    extern void cseg_3A2CE();
+    extern void cseg_52956();
+
+    save68kRegisters();
+    bool addedAny = false;
+    for (int iter = 0; iter < 30; ++iter) {
+        uint16_t numPlayers = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]);
+        if (numPlayers >= 30)
+            break;
+
+        A0 = CareerOffsets::kCareerTeam;
+        D0 = excludeFlags;
+        D1 = 0;
+        cseg_3A110();
+        int fitGk = static_cast<int>(static_cast<int16_t>(D7.asWord()));
+
+        A0 = CareerOffsets::kCareerTeam;
+        D0 = excludeFlags;
+        cseg_3A2CE();
+        int fitOut = static_cast<int>(static_cast<int16_t>(D7.asWord()));
+
+        bool needGk = (fitGk < reqGkMin) || (fitGk < 2 && fitOut >= reqOutfieldMin && (fitGk + fitOut) < reqTotal);
+        bool needOut = !needGk && (fitOut < reqOutfieldMin || (fitGk + fitOut) < reqTotal);
+        if (!needGk && !needOut)
+            break;
+
+        if (needGk) {
+            D0 = 0;
+        } else {
+            SWOS::Rand2();
+            D0 = 1 + (((D0.asWord() & 0xFFFFu) * 7u) >> 8);
+        }
+        cseg_52956();
+        addedAny = true;
+    }
+    if (addedAny) {
+        ensureVmTrainingMatchSavedPlayersSynced();
+    }
+    restore68kRegisters();
+}
+
+void HotseatCareerManager::unpackH2hPackedTeam(int playerIdx)
+{
+    if (playerIdx < 0 || playerIdx >= kMaxHotseatPlayers)
+        return;
+
+    auto& pm = m_h2hPackMaps[playerIdx];
+    if (!pm.active || pm.vmTeamOfs < 1000 || pm.vmTeamOfs + sizeof(TeamFile) > sizeof(SwosVM::g_memByte)) {
+        pm.active = false;
+        return;
+    }
+
+    auto& ctx = m_players[playerIdx];
+    const auto *packedTf = reinterpret_cast<const TeamFile *>(&SwosVM::g_memByte[pm.vmTeamOfs]);
+    auto *dstTf = reinterpret_cast<TeamFile *>(ctx.careerTeam);
+
+    if (*reinterpret_cast<const uint16_t *>(packedTf) == static_cast<uint16_t>(ctx.teamId)) {
+        dstTf->writesZeroHere = packedTf->writesZeroHere;
+        dstTf->andWith0xFE = packedTf->andWith0xFE;
+        dstTf->tactics = packedTf->tactics;
+        dstTf->teamControls = (ctx.coachOrPlayer == 1) ? kPlayerCoach : kCoach;
+
+        for (int slot = 0; slot < kNumPlayersInTeam; ++slot) {
+            uint8_t ord = pm.slotToOrd[slot];
+            if (ord < 30) {
+                std::memcpy(ctx.careerTeam + kTeamFileHeaderSize + static_cast<size_t>(ord) * kPlayerFileSize,
+                            &packedTf->players[slot],
+                            kPlayerFileSize);
+            }
+        }
+    }
+
+    pm = H2hPackedTeamMap{};
+}
+
+void HotseatCareerManager::unpackAllH2hPackedTeams()
+{
+    for (int i = 0; i < kMaxHotseatPlayers; ++i) {
+        if (m_h2hPackMaps[i].active) {
+            unpackH2hPackedTeam(i);
+        }
+    }
+}
+
+void HotseatCareerManager::onBeforeShowPlayMatchMenu()
+{
+    if (!isActive() || m_numPlayers <= 1 || swos.g_gameType != kGameTypeCareer || isVmNationalSelector())
+        return;
+
+    auto resolveTeamIdx = [&](uint32_t vmOfs) -> int {
+        if (vmOfs == CareerOffsets::kCareerTeam)
+            return m_activePlayerIndex;
+        if (vmOfs >= 1000 && vmOfs + sizeof(TeamFile) <= sizeof(SwosVM::g_memByte)) {
+            int16_t tid = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[vmOfs]);
+            return findHotseatPlayerByTeamId(tid);
+        }
+        return -1;
+    };
+
+    uint32_t origA1 = A1.asDword();
+    uint32_t origA2 = A2.asDword();
+    int idx1 = resolveTeamIdx(origA1);
+    int idx2 = resolveTeamIdx(origA2);
+
+    PlayMatchSetupState st;
+    st.savedActiveIdx = m_activePlayerIndex;
+    st.team1HotseatIdx = idx1;
+    st.origA1 = origA1;
+    st.origA2 = origA2;
+    st.didSwitch = false;
+
+    if (idx1 >= 0 && idx1 < m_numPlayers && idx1 != m_activePlayerIndex) {
+        unpackH2hPackedTeam(idx1);
+        saveCurrentSwosContext(m_players[m_activePlayerIndex]);
+
+        uint32_t newA2 = origA2;
+        if (idx2 >= 0 && idx2 < m_numPlayers && idx2 != idx1 && origA2 == CareerOffsets::kCareerTeam) {
+            newA2 = ensureHotseatTeamMirror(idx2);
+        }
+
+        m_activePlayerIndex = idx1;
+        loadSwosContext(m_players[idx1], false);
+        A1 = static_cast<uint32_t>(CareerOffsets::kCareerTeam);
+        A2 = newA2;
+        st.didSwitch = true;
+    } else if (idx1 == m_activePlayerIndex && idx1 >= 0 && origA1 != CareerOffsets::kCareerTeam) {
+        A1 = static_cast<uint32_t>(CareerOffsets::kCareerTeam);
+    }
+
+    m_playMatchSetupStack.push_back(st);
+}
+
+void HotseatCareerManager::onAfterShowPlayMatchMenu()
+{
+    if (m_playMatchSetupStack.empty())
+        return;
+
+    uint32_t savedRetD0 = D0;
+    save68kRegisters();
+
+    PlayMatchSetupState st = m_playMatchSetupStack.back();
+    m_playMatchSetupStack.pop_back();
+
+    if (st.team1HotseatIdx >= 0 && st.team1HotseatIdx < m_numPlayers && m_activePlayerIndex == st.team1HotseatIdx) {
+        saveCurrentSwosContext(m_players[st.team1HotseatIdx]);
+
+        if (st.origA1 != CareerOffsets::kCareerTeam &&
+            st.origA1 >= 1000 && st.origA1 + sizeof(TeamFile) <= sizeof(SwosVM::g_memByte)) {
+            const auto& ctx = m_players[st.team1HotseatIdx];
+            auto *packedTf = reinterpret_cast<TeamFile *>(&SwosVM::g_memByte[st.origA1]);
+            std::memcpy(packedTf, ctx.careerTeam, kTeamFileHeaderSize);
+            packedTf->teamControls = (ctx.coachOrPlayer == 1) ? kPlayerCoach : kCoach;
+
+            auto& pm = m_h2hPackMaps[st.team1HotseatIdx];
+            pm = H2hPackedTeamMap{};
+            pm.active = true;
+            pm.vmTeamOfs = st.origA1;
+            for (int slot = 0; slot < kNumPlayersInTeam; ++slot) {
+                uint8_t ord = ctx.currentMatchPlayers[slot];
+                if (ord >= 30)
+                    ord = static_cast<uint8_t>(slot);
+                std::memcpy(&packedTf->players[slot],
+                            ctx.careerTeam + kTeamFileHeaderSize + static_cast<size_t>(ord) * kPlayerFileSize,
+                            kPlayerFileSize);
+                packedTf->playerNumbers[slot] = static_cast<byte>(slot);
+                pm.slotToOrd[slot] = ord;
+            }
+        }
+    }
+
+    if (st.didSwitch && st.savedActiveIdx >= 0 && st.savedActiveIdx < m_numPlayers) {
+        m_activePlayerIndex = st.savedActiveIdx;
+        loadSwosContext(m_players[st.savedActiveIdx], false);
+    }
+
+    swos.playMatchTeam1Ptr.setRaw(st.origA1);
+    swos.playMatchTeam2Ptr.setRaw(st.origA2);
+
+    if (swos.g_exitGameFlag != 0) {
+        unpackAllH2hPackedTeams();
+        syncPlayersWithSelectedTeams(true);
+    }
+
+    restore68kRegisters();
+    D0 = savedRetD0;
 }
 
 void HotseatCareerManager::onBeforeAddDomesticMarket()
@@ -3832,7 +4529,11 @@ void HotseatCareerManager::syncTransferMarketPoolsForCurrentPlayer()
         auto& active = m_players[m_activePlayerIndex];
         active.careerNumPlayers = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]);
         std::memcpy(active.currentMatchPlayers, &SwosVM::g_memByte[CareerOffsets::kCurrentMatchPlayers], kCurrentMatchPlayersSize);
+        std::memcpy(active.trainingMatchSavedPlayers, &SwosVM::g_memByte[CareerOffsets::kTrainingMatchSavedPlayers], kCurrentMatchPlayersSize);
+        std::memcpy(active.dsegD8B8C, &SwosVM::g_memByte[CareerOffsets::kDsegD8B8C], kCurrentMatchPlayersSize);
         std::memcpy(active.careerTeam, &SwosVM::g_memByte[CareerOffsets::kCareerTeam], kCareerTeamBufferSize);
+        syncTrainingMatchSavedPlayers(active.trainingMatchSavedPlayers, active.dsegD8B8C, active.careerTeam,
+                                      active.careerNumPlayers, active.currentMatchPlayers);
         std::memcpy(active.playerTrialWeeks, &SwosVM::g_memByte[CareerOffsets::kDsegD6C26], sizeof(active.playerTrialWeeks));
         active.numPlayersOnTransferMarket =
             *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumPlayersOnTransferMarket]);
@@ -3929,6 +4630,9 @@ void HotseatCareerManager::resolveMarketTeamPtrForEntry(uint32_t entryOffset)
     uint16_t teamId = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[entryOffset]);
     int idx = findHotseatPlayerByTeamId(static_cast<int16_t>(teamId));
     if (idx >= 0) {
+        uint16_t ord = static_cast<uint16_t>(static_cast<uint32_t>(D1) & 0xFFFFu);
+        if (m_h2hPackMaps[idx].active && m_h2hPackMaps[idx].vmTeamOfs != 0 && ord < kNumPlayersInTeam)
+            return;
         A0 = ensureHotseatTeamMirror(idx);
     }
 }
@@ -3985,6 +4689,9 @@ void HotseatCareerManager::resolveGetPlayerTeamPtr()
 
     int idx = findHotseatPlayerByTeamId(static_cast<int16_t>(teamId));
     if (idx >= 0) {
+        uint16_t ord = static_cast<uint16_t>(static_cast<uint32_t>(D1) & 0xFFFFu);
+        if (m_h2hPackMaps[idx].active && m_h2hPackMaps[idx].vmTeamOfs != 0 && ord < kNumPlayersInTeam)
+            return;
         A0 = ensureHotseatTeamMirror(idx);
     }
 }
@@ -4044,6 +4751,31 @@ void Hotseat_LookupForeignPoolPlayer()
 void Hotseat_ResolveGetPlayerTeamPtr()
 {
     HotseatCareerManager::get().resolveGetPlayerTeamPtr();
+}
+
+void cseg_52956_OnEnter()
+{
+    HotseatCareerManager::get().onBeforeEmergencyLoan();
+}
+
+void Hotseat_OnAfterEmergencyLoan()
+{
+    HotseatCareerManager::get().onAfterEmergencyLoan();
+}
+
+void Hotseat_OnAfterEnsureCareerPlayers()
+{
+    HotseatCareerManager::get().onAfterEnsureCareerPlayers();
+}
+
+void ShowPlayMatchMenu_OnEnter()
+{
+    HotseatCareerManager::get().onBeforeShowPlayMatchMenu();
+}
+
+void Hotseat_OnAfterShowPlayMatchMenu()
+{
+    HotseatCareerManager::get().onAfterShowPlayMatchMenu();
 }
 
 } // namespace SWOS

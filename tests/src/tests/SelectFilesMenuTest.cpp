@@ -173,6 +173,8 @@ auto SelectFilesMenuTest::getCases() -> CaseList
             bind(&SelectFilesMenuTest::setupSaveCompetitionTest), bind(&SelectFilesMenuTest::testSaveCompetition) },
         { "test save competition by click", "select-files-save-competition-by-click",
             bind(&SelectFilesMenuTest::setupSaveCompetitionTest), bind(&SelectFilesMenuTest::testSaveCompetitionByClick) },
+        { "test overwrite via save button", "select-files-overwrite-save-button",
+            bind(&SelectFilesMenuTest::setupSaveCompetitionTest), bind(&SelectFilesMenuTest::testOverwriteViaSaveButton) },
     };
 }
 
@@ -971,4 +973,85 @@ void SelectFilesMenuTest::testSaveCompetitionByClick()
     assertFalse(memcmp(data + k2ndPartOffset, m_canadaDiyData.get() + k2ndPartOffset, size - k2ndPartOffset));
 
     assertEqual(getNumFakeFiles(), 2);
+}
+
+void SelectFilesMenuTest::testOverwriteViaSaveButton()
+{
+    resetFakeFiles();
+    enableFileMocking(true);
+
+    auto root = rootDir();
+    addFakeDirectory(root.c_str());
+
+    auto path = joinPaths(root.c_str(), "canada.diy");
+    MockFile canadaDiy(path.c_str(), m_canadaDiyData.get(), m_canadaDiySize);
+    addFakeFile(canadaDiy);
+
+    SWOS_UnitTest::setMenuCallback();
+
+    showMainMenu();
+    menuProc();
+
+    SWOS_UnitTest::setMenuCallback([] {
+        auto menu = getCurrentMenu();
+        auto entry = menu->selectedEntry;
+
+        assertItemIsStringCaseInsensitive(entry, "CANADA");
+        selectItem(entry);
+
+        SWOS_UnitTest::setMenuCallback([] {
+            auto exitEntry = findEntry("EXIT");
+            selectItem(exitEntry);
+
+            SWOS_UnitTest::setMenuCallback();
+            return false;
+        });
+
+        return false;
+    });
+
+    LoadOldCompetitionMenu();
+
+    // Selecting the green SAVE button must preserve extension & existing filename casing instead of writing "CANADA"
+    SWOS_UnitTest::setMenuCallback([] {
+        assertItemIsVisible(saveLabel);
+        selectItem(saveLabel);
+        return false;
+    });
+
+    auto entry = findEntry("SAVE CANADA ROGERS CUP");
+    selectItem(entry);
+
+    int size, numWrites;
+    auto data = getFakeFileData(path.c_str(), size, numWrites);
+
+    assertEqual(size, m_canadaDiySize);
+    assertEqual(numWrites, 1);
+    assertEqual(getNumFakeFiles(), 1);
+    assertFalse(memcmp(data, m_canadaDiyData.get(), 5170));
+
+    // Also verify SelectFileToSaveDialog with .CAR save button returns test.CAR (not "test")
+    setupFakeFiles({ "test.CAR" });
+    auto saveFilenameBuf = swos.g_pitchDatBuffer;
+    memcpy(saveFilenameBuf, "test.CAR\0SAVE CAREER", 21);
+    memset(swos.g_currentMenu, 0, sizeof(Menu));
+
+    SWOS_UnitTest::setMenuCallback([] {
+        assertItemIsVisible(saveLabel);
+        selectItem(saveLabel);
+        return false;
+    });
+
+    A0 = saveFilenameBuf;
+    D0 = *(dword *)"RAC.";
+    A1 = saveFilenameBuf + 9;
+    SWOS::SelectFileToSaveDialog();
+
+    assertEqual(D0, 0u);
+    assertTrue(SwosVM::flags.zero);
+    assertEqual(std::string(A0.asPtr()), std::string("test.CAR"));
+    assertEqual(std::string(saveFilenameBuf), std::string("test.CAR"));
+
+    SWOS_UnitTest::setMenuCallback(nullptr);
+    enableFileMocking(false);
 }

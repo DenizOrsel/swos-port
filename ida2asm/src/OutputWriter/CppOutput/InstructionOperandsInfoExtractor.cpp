@@ -149,42 +149,8 @@ void InstructionOperandsInfoExtractor::ensureSizeInformation()
                 if (regIndex >= 0) {
                     op.setSize(4);
                     break;
-                } else {
-                    auto id = idField;
-
-                    auto dotIndex = idField.indexOf('.');
-                    if (dotIndex >= 0)
-                        id = id.substr(0, dotIndex);
-
-                    auto type = m_references.getType(id);
-
-                    switch (type.first) {
-                    case References::kByte:
-                        op.setSize(1);
-                        return;
-                    case References::kWord:
-                        op.setSize(2);
-                        return;
-                    case References::kDword:
-                        op.setSize(4);
-                        return;
-                    case References::kTbyte:
-                        op.setSize(10);
-                        return;
-                    case References::kUser:
-                        {
-                            assert(dotIndex >= 0);
-
-                            auto fieldName = idField.substr(dotIndex + 1);
-                            op.setSize(getStructVariableSize(type.second, fieldName));
-                            return;
-                        }
-                    case References::kIgnore:
-                        return;
-                    default:
-                        assert(false);
-                        throw OutputException("undefined reference: " + id.string());
-                    }
+                } else if (resolveOperandSizeFromReferences(op, true)) {
+                    return;
                 }
             }
         }
@@ -194,6 +160,55 @@ void InstructionOperandsInfoExtractor::ensureSizeInformation()
         m_op1.setSize(1);
     else
         overrideOrPropagateStructVarSize();
+}
+
+// Resolve an operand's byte/word/dword/struct size from symbol declarations in m_references.
+bool InstructionOperandsInfoExtractor::resolveOperandSizeFromReferences(RawOperandInfo& op, bool throwOnUnknown)
+{
+    for (const auto& opVal : { op.base(), op.scale(), op.displacement() }) {
+        if (!opVal.hasString() || amigaRegisterToIndex(opVal.str) >= 0)
+            continue;
+
+        auto id = opVal.str;
+        auto dotIndex = id.indexOf('.');
+        if (dotIndex >= 0)
+            id = id.substr(0, dotIndex);
+
+        auto type = m_references.getType(id);
+
+        switch (type.first) {
+        case References::kByte:
+            op.setSize(1);
+            return true;
+        case References::kWord:
+            op.setSize(2);
+            return true;
+        case References::kDword:
+            op.setSize(4);
+            return true;
+        case References::kTbyte:
+            op.setSize(10);
+            return true;
+        case References::kUser:
+            {
+                assert(dotIndex >= 0);
+
+                auto fieldName = opVal.str.substr(dotIndex + 1);
+                op.setSize(getStructVariableSize(type.second, fieldName));
+                return true;
+            }
+        case References::kIgnore:
+            return true;
+        default:
+            if (throwOnUnknown) {
+                assert(false);
+                throw OutputException("undefined reference: " + id.string());
+            }
+            break;
+        }
+    }
+
+    return false;
 }
 
 size_t InstructionOperandsInfoExtractor::getStructVariableSize(const String& structName, const String& fieldName) const
@@ -220,7 +235,8 @@ void InstructionOperandsInfoExtractor::overrideOrPropagateStructVarSize()
         if (m_instruction->type() == Token::T_MOVZX || m_instruction->type() == Token::T_MOVSX) {
             if (!m_op2.size()) {
                 assert(m_op1.size() > 1);
-                m_op2.setSize(m_op1.size() / 2);
+                if (!resolveOperandSizeFromReferences(m_op2, false) || !m_op2.size() || m_op2.size() >= m_op1.size())
+                    m_op2.setSize(m_op1.size() / 2);
             }
         } else {
             if (m_op1.size() != m_op2.size() || !m_op1.size()) {

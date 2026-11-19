@@ -8,6 +8,7 @@
 #include "game.h"
 #include "options.h"
 #include "hotseatCareer.h"
+#include "file.h"
 #include "menuAlloc.h"
 #include "continueAbortMenu.h"
 #include "mockLog.h"
@@ -69,6 +70,10 @@ auto CareerTest::getCases() -> CaseList
         { "test hotseat confirm offer prompt and multi offer", "career-hotseat-confirm-offer-prompt", {}, bind(&CareerTest::testHotseatConfirmOfferPromptAndMultiOffer), 1, false },
         { "test hotseat departure replacement and trialist names", "career-hotseat-departure-trial-replacement", {}, bind(&CareerTest::testHotseatTransferDepartureAndTrialReplacement), 1, false },
         { "test hotseat market exclusion and explicit listing", "career-hotseat-market-exclusion", {}, bind(&CareerTest::testHotseatMarketExclusionAndExplicitListing), 1, false },
+        { "test hotseat exchange transfer human and cpu", "career-hotseat-exchange-transfers", {}, bind(&CareerTest::testHotseatExchangeTransferHumanAndCpu), 1, false },
+        { "test hotseat trial departure after opponent match", "career-hotseat-trial-departure-2p", {}, bind(&CareerTest::testHotseatTrialDepartureAfterOpponentMatch), 1, false },
+        { "test hotseat emergency loan for injured squad", "career-hotseat-emergency-loan", {}, bind(&CareerTest::testHotseatEmergencyLoanForInjuredSquad), 1, false },
+        { "test hotseat .CAR and .hot file save and load across euro cups", "career-hotseat-car-load", {}, bind(&CareerTest::testHotseatSaveAndLoadCareerFile), 1, false },
     };
 }
 
@@ -2554,4 +2559,757 @@ void CareerTest::testHotseatMarketExclusionAndExplicitListing()
 
     mgr.reset();
     SWOS_UnitTest::setMenuCallback();
+}
+
+void CareerTest::testHotseatExchangeTransferHumanAndCpu()
+{
+    constexpr int16_t kFenerbahce = 0x0926;
+    constexpr int16_t kGalatasaray = 0x0a26;
+
+    // 1. Human-to-Human MAKE OFFER menu using green '+' exchange button (Entry 10 -> Entry 12)
+    initTwoPlayerHotseatFromTeams(kFenerbahce, kGalatasaray);
+    auto& mgr = HotseatCareerManager::get();
+    mgr.switchToPlayer(0, true);
+    mgr.player(0).newBalance = 10'000'000;
+    mgr.loadSwosContext(mgr.player(0), true);
+
+    extern void cseg_54C1E();
+    bool clickedPlusExchange = false;
+    bool pickedExchangePlayer = false;
+    bool clickedConfirm = false;
+    bool sawBidPrompt = false;
+
+    SWOS_UnitTest::setMenuCallback([&] {
+        resetMockSdlMixer();
+        auto m = getCurrentMenu();
+        if (!m) {
+            SetExitMenuFlag();
+            return false;
+        }
+        if (m->numEntries > 0 && m->entries()[0].type == kEntryString && m->entries()[0].string()) {
+            const char *title = m->entries()[0].string();
+            if (strcmp(title, "BID TRANSMITTED") == 0) {
+                sawBidPrompt = true;
+                assertFalse(m->entries()[1].fg.multilineText.isNull());
+                const char *line1 = m->entries()[1].fg.multilineText.as<const char *>() + 1;
+                assertTrue(strchr(line1, static_cast<char>(156)) != nullptr);
+                assertTrue(strstr(line1, "\xc2\xa3") == nullptr);
+                selectEntry(2);
+                return false;
+            }
+            if (strstr(title, "SELECT PLAYER TO EXCHANGE") != nullptr && !pickedExchangePlayer) {
+                pickedExchangePlayer = true;
+                // Entry 7 corresponds to player slot 3 on buyer squad
+                selectEntry(7);
+                return false;
+            }
+        }
+        if (m->numEntries > 12 && m->entries()[12].type == kEntryString &&
+            m->entries()[12].string() && strstr(m->entries()[12].string(), "CONFIRM OFFER") != nullptr) {
+            if (!clickedPlusExchange) {
+                clickedPlusExchange = true;
+                selectEntry(10); // Green '+' exchange button
+                return false;
+            }
+            if (!clickedConfirm) {
+                clickedConfirm = true;
+                selectEntry(12); // Confirm offer
+                return false;
+            }
+        }
+        SetExitMenuFlag();
+        return false;
+    });
+
+    save68kRegisters();
+    D0 = kGalatasaray;
+    D1 = 5;
+    cseg_54C1E();
+    restore68kRegisters();
+    SWOS_UnitTest::setMenuCallback();
+
+    assertTrue(clickedPlusExchange);
+    assertTrue(pickedExchangePlayer);
+    assertTrue(clickedConfirm);
+    assertTrue(sawBidPrompt);
+
+    auto pending = mgr.getPendingOffersForPlayer(1);
+    assertEqual(static_cast<int>(pending.size()), 1);
+    assertEqual(pending[0].playerOrdinal, 5);
+    assertTrue(pending[0].exchangeOrdinal1 >= 0);
+    assertTrue(pending[0].exchangeName1[0] != '\0');
+    int exchOrd = pending[0].exchangeOrdinal1;
+
+    // 2. Even when seller only has 16 players, 1-for-1 exchange keeps net count at 16 and must be allowed!
+    mgr.player(1).careerNumPlayers = 16;
+    std::string reason;
+    assertTrue(mgr.canAcceptTransferOffer(pending[0].id, &reason));
+
+    char expectedWantedName[24] = {};
+    char expectedExchName[24] = {};
+    snprintf(expectedWantedName, sizeof(expectedWantedName), "%.22s",
+             getPlayerSlot(mgr.player(1).careerTeam, 5)->playerName);
+    snprintf(expectedExchName, sizeof(expectedExchName), "%.22s",
+             getPlayerSlot(mgr.player(0).careerTeam, exchOrd)->playerName);
+
+    int32_t p0CountBefore = mgr.player(0).careerNumPlayers;
+    int32_t p1BalanceBefore = mgr.player(1).newBalance;
+    int32_t p0BalanceBefore = mgr.player(0).newBalance;
+    uint32_t bidCash = pending[0].offerAmount;
+
+    assertTrue(mgr.resolveTransferOffer(pending[0].id, true));
+    assertEqual(static_cast<int>(mgr.player(1).careerNumPlayers), 16);
+    assertEqual(static_cast<int>(mgr.player(0).careerNumPlayers), p0CountBefore);
+    assertEqual(mgr.player(0).newBalance, p0BalanceBefore - static_cast<int32_t>(bidCash));
+    assertEqual(mgr.player(1).newBalance, p1BalanceBefore + static_cast<int32_t>(bidCash));
+
+    auto squadContainsName = [](const HotseatPlayerContext& club, const char *name) {
+        int limit = std::min<int>(club.careerNumPlayers, kCurrentMatchPlayersSize);
+        for (int s = 0; s < limit; ++s) {
+            uint8_t ord = club.currentMatchPlayers[s];
+            const auto *pf = getPlayerSlot(club.careerTeam, ord);
+            if (pf && strncmp(pf->playerName, name, 22) == 0)
+                return true;
+        }
+        return false;
+    };
+    assertTrue(squadContainsName(mgr.player(0), expectedWantedName));
+    assertTrue(squadContainsName(mgr.player(1), expectedExchName));
+
+    // Verify trainingMatchSavedPlayers and TeamFile::playerNumbers stay synced on both clubs
+    assertEqual(memcmp(reinterpret_cast<const TeamFile *>(mgr.player(0).careerTeam)->playerNumbers,
+                       mgr.player(0).currentMatchPlayers, 16), 0);
+    assertEqual(memcmp(reinterpret_cast<const TeamFile *>(mgr.player(1).careerTeam)->playerNumbers,
+                       mgr.player(1).currentMatchPlayers, 16), 0);
+
+    // 3. Verify 2-wanted + 2-exchange persistence across V6 save/load and resolution at 30 players
+    mgr.player(0).careerNumPlayers = 30;
+    mgr.player(1).careerNumPlayers = 20;
+    for (uint8_t k = 0; k < 30; ++k) {
+        mgr.player(0).currentMatchPlayers[k] = k;
+        mgr.player(0).trainingMatchSavedPlayers[k] = k;
+        auto *pf = const_cast<PlayerFile *>(getPlayerSlot(mgr.player(0).careerTeam, k));
+        snprintf(pf->playerName, sizeof(pf->playerName), "P0 SLOT %d", k);
+    }
+    for (uint8_t k = 0; k < 20; ++k) {
+        mgr.player(1).currentMatchPlayers[k] = k;
+        mgr.player(1).trainingMatchSavedPlayers[k] = k;
+        auto *pf = const_cast<PlayerFile *>(getPlayerSlot(mgr.player(1).careerTeam, k));
+        snprintf(pf->playerName, sizeof(pf->playerName), "P1 SLOT %d", k);
+    }
+    mgr.loadSwosContext(mgr.player(0), false);
+
+    HotseatCareerManager::TransferOffer multiExch;
+    multiExch.fromPlayerIndex = 0;
+    multiExch.toPlayerIndex = 1;
+    multiExch.playerOrdinal = 4;
+    multiExch.extraWantedOrdinal = 7;
+    multiExch.exchangeOrdinal1 = 27;
+    multiExch.exchangeOrdinal2 = 28;
+    multiExch.offerAmount = 400'000;
+    snprintf(multiExch.playerName, sizeof(multiExch.playerName), "P1 SLOT 4");
+    snprintf(multiExch.extraWantedName, sizeof(multiExch.extraWantedName), "P1 SLOT 7");
+    snprintf(multiExch.exchangeName1, sizeof(multiExch.exchangeName1), "P0 SLOT 27");
+    snprintf(multiExch.exchangeName2, sizeof(multiExch.exchangeName2), "P0 SLOT 28");
+    int multiId = mgr.queueTransferOffer(multiExch);
+
+    const std::string v6Path = "test_hotseat_v6_exchange.hot";
+    assertTrue(mgr.saveToFile(v6Path));
+    mgr.reset();
+    assertTrue(mgr.loadFromFile(v6Path));
+    std::remove(v6Path.c_str());
+
+    auto loadedPending = mgr.getPendingOffersForPlayer(1);
+    assertEqual(static_cast<int>(loadedPending.size()), 1);
+    assertEqual(loadedPending[0].id, multiId);
+    assertEqual(loadedPending[0].extraWantedOrdinal, 7);
+    assertEqual(loadedPending[0].exchangeOrdinal1, 27);
+    assertEqual(loadedPending[0].exchangeOrdinal2, 28);
+    assertTrue(mgr.resolveTransferOffer(multiId, true));
+    assertEqual(static_cast<int>(mgr.player(0).careerNumPlayers), 30);
+    assertEqual(static_cast<int>(mgr.player(1).careerNumPlayers), 20);
+    assertTrue(squadContainsName(mgr.player(0), "P1 SLOT 4"));
+    assertTrue(squadContainsName(mgr.player(0), "P1 SLOT 7"));
+    assertTrue(squadContainsName(mgr.player(1), "P0 SLOT 27"));
+    assertTrue(squadContainsName(mgr.player(1), "P0 SLOT 28"));
+
+    // 4. Regression for Crash #1 (1ee997cd / cseg_639F9): Player-to-CPU exchange after opponent plays
+    // First simulate opponent P1 playing a match via cseg_63F6F() (short 16-player squad overwriting global VM)
+    extern void cseg_63F6F();
+    extern void cseg_592D5();
+    mgr.player(1).careerNumPlayers = 16;
+    for (uint8_t k = 0; k < 16; ++k) {
+        mgr.player(1).currentMatchPlayers[k] = k;
+        mgr.player(1).trainingMatchSavedPlayers[k] = k;
+    }
+    mgr.switchToPlayer(1, true);
+    save68kRegisters();
+    cseg_63F6F();
+    restore68kRegisters();
+    mgr.saveCurrentSwosContext(mgr.player(1));
+
+    // Switch back to P0 and exchange P0's high-ordinal player (27) with a CPU club (team 0x0b26 = Gaziantepspor)
+    mgr.switchToPlayer(0, true);
+    assertEqual(static_cast<int>(SwosVM::g_memByte[CareerOffsets::kTrainingMatchSavedPlayers + 27]), 27);
+
+    // Find another domestic Turkish CPU club in g_selectedTeams (not P0 or P1)
+    uint16_t cpuTeamId = 0;
+    const auto *selTeams = reinterpret_cast<const TeamFile *>(SwosVM::offsetToPtr(swos.selTeamsPtr));
+    int selCount = std::min<int>(swos.g_numSelectedTeams, 68400 / static_cast<int>(sizeof(TeamFile)));
+    for (int t = 0; t < selCount; ++t) {
+        uint16_t tid = *reinterpret_cast<const uint16_t *>(&selTeams[t]);
+        if (tid != 0 && mgr.findHotseatPlayerByTeamId(static_cast<int16_t>(tid)) < 0) {
+            cpuTeamId = tid;
+            break;
+        }
+    }
+    assertTrue(cpuTeamId != 0);
+
+    swos.teamOffering = cpuTeamId;
+    swos.dseg_17A6CE = 2;
+    *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumExtraPlayersWanted]) = -1;
+    *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kDseg17A6D2]) = 27;
+    *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kDseg17A6D4]) = -1;
+    swos.offerAmount = 50;
+
+    save68kRegisters();
+    cseg_592D5(); // Must execute cseg_56379 + cseg_56129 -> cseg_52EA6 -> cseg_639F9 without trapping!
+    restore68kRegisters();
+
+    assertEqual(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]), static_cast<uint16_t>(30));
+
+    mgr.reset();
+    SWOS_UnitTest::setMenuCallback();
+}
+
+void CareerTest::testHotseatTrialDepartureAfterOpponentMatch()
+{
+    constexpr int16_t kFenerbahce = 0x0926;
+    constexpr int16_t kGalatasaray = 0x0a26;
+
+    // Regression for Crash #2 (2fd4c1ce): P1 removes ordinal 13 / plays match, then P0 loses trialist at ordinal 13
+    initTwoPlayerHotseatFromTeams(kFenerbahce, kGalatasaray);
+    auto& mgr = HotseatCareerManager::get();
+
+    extern void cseg_52EA6();
+    extern void cseg_52A3E();
+    extern void cseg_63F6F();
+
+    // Ensure P0 has > 16 players and slot 13 is a valid player
+    mgr.switchToPlayer(0, true);
+    uint16_t p0Count = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]);
+    assertTrue(p0Count > 16);
+    uint8_t p0Ord13 = SwosVM::g_memByte[CareerOffsets::kCurrentMatchPlayers + 13];
+    mgr.saveCurrentSwosContext(mgr.player(0));
+
+    // Switch to P1, play/save trainingMatchSavedPlayers, and depart player at ordinal 13 from P1!
+    mgr.switchToPlayer(1, true);
+    uint16_t p1CountBefore = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]);
+    assertTrue(p1CountBefore > 16);
+    uint8_t p1Ord13 = SwosVM::g_memByte[CareerOffsets::kCurrentMatchPlayers + 13];
+
+    save68kRegisters();
+    cseg_63F6F();
+    D1 = p1Ord13;
+    cseg_52EA6();
+    restore68kRegisters();
+    mgr.saveCurrentSwosContext(mgr.player(1));
+
+    // Verify P1 no longer has p1Ord13 in P1's trainingMatchSavedPlayers
+    uint16_t p1CountAfter = mgr.player(1).careerNumPlayers;
+    assertEqual(p1CountAfter, static_cast<uint16_t>(p1CountBefore - 1));
+    bool p1StillHas = false;
+    for (uint16_t k = 0; k < p1CountAfter; ++k) {
+        if (mgr.player(1).trainingMatchSavedPlayers[k] == p1Ord13)
+            p1StillHas = true;
+    }
+    assertFalse(p1StillHas);
+
+    // Switch back to P0: P0's canonical trainingMatchSavedPlayers MUST be restored and still contain p0Ord13!
+    mgr.switchToPlayer(0, true);
+    assertEqual(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]), p0Count);
+
+    auto *trialPf = const_cast<PlayerFile *>(getPlayerSlot(&SwosVM::g_memByte[CareerOffsets::kCareerTeam], p0Ord13));
+    trialPf->positionAndFace = static_cast<byte>(trialPf->positionAndFace | 0x02u);
+    SwosVM::g_memByte[CareerOffsets::kDsegD6C26 + p0Ord13] = 1;
+
+    // Trigger trialist departure on P0's ordinal 13 -> must NOT crash inside cseg_639F9!
+    save68kRegisters();
+    D1 = p0Ord13;
+    cseg_52EA6();
+    restore68kRegisters();
+
+    uint16_t p0CountAfter = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]);
+    assertEqual(p0CountAfter, static_cast<uint16_t>(p0Count - 1));
+
+    // Also drop down to 16 and verify in-place replacement creates a named trialist while keeping trainingMatchSavedPlayers valid
+    while (*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]) > 16) {
+        uint8_t tailOrd = SwosVM::g_memByte[CareerOffsets::kCurrentMatchPlayers + 16];
+        save68kRegisters();
+        D1 = tailOrd;
+        cseg_52EA6();
+        restore68kRegisters();
+    }
+    assertEqual(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]), static_cast<uint16_t>(16));
+
+    save68kRegisters();
+    D1 = 5;
+    cseg_52EA6();
+    restore68kRegisters();
+
+    uint8_t replacementOrd = SwosVM::g_memByte[CareerOffsets::kCurrentMatchPlayers + 5];
+    const auto *repPf = getPlayerSlot(&SwosVM::g_memByte[CareerOffsets::kCareerTeam], replacementOrd);
+    assertTrue(hasValidPlayerNameForTest(repPf));
+
+    // Switch back to P1 and then back to P0 to confirm neither player's state leaked
+    mgr.saveCurrentSwosContext(mgr.player(0));
+    mgr.switchToPlayer(1, true);
+    assertEqual(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]), p1CountAfter);
+    mgr.switchToPlayer(0, true);
+    assertEqual(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]), static_cast<uint16_t>(16));
+
+    mgr.reset();
+    SWOS_UnitTest::setMenuCallback();
+}
+
+void CareerTest::testHotseatEmergencyLoanForInjuredSquad()
+{
+    constexpr int16_t kFenerbahce = 0x0926;
+    constexpr int16_t kGalatasaray = 0x0a26;
+
+    initTwoPlayerHotseatFromTeams(kFenerbahce, kGalatasaray);
+    auto& mgr = HotseatCareerManager::get();
+
+    extern void ShowPlayMatchMenu();
+    extern void cseg_52EA6();
+    extern void GetPlayer();
+
+    // Helper: ensure a 16-player matchday layout with specified fit GKs + outfielders and an injured player at slot 4
+    auto configure16PlayerSquadWithInjury = [&](int playerIdx, bool injureSecondGkInsteadOfSlot4) {
+        mgr.switchToPlayer(playerIdx, true);
+        auto& ctx = mgr.player(playerIdx);
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]) = 16;
+        uint8_t *teamBuf = &SwosVM::g_memByte[CareerOffsets::kCareerTeam];
+        for (int i = 0; i < 16; ++i) {
+            uint8_t ord = static_cast<uint8_t>(i);
+            SwosVM::g_memByte[CareerOffsets::kCurrentMatchPlayers + i] = ord;
+            SwosVM::g_memByte[CareerOffsets::kTrainingMatchSavedPlayers + i] = ord;
+            SwosVM::g_memByte[CareerOffsets::kDsegD6C26 + ord] = 0;
+            auto *pf = const_cast<PlayerFile *>(getPlayerSlot(teamBuf, ord));
+            pf->cardsInjuries = 0;
+            pf->positionAndFace = static_cast<byte>(pf->positionAndFace & ~0x07u);
+            pf->someFlag = (i == 13 || i == 15) ? 0x9A : 0; // mirror RES labels from screenshot
+            // Slot 0 & 11 = GK (pos 0); others = outfielder (pos != 0)
+            uint8_t pos = (i == 0 || i == 11) ? 0u : static_cast<uint8_t>(((pf->positionAndFace >> 5) != 0) ? (pf->positionAndFace >> 5) : 3u);
+            pf->positionAndFace = static_cast<byte>((pos << 5) | (pf->positionAndFace & 0x18u));
+        }
+        int injOrd = injureSecondGkInsteadOfSlot4 ? 11 : 4;
+        const_cast<PlayerFile *>(getPlayerSlot(teamBuf, injOrd))->cardsInjuries = 0xC0; // '?' injured (unknown duration)
+        mgr.saveCurrentSwosContext(ctx);
+        mgr.syncPlayersWithSelectedTeams(true);
+    };
+
+    auto findVmTeamOfs = [&](int16_t teamId) -> uint32_t {
+        uint32_t base = static_cast<uint32_t>(swos.selTeamsPtr);
+        const auto *selTeams = reinterpret_cast<const TeamFile *>(SwosVM::offsetToPtr(swos.selTeamsPtr));
+        int count = std::min<int>(swos.g_numSelectedTeams, 68400 / static_cast<int>(sizeof(TeamFile)));
+        for (int t = 0; t < count; ++t) {
+            if (*reinterpret_cast<const int16_t *>(&selTeams[t]) == teamId)
+                return base + static_cast<uint32_t>(t * sizeof(TeamFile));
+        }
+        return 0;
+    };
+
+    // 1. Active team (P0 Fenerbahce): 16 players, 2 fit GKs, 13 fit outfielders, slot 4 injured ('?'), maxSubs=5
+    configure16PlayerSquadWithInjury(0, false);
+    mgr.switchToPlayer(0, true);
+    uint32_t p1VmOfs = findVmTeamOfs(kGalatasaray);
+    assertTrue(p1VmOfs != 0);
+
+    int step1 = 0;
+    bool playMatchEnabledAfterSwap1 = false;
+    SWOS_UnitTest::setMenuCallback([&] {
+        auto m = getCurrentMenu();
+        assertTrue(m && m->numEntries > 29);
+        ++step1;
+        if (step1 == 1) {
+            // An emergency LOAN player (17th row, entry 29) must have been added and made visible; PLAY MATCH still hidden while slot 4 is injured
+            assertEqual(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]), static_cast<uint16_t>(17));
+            assertEqual(static_cast<int>(m->entries()[9].invisible), 1);
+            assertEqual(static_cast<int>(m->entries()[29].invisible), 0);
+
+            uint8_t loanOrd = SwosVM::g_memByte[CareerOffsets::kCurrentMatchPlayers + 16];
+            const auto *loanPf = getPlayerSlot(&SwosVM::g_memByte[CareerOffsets::kCareerTeam], loanOrd);
+            assertTrue(hasValidPlayerNameForTest(loanPf));
+            assertTrue((loanPf->positionAndFace & 0x02u) != 0); // LOAN flag bit preserved (not overwritten as TRIAL)
+            assertEqual(static_cast<int>(loanPf->someFlag), 0);
+            assertEqual(static_cast<int>(SwosVM::g_memByte[CareerOffsets::kDsegD6C26 + loanOrd]), 0);
+            assertTrue((loanPf->positionAndFace >> 5) != 0);
+            assertTrue(loanPf->price >= 2);
+
+            swos.longFireFlag = 0;
+            selectEntry(17); // select slot 4 injured player
+            return false;
+        }
+        if (step1 == 2) {
+            swos.longFireFlag = 0;
+            selectEntry(29); // swap with 17th LOAN player
+            return false;
+        }
+        playMatchEnabledAfterSwap1 = (m->entries()[9].invisible == 0);
+        assertTrue(playMatchEnabledAfterSwap1);
+        swos.pl1Fire = 1;
+        swos.longFireFlag = 0;
+        selectEntry(9); // PLAY MATCH
+        return false;
+    });
+
+    swos.g_gameType = kGameTypeCareer;
+    swos.g_trainingGame = 0;
+    swos.g_exitGameFlag = 0;
+    D0 = 3;
+    D1 = 5;
+    D2 = 0;
+    D5 = 1;
+    D6 = 1;
+    A1 = static_cast<uint32_t>(CareerOffsets::kCareerTeam);
+    A2 = p1VmOfs;
+    ShowPlayMatchMenu();
+    assertTrue(playMatchEnabledAfterSwap1);
+    assertEqual(static_cast<int>(swos.g_exitGameFlag), 0);
+    mgr.saveCurrentSwosContext(mgr.player(0));
+
+    // 2. Non-active hotseat team (P0 Fenerbahce in g_selectedTeams) while P1 (Galatasaray) is loaded in VM careerTeam!
+    configure16PlayerSquadWithInjury(0, false);
+    mgr.switchToPlayer(1, true);
+    uint16_t p1InitialCount = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]);
+    uint32_t p0VmOfs = findVmTeamOfs(kFenerbahce);
+    assertTrue(p0VmOfs != 0);
+
+    int step2 = 0;
+    bool sawFenerbahceOwnLoan = false;
+    bool playMatchEnabledAfterSwap2 = false;
+    SWOS_UnitTest::setMenuCallback([&] {
+        auto m = getCurrentMenu();
+        assertTrue(m && m->numEntries > 29);
+        ++step2;
+        if (step2 == 1) {
+            assertEqual(*reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kSelTeamNumber]), kFenerbahce);
+            assertEqual(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]), static_cast<uint16_t>(17));
+            assertEqual(static_cast<int>(m->entries()[29].invisible), 0);
+            uint8_t loanOrd = SwosVM::g_memByte[CareerOffsets::kCurrentMatchPlayers + 16];
+            const auto *loanPf = getPlayerSlot(&SwosVM::g_memByte[CareerOffsets::kCareerTeam], loanOrd);
+            assertTrue(hasValidPlayerNameForTest(loanPf));
+            assertTrue((loanPf->positionAndFace & 0x02u) != 0);
+            assertEqual(static_cast<int>(loanPf->someFlag), 0);
+            sawFenerbahceOwnLoan = true;
+
+            swos.longFireFlag = 0;
+            selectEntry(17); // select slot 4 injured player
+            return false;
+        }
+        if (step2 == 2) {
+            swos.longFireFlag = 0;
+            selectEntry(29); // swap with 17th LOAN player
+            return false;
+        }
+        playMatchEnabledAfterSwap2 = (m->entries()[9].invisible == 0);
+        assertTrue(playMatchEnabledAfterSwap2);
+        swos.pl1Fire = 1;
+        swos.longFireFlag = 0;
+        selectEntry(9);
+        return false;
+    });
+
+    swos.g_gameType = kGameTypeCareer;
+    swos.g_trainingGame = 0;
+    swos.g_exitGameFlag = 0;
+    D0 = 3;
+    D1 = 5;
+    D2 = 0;
+    D5 = 1;
+    D6 = 1;
+    A1 = p0VmOfs; // non-active Fenerbahce!
+    A2 = static_cast<uint32_t>(CareerOffsets::kCareerTeam); // Galatasaray opponent!
+    ShowPlayMatchMenu();
+
+    assertTrue(sawFenerbahceOwnLoan);
+    assertTrue(playMatchEnabledAfterSwap2);
+    // VM active player must be restored to P1 (Galatasaray) with zero squad-count leakage!
+    assertEqual(mgr.activePlayerIndex(), 1);
+    assertEqual(*reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kSelTeamNumber]), kGalatasaray);
+    assertEqual(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]), p1InitialCount);
+
+    // P0's chosen 16 matchday players (with the LOAN player in slot 4) must be packed into p0VmOfs, and GetPlayer(kFenerbahce, 4) must see the fit LOAN player
+    assertEqual(mgr.player(0).careerNumPlayers, static_cast<uint16_t>(17));
+    uint8_t packedLoanOrd = mgr.player(0).currentMatchPlayers[4];
+    assertEqual(static_cast<int>(packedLoanOrd), 16);
+    assertEqual(static_cast<int>(mgr.player(0).currentMatchPlayers[16]), 4);
+
+    save68kRegisters();
+    D0 = kFenerbahce;
+    D1 = 4;
+    GetPlayer();
+    const auto *resolvedMatchdaySlot4 = reinterpret_cast<const PlayerFile *>(
+        &SwosVM::g_memByte[A0.asDword() + sizeof(TeamFileHeader)]);
+    assertEqual(static_cast<int>(resolvedMatchdaySlot4->cardsInjuries), 0);
+    assertTrue((resolvedMatchdaySlot4->positionAndFace & 0x02u) != 0);
+    restore68kRegisters();
+
+    // Simulate a post-match card written to packed slot 4 during H2H match and unpack via Hotseat_OnAfterPlayMatch()
+    auto *packedTeam = reinterpret_cast<TeamFile *>(&SwosVM::g_memByte[p0VmOfs]);
+    packedTeam->players[4].cardsInjuries = 0x01; // 1 yellow card
+    SWOS::Hotseat_OnAfterPlayMatch();
+    const auto *unpackedLoanPf = getPlayerSlot(mgr.player(0).careerTeam, packedLoanOrd);
+    const auto *unpackedInjPf = getPlayerSlot(mgr.player(0).careerTeam, 4);
+    assertEqual(static_cast<int>(unpackedLoanPf->cardsInjuries), 0x01);
+    assertEqual(static_cast<int>(unpackedInjPf->cardsInjuries), 0xC0);
+
+    // 3. Single fit GK (2nd GK injured) + 14 fit outfielders with maxSubs=5 -> emergency LOAN GK added;
+    //    meanwhile cseg_52EA6 transfer departure at 16 players STILL creates a named TRIAL player (0x9B).
+    configure16PlayerSquadWithInjury(0, true);
+    mgr.switchToPlayer(0, true);
+    int step3 = 0;
+    SWOS_UnitTest::setMenuCallback([&] {
+        auto m = getCurrentMenu();
+        assertTrue(m && m->numEntries > 29);
+        ++step3;
+        if (step3 == 1) {
+            assertEqual(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]), static_cast<uint16_t>(17));
+            uint8_t gkLoanOrd = SwosVM::g_memByte[CareerOffsets::kCurrentMatchPlayers + 16];
+            const auto *gkLoanPf = getPlayerSlot(&SwosVM::g_memByte[CareerOffsets::kCareerTeam], gkLoanOrd);
+            assertTrue(hasValidPlayerNameForTest(gkLoanPf));
+            assertEqual(static_cast<int>(gkLoanPf->positionAndFace >> 5), 0); // GK
+            assertTrue((gkLoanPf->positionAndFace & 0x02u) != 0);
+            assertEqual(static_cast<int>(gkLoanPf->someFlag), 0);
+        }
+        swos.longFireFlag = 0;
+        selectEntry(8); // EXIT
+        return false;
+    });
+
+    swos.g_gameType = kGameTypeCareer;
+    swos.g_trainingGame = 0;
+    swos.g_exitGameFlag = 0;
+    D0 = 3;
+    D1 = 5;
+    D2 = 0;
+    D5 = 1;
+    D6 = 1;
+    A1 = static_cast<uint32_t>(CareerOffsets::kCareerTeam);
+    A2 = p1VmOfs;
+    ShowPlayMatchMenu();
+
+    // Transfer departure at 16 players must STILL create a named TRIAL player (someFlag=0x9B, not LOAN=0x02)
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]) = 16;
+    uint8_t depOrd = SwosVM::g_memByte[CareerOffsets::kCurrentMatchPlayers + 5];
+    save68kRegisters();
+    D1 = depOrd;
+    cseg_52EA6();
+    restore68kRegisters();
+    const auto *depTrialPf = getPlayerSlot(&SwosVM::g_memByte[CareerOffsets::kCareerTeam], depOrd);
+    assertTrue(hasValidPlayerNameForTest(depTrialPf));
+    assertEqual(static_cast<int>(depTrialPf->someFlag), 0x9B);
+    assertEqual(static_cast<int>(depTrialPf->positionAndFace & 0x02u), 0);
+    assertTrue(static_cast<int8_t>(SwosVM::g_memByte[CareerOffsets::kDsegD6C26 + depOrd]) < 0);
+
+    mgr.reset();
+    SWOS_UnitTest::setMenuCallback();
+}
+
+namespace SWOS {
+    int WriteFile_REAL();
+}
+
+void CareerTest::testHotseatSaveAndLoadCareerFile()
+{
+    constexpr int16_t kFenerbahce = 0x0926;    // ECC (0)
+    constexpr int16_t kGalatasaray = 0x0a26;   // Cup Winners Cup (1)
+    constexpr int16_t kBesiktas = 0x0526;      // UEFA Cup (2)
+    constexpr int16_t kGaziantepspor = 0x0b26; // None (0xFFFF)
+    constexpr size_t kCompCountryNumberOfs = 131744; // db
+
+    extern void LoadCareerFile();
+    // WriteFile is unconditionally intercepted by mockFile.cpp unless WriteFile_REAL is called directly
+    auto saveRealCareerFiles = [&](const char *filename) {
+        uint32_t saveEndOfs = 131757u + 2u + static_cast<uint32_t>(swos.g_numSelectedTeams) * 684u;
+        std::memcpy(&SwosVM::g_memByte[CareerOffsets::kDseg17A3D0], filename, std::strlen(filename) + 1);
+        save68kRegisters();
+        A0 = static_cast<uint32_t>(CareerOffsets::kDseg17A3D0);
+        A1 = static_cast<uint32_t>(CareerOffsets::kTmdCareerCount); // careerFileBuffer
+        D1 = saveEndOfs - static_cast<uint32_t>(CareerOffsets::kTmdCareerCount);
+        int res = SWOS::WriteFile_REAL();
+        assertEqual(res, 0);
+        restore68kRegisters();
+    };
+
+    const char *kSaveName = "THSLOAD.CAR";
+    const std::string carPath = pathInRootDir("THSLOAD.CAR");
+    const std::string hotPath = pathInRootDir("THSLOAD.hot");
+    const std::string noExtPath = pathInRootDir("THSLOAD");
+    auto cleanupFiles = [&]() {
+        std::remove(carPath.c_str());
+        std::remove(hotPath.c_str());
+        std::remove(noExtPath.c_str());
+    };
+    cleanupFiles();
+
+    struct Scenario {
+        int16_t p0Team;
+        int16_t p1Team;
+        int activeIdx;
+        uint16_t expectedEuroVal;
+    };
+    const Scenario scenarios[] = {
+        { kFenerbahce, kGalatasaray, 1, 1 },      // Cup Winners Cup
+        { kGalatasaray, kBesiktas, 1, 2 },        // UEFA Cup
+        { kFenerbahce, kGaziantepspor, 1, 0xFFFF }, // Not in Europe
+        { kFenerbahce, kGalatasaray, 0, 0 },      // Champions Cup
+    };
+
+    for (const auto& sc : scenarios) {
+        SWOS_UnitTest::setMenuCallback([&] {
+            SetExitMenuFlag();
+            return true;
+        });
+
+        initTwoPlayerHotseatFromTeams(sc.p0Team, sc.p1Team);
+        auto& mgr = HotseatCareerManager::get();
+
+        // Turkey must have compCountryNumber = 38 (non-zero byte followed immediately by dseg_E092F word)
+        assertEqual(static_cast<int>(SwosVM::g_memByte[kCompCountryNumberOfs]), 38);
+
+        mgr.switchToPlayer(sc.activeIdx, true);
+        int16_t expectedActiveTeam = sc.activeIdx == 0 ? sc.p0Team : sc.p1Team;
+        int otherIdx = sc.activeIdx == 0 ? 1 : 0;
+        int16_t expectedOtherTeam = otherIdx == 0 ? sc.p0Team : sc.p1Team;
+        assertEqual(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegE092F]), sc.expectedEuroVal);
+
+        saveRealCareerFiles(kSaveName);
+
+        assertTrue(fileExists(carPath.c_str()));
+        assertTrue(fileExists(hotPath.c_str()));
+
+        // Cold-boot state wipe before LoadCareerFile() -> ProcessCareerFile() -> StartContest()
+        mgr.reset();
+        assertFalse(mgr.isActive());
+        swos.selTeamsPtr = 0;
+        swos.g_numSelectedTeams = 0;
+        swos.g_gameType = 0;
+        SwosVM::g_memByte[kCompCountryNumberOfs] = 0;
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegE092F]) = 0;
+        *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kSelTeamNumber]) = 0;
+        std::memset(&SwosVM::g_memByte[CareerOffsets::kDsegD8CAA], 0, 24);
+        std::memset(&SwosVM::g_memByte[CareerOffsets::kArrayOfPointers], 0, 20);
+        std::memset(&SwosVM::g_memByte[CareerOffsets::kDsegDA0E2], 0, kEuroCupBufferSize);
+
+        std::memcpy(&SwosVM::g_memByte[CareerOffsets::kDseg17A3D0], kSaveName, std::strlen(kSaveName) + 1);
+        save68kRegisters();
+        A0 = static_cast<uint32_t>(CareerOffsets::kDseg17A3D0);
+        LoadCareerFile();
+        bool loadOk = SwosVM::flags.zero && D0.asWord() == 0;
+        restore68kRegisters();
+
+        assertTrue(loadOk);
+        assertEqual(static_cast<int>(SwosVM::g_memByte[kCompCountryNumberOfs]), 38);
+        assertEqual(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegE092F]), sc.expectedEuroVal);
+        assertEqual(static_cast<int>(swos.g_gameType), static_cast<int>(kGameTypeCareer));
+        assertTrue(swos.selTeamsPtr != 0);
+        assertTrue(swos.g_numSelectedTeams > 0);
+        assertTrue(*reinterpret_cast<const uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8CAA]) != 0);
+        if (sc.expectedEuroVal != 0xFFFF) {
+            assertTrue(*reinterpret_cast<const uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8CB6]) != 0);
+        }
+
+        assertTrue(mgr.isActive());
+        assertEqual(mgr.numPlayers(), 2);
+        assertEqual(mgr.activePlayerIndex(), sc.activeIdx);
+        assertEqual(*reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kSelTeamNumber]), expectedActiveTeam);
+
+        // Render StartContest -> ContestMenu for loaded active player, then switch turn and render other player
+        int contestFrames = 0;
+        SWOS_UnitTest::setMenuCallback([&] {
+            ++contestFrames;
+            if (contestFrames >= 2) {
+                SetExitMenuFlag();
+                return true;
+            }
+            return false;
+        });
+        swos.g_exitMenu = 0;
+        StartContest();
+        assertTrue(contestFrames >= 2);
+
+        mgr.switchToPlayer(otherIdx, true);
+        assertEqual(*reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kSelTeamNumber]), expectedOtherTeam);
+        contestFrames = 0;
+        swos.g_exitMenu = 0;
+        A6 = 482233;
+        SWOS::ShowMenu();
+        assertTrue(contestFrames >= 2);
+
+        // Overwrite existing THSLOAD.CAR + THSLOAD.hot via SelectFileToSaveDialog clicking SAVE (saveLabel)
+        int savePlayerIdx = mgr.activePlayerIndex();
+        int16_t saveTeamId = savePlayerIdx == 0 ? sc.p0Team : sc.p1Team;
+        constexpr int32_t kUpdatedBalance = 9'876'543;
+        *reinterpret_cast<int32_t *>(&SwosVM::g_memByte[CareerOffsets::kNewBalance]) = kUpdatedBalance;
+        mgr.player(savePlayerIdx).newBalance = kUpdatedBalance;
+        constexpr size_t kCompetitionFilenameOfs = 316642;
+        std::memcpy(&SwosVM::g_memByte[kCompetitionFilenameOfs], kSaveName, std::strlen(kSaveName) + 1);
+
+        SWOS_UnitTest::setMenuCallback([&] {
+            auto m = getCurrentMenu();
+            if (m) {
+                for (int i = 0; i < m->numEntries; ++i) {
+                    const auto& e = m->entries()[i];
+                    if (e.invisible == 0 && e.type == kEntryString && e.string() &&
+                        std::strcmp(e.string(), "SAVE") == 0) {
+                        selectEntry(i);
+                        return false;
+                    }
+                }
+            }
+            SetExitMenuFlag();
+            return false;
+        });
+
+        save68kRegisters();
+        A0 = static_cast<uint32_t>(kCompetitionFilenameOfs);
+        D0 = ('.' << 24) | ('C' << 16) | ('A' << 8) | 'R';
+        A1 = static_cast<uint32_t>(CareerOffsets::kDseg17A3D0);
+        std::memcpy(&SwosVM::g_memByte[CareerOffsets::kDseg17A3D0], "SAVE CAREER", 12);
+        SWOS::SelectFileToSaveDialog();
+        std::string chosenSaveName = A0.asPtr();
+        bool dialogOk = SwosVM::flags.zero && D0.asWord() == 0;
+        restore68kRegisters();
+        SWOS_UnitTest::setMenuCallback();
+
+        assertTrue(dialogOk);
+        assertEqual(chosenSaveName, std::string(kSaveName));
+        saveRealCareerFiles(chosenSaveName.c_str());
+        assertFalse(fileExists(noExtPath.c_str()));
+
+        // Reload overwritten save after wiping VM and confirm active player + updated balance persisted
+        mgr.reset();
+        swos.selTeamsPtr = 0;
+        swos.g_numSelectedTeams = 0;
+        swos.g_gameType = 0;
+        *reinterpret_cast<int32_t *>(&SwosVM::g_memByte[CareerOffsets::kNewBalance]) = 0;
+        std::memcpy(&SwosVM::g_memByte[CareerOffsets::kDseg17A3D0], kSaveName, std::strlen(kSaveName) + 1);
+        save68kRegisters();
+        A0 = static_cast<uint32_t>(CareerOffsets::kDseg17A3D0);
+        LoadCareerFile();
+        loadOk = SwosVM::flags.zero && D0.asWord() == 0;
+        restore68kRegisters();
+
+        assertTrue(loadOk);
+        assertEqual(mgr.activePlayerIndex(), savePlayerIdx);
+        assertEqual(*reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kSelTeamNumber]), saveTeamId);
+        assertEqual(*reinterpret_cast<const int32_t *>(&SwosVM::g_memByte[CareerOffsets::kNewBalance]), kUpdatedBalance);
+        assertEqual(mgr.player(savePlayerIdx).newBalance, kUpdatedBalance);
+
+        mgr.reset();
+        SWOS_UnitTest::setMenuCallback();
+        cleanupFiles();
+    }
 }

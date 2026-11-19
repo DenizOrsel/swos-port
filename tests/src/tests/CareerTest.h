@@ -41,4 +41,8 @@ private:
     void testHotseatConfirmOfferPromptAndMultiOffer();
     void testHotseatTransferDepartureAndTrialReplacement();
     void testHotseatMarketExclusionAndExplicitListing();
+    void testHotseatExchangeTransferHumanAndCpu();
+    void testHotseatTrialDepartureAfterOpponentMatch();
+    void testHotseatEmergencyLoanForInjuredSquad();
+    void testHotseatSaveAndLoadCareerFile();
 };
