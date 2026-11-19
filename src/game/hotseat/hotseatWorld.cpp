@@ -62,6 +62,11 @@ void HotseatCareerManager::reset()
     m_prevForeignMarketCount = 0;
     m_emergencyLoanDepth = 0;
     m_playMatchSetupStack.clear();
+    m_hasActiveWorld = false;
+    m_activeWorldKey = {};
+    m_countryWorlds.clear();
+    m_leagueWorlds.clear();
+    m_clubTeamCache.clear();
 }
 
 void HotseatCareerManager::initializeHotseat(const std::vector<int16_t>& teamIds)
@@ -381,9 +386,16 @@ void HotseatCareerManager::syncPlayersWithSelectedTeams(bool writeToSelected)
                 reinterpret_cast<TeamFile *>(m_players[i].careerTeam)->teamControls = desiredControls;
                 std::memcpy(&selTeams[t], m_players[i].careerTeam, sizeof(TeamFile));
             } else {
+                if (m_hasActiveWorld && worldKeyForPlayer(m_players[i]) != m_activeWorldKey) {
+                    selTeams[t].teamControls = desiredControls;
+                    break;
+                }
                 if (i != m_activePlayerIndex) {
                     std::memcpy(m_players[i].careerTeam, &selTeams[t], sizeof(TeamFile));
-                    m_players[i].careerTeamLeague = selTeams[t].league;
+                    m_players[i].dsegD6CDC = selTeams[t].league;
+                    if (m_leagueWorlds.size() <= 1) {
+                        m_players[i].careerTeamLeague = selTeams[t].league;
+                    }
                     reinterpret_cast<TeamFile *>(m_players[i].careerTeam)->teamControls = desiredControls;
                 } else {
                     selTeams[t].teamControls = desiredControls;
@@ -438,32 +450,370 @@ void HotseatCareerManager::resetNonHotseatTeamControlsInTmdFile()
     }
 }
 
-static bool computeTeamCacheDelta(uint16_t teamWord, uint16_t activeTeamWord, int32_t selTeamsPtrVal, int32_t& outDelta)
+LeagueWorldKey HotseatCareerManager::worldKeyForPlayer(const HotseatPlayerContext& ctx)
 {
-    if (teamWord == activeTeamWord) {
-        outDelta = static_cast<int32_t>(CareerOffsets::kCareerTeam) - selTeamsPtrVal;
+    LeagueWorldKey key;
+    key.countryFileNo = (ctx.isNationalSelector != 0)
+        ? uint8_t{0xFF}
+        : static_cast<uint8_t>(static_cast<uint16_t>(ctx.teamId) & 0xFFu);
+    key.divisionId = static_cast<uint8_t>(ctx.dsegD6CDC);
+    return key;
+}
+
+void HotseatCareerManager::cacheTeamFile(const TeamFile& tf)
+{
+    uint16_t tid = *reinterpret_cast<const uint16_t *>(&tf);
+    if (tid == 0 || tid == 0xFFFF)
+        return;
+    TeamFile copy = tf;
+    if (copy.teamControls == kCoach || copy.teamControls == kPlayerCoach) {
+        copy.teamControls = kComputerTeam;
+    }
+    m_clubTeamCache[tid] = copy;
+}
+
+void HotseatCareerManager::cacheTeamsFromSelectedTeams()
+{
+    if (!swos.selTeamsPtr || swos.g_numSelectedTeams <= 0)
+        return;
+    const auto *selTeams = reinterpret_cast<const TeamFile *>(SwosVM::offsetToPtr(swos.selTeamsPtr));
+    if (!selTeams)
+        return;
+    int count = std::min<int>(swos.g_numSelectedTeams, kMaxSelectedTeamsCount);
+    for (int t = 0; t < count; ++t) {
+        cacheTeamFile(selTeams[t]);
+    }
+}
+
+bool HotseatCareerManager::lookupCachedTeamFile(uint16_t teamId, TeamFile& outTf) const
+{
+    if (teamId == 0 || teamId == 0xFFFF)
+        return false;
+
+    int pIdx = findHotseatPlayerByTeamId(static_cast<int16_t>(teamId));
+    if (pIdx >= 0 && pIdx < m_numPlayers) {
+        std::memcpy(&outTf, m_players[pIdx].careerTeam, sizeof(TeamFile));
         return true;
     }
 
-    if (!selTeamsPtrVal || swos.g_numSelectedTeams <= 0)
-        return false;
+    if (swos.selTeamsPtr && swos.g_numSelectedTeams > 0) {
+        const auto *selTeams = reinterpret_cast<const TeamFile *>(SwosVM::offsetToPtr(swos.selTeamsPtr));
+        if (selTeams) {
+            int count = std::min<int>(swos.g_numSelectedTeams, kMaxSelectedTeamsCount);
+            for (int t = 0; t < count; ++t) {
+                if (*reinterpret_cast<const uint16_t *>(&selTeams[t]) == teamId) {
+                    outTf = selTeams[t];
+                    return true;
+                }
+            }
+        }
+    }
 
-    const auto *selTeams = reinterpret_cast<const TeamFile *>(SwosVM::offsetToPtr(selTeamsPtrVal));
-    if (!selTeams)
-        return false;
-
-    int count = std::min<int>(swos.g_numSelectedTeams, 68400 / sizeof(TeamFile));
-    for (int t = 0; t < count; ++t) {
-        uint16_t slotTeamId = *reinterpret_cast<const uint16_t *>(&selTeams[t]);
-        if (slotTeamId == teamWord) {
-            outDelta = static_cast<int32_t>(t * sizeof(TeamFile));
+    int maxTmd = (static_cast<int>(CareerOffsets::kDiyFileBufferCopy) -
+                  static_cast<int>(CareerOffsets::kTmdFileBuffer)) /
+                 static_cast<int>(sizeof(TeamFile));
+    int tmdCount = std::clamp<int>(
+        *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kTmdCareerCount]), 0, maxTmd);
+    const auto *tmdTeams = reinterpret_cast<const TeamFile *>(&SwosVM::g_memByte[CareerOffsets::kTmdFileBuffer]);
+    for (int t = 0; t < tmdCount; ++t) {
+        if (*reinterpret_cast<const uint16_t *>(&tmdTeams[t]) == teamId) {
+            outTf = tmdTeams[t];
             return true;
         }
+    }
+
+    for (const auto& kv : m_leagueWorlds) {
+        const auto& lw = kv.second;
+        int count = std::min<int>(lw.numSelectedTeams, static_cast<int>(lw.selectedTeams.size() / sizeof(TeamFile)));
+        const auto *teams = reinterpret_cast<const TeamFile *>(lw.selectedTeams.data());
+        for (int t = 0; t < count; ++t) {
+            if (*reinterpret_cast<const uint16_t *>(&teams[t]) == teamId) {
+                outTf = teams[t];
+                return true;
+            }
+        }
+    }
+
+    auto cacheIt = m_clubTeamCache.find(teamId);
+    if (cacheIt != m_clubTeamCache.end()) {
+        outTf = cacheIt->second;
+        return true;
     }
     return false;
 }
 
-static void relinkSingleCompetitionBuffer(uint32_t compOffset, uint16_t activeTeamWord, int32_t selTeamsPtrVal)
+void HotseatCareerManager::ensureCupTeamsInSelectedTeams()
+{
+    if (!isActive() || m_leagueWorlds.size() <= 1 || !swos.selTeamsPtr)
+        return;
+
+    auto *selTeams = reinterpret_cast<TeamFile *>(SwosVM::offsetToPtr(swos.selTeamsPtr));
+    if (!selTeams)
+        return;
+
+    uint16_t activeTeamWord = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kSelTeamNumber]);
+    auto hasTeamInSel = [&](uint16_t tid) -> bool {
+        int count = std::clamp<int>(swos.g_numSelectedTeams, 0, kMaxSelectedTeamsCount);
+        for (int t = 0; t < count; ++t) {
+            if (*reinterpret_cast<const uint16_t *>(&selTeams[t]) == tid)
+                return true;
+        }
+        return false;
+    };
+
+    auto scanComp = [&](uint32_t compOffset) {
+        if (compOffset < 5000 || compOffset + 100 >= sizeof(SwosVM::g_memByte))
+            return;
+        uint16_t compType = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[compOffset]);
+        uint32_t base = compOffset;
+        uint16_t blockType = compType;
+        if (compType == 2) {
+            base = compOffset + static_cast<uint32_t>(kTourSubCompOffset);
+            if (base + 52 >= sizeof(SwosVM::g_memByte))
+                return;
+            blockType = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[base]);
+        }
+        if (blockType > 2 || base + 840 >= sizeof(SwosVM::g_memByte))
+            return;
+
+        int16_t numTeams = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[base + 49]);
+        if (numTeams <= 0 || numTeams > 64)
+            return;
+
+        uint32_t tableOfs = (blockType == 0) ? (base + 301) : (base + 589);
+        if (tableOfs + static_cast<uint32_t>(numTeams) * 2 > sizeof(SwosVM::g_memByte))
+            return;
+
+        for (int k = 0; k < numTeams; ++k) {
+            if (swos.g_numSelectedTeams >= kMaxSelectedTeamsCount)
+                break;
+            uint16_t tid = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[tableOfs + k * 2]);
+            if (tid == 0 || tid == 0xFFFF || tid == activeTeamWord)
+                continue;
+            if (findHotseatPlayerByTeamId(static_cast<int16_t>(tid)) >= 0)
+                continue;
+            if (hasTeamInSel(tid))
+                continue;
+            TeamFile tf{};
+            if (lookupCachedTeamFile(tid, tf)) {
+                tf.teamControls = kComputerTeam;
+                selTeams[swos.g_numSelectedTeams++] = tf;
+            }
+        }
+    };
+
+    for (int c = 1; c < 5; ++c) {
+        uint32_t activePtr = *reinterpret_cast<const uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8CAA + c * 4]);
+        uint32_t bufPtr = *reinterpret_cast<const uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kArrayOfPointers + c * 4]);
+        if (activePtr != 0 && bufPtr >= 5000 && bufPtr < sizeof(SwosVM::g_memByte)) {
+            scanComp(bufPtr);
+        }
+    }
+}
+
+void HotseatCareerManager::saveActiveWorldFromVm()
+{
+    if (!m_hasActiveWorld)
+        return;
+
+    auto& cw = m_countryWorlds[m_activeWorldKey.countryFileNo];
+    cw.countryFileNo = m_activeWorldKey.countryFileNo;
+    cw.initialized = true;
+    cw.dsegD8CAE = *reinterpret_cast<const uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8CAA + 4]);
+    cw.dsegD8CB2 = *reinterpret_cast<const uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8CAA + 8]);
+    cw.dsegD6CDE = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD6CDE]);
+    std::memcpy(cw.cup1, &SwosVM::g_memByte[CareerOffsets::kDsegD8D0A], kCup1BufferSize);
+    std::memcpy(cw.cup2, &SwosVM::g_memByte[CareerOffsets::kDsegD985C], kCup2BufferSize);
+    cw.numHomeMarketPlayers = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumHomeMarketPlayers]);
+    std::memcpy(cw.homeMarketPlayers, &SwosVM::g_memByte[CareerOffsets::kHomeMarketPlayers], sizeof(cw.homeMarketPlayers));
+    cw.numForeignMarketPlayers = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumForeignMarketPlayers]);
+    std::memcpy(cw.foreignMarketPlayers, &SwosVM::g_memByte[CareerOffsets::kForeignMarketPlayers], sizeof(cw.foreignMarketPlayers));
+
+    auto& lw = m_leagueWorlds[m_activeWorldKey];
+    lw.key = m_activeWorldKey;
+    lw.initialized = true;
+    std::memcpy(lw.dsegD8CAA, &SwosVM::g_memByte[CareerOffsets::kDsegD8CAA], sizeof(lw.dsegD8CAA));
+    lw.dsegD8CC0 = *reinterpret_cast<const uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8CC0]);
+    std::memcpy(lw.competitionFileBuffer, &SwosVM::g_memByte[CareerOffsets::kCompetitionFileBuffer], kCompetitionBufferSize);
+    std::memcpy(lw.dsegD9C9F, &SwosVM::g_memByte[CareerOffsets::kDsegD9C9F], kCup4BufferSize);
+    std::memcpy(lw.calendar, &SwosVM::g_memByte[CareerOffsets::kDsegDB3E6], kCalendarBufferSize);
+    lw.calStepIdx = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3DE]);
+    lw.calByteOfs = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E0]);
+    lw.calTotalEntries = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E2]);
+    lw.dsegDB3E4 = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E4]);
+    lw.playMatchBlink = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDF4F4]);
+    lw.dsegE0048 = SwosVM::g_memByte[CareerOffsets::kDsegE0048];
+    lw.seasonPlaying = SwosVM::g_memByte[CareerOffsets::kSeasonPlaying];
+    lw.currentSeasonShowing = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCurrentSeasonShowing]);
+    lw.currentSeasonNumber = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCurrentSeasonNumber]);
+    lw.dsegD6CA2 = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD6CA2]);
+    lw.seasonFinished = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kSeasonFinished]);
+    lw.careerFinished = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerFinished]);
+    lw.hlIdx = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kDseg174576]);
+    lw.hlSlotIdx = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDseg174578]);
+    lw.hlHdr = *reinterpret_cast<const uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDseg17457A]);
+    lw.hlMatchPtr = *reinterpret_cast<const uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDseg17457E]);
+    lw.roundCalendarIndex = m_roundCalendarIndex;
+    lw.pendingPostMatchCalOfs = m_pendingPostMatchCalOfs;
+    lw.pendingPostMatchSlotIdx = m_pendingPostMatchSlotIdx;
+    lw.calendarSlots = m_calendarSlots;
+    lw.euroCupByCalOfs = m_euroCupByCalOfs;
+
+    int16_t count = static_cast<int16_t>(std::clamp<int>(swos.g_numSelectedTeams, 0, kMaxSelectedTeamsCount));
+    lw.numSelectedTeams = count;
+    size_t selBytes = static_cast<size_t>(count) * sizeof(TeamFile);
+    lw.selectedTeams.resize(selBytes);
+    if (selBytes > 0) {
+        std::memcpy(lw.selectedTeams.data(), swos.g_selectedTeams, selBytes);
+    }
+}
+
+void HotseatCareerManager::loadWorldToVm(const LeagueWorldKey& targetKey, bool relink /* = true */)
+{
+    auto lwIt = m_leagueWorlds.find(targetKey);
+    if (lwIt == m_leagueWorlds.end() || !lwIt->second.initialized) {
+        m_activeWorldKey = targetKey;
+        m_hasActiveWorld = true;
+        return;
+    }
+
+    const auto& lw = lwIt->second;
+
+    // Ensure standard arrayOfPointers & selTeamsPtr are valid in VM
+    *reinterpret_cast<uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kArrayOfPointers + 0]) =
+        static_cast<uint32_t>(CareerOffsets::kCompetitionFileBuffer);
+    *reinterpret_cast<uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kArrayOfPointers + 4]) =
+        static_cast<uint32_t>(CareerOffsets::kDsegD8D0A);
+    *reinterpret_cast<uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kArrayOfPointers + 8]) =
+        static_cast<uint32_t>(CareerOffsets::kDsegD985C);
+    *reinterpret_cast<uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kArrayOfPointers + 12]) =
+        static_cast<uint32_t>(CareerOffsets::kDsegDA0E2);
+    *reinterpret_cast<uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kArrayOfPointers + 16]) =
+        static_cast<uint32_t>(CareerOffsets::kDsegD9C9F);
+    swos.selTeamsPtr = 131759;
+
+    std::memcpy(&SwosVM::g_memByte[CareerOffsets::kDsegD8CAA], lw.dsegD8CAA, sizeof(lw.dsegD8CAA));
+    *reinterpret_cast<uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8CC0]) = lw.dsegD8CC0;
+
+    auto cwIt = m_countryWorlds.find(targetKey.countryFileNo);
+    if (cwIt != m_countryWorlds.end() && cwIt->second.initialized) {
+        const auto& cw = cwIt->second;
+        *reinterpret_cast<uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8CAA + 4]) = cw.dsegD8CAE;
+        *reinterpret_cast<uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8CAA + 8]) = cw.dsegD8CB2;
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD6CDE]) = cw.dsegD6CDE;
+        std::memcpy(&SwosVM::g_memByte[CareerOffsets::kDsegD8D0A], cw.cup1, kCup1BufferSize);
+        std::memcpy(&SwosVM::g_memByte[CareerOffsets::kDsegD985C], cw.cup2, kCup2BufferSize);
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumHomeMarketPlayers]) = cw.numHomeMarketPlayers;
+        std::memcpy(&SwosVM::g_memByte[CareerOffsets::kHomeMarketPlayers], cw.homeMarketPlayers, sizeof(cw.homeMarketPlayers));
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumForeignMarketPlayers]) = cw.numForeignMarketPlayers;
+        std::memcpy(&SwosVM::g_memByte[CareerOffsets::kForeignMarketPlayers], cw.foreignMarketPlayers, sizeof(cw.foreignMarketPlayers));
+    }
+
+    if (targetKey.countryFileNo != 0xFF) {
+        SwosVM::g_memByte[CareerOffsets::kCompCountryNumber] = targetKey.countryFileNo;
+        SwosVM::g_memByte[CareerOffsets::kDsegD6CB8] = targetKey.countryFileNo;
+    }
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD6CDC]) = targetKey.divisionId;
+
+    std::memcpy(&SwosVM::g_memByte[CareerOffsets::kCompetitionFileBuffer], lw.competitionFileBuffer, kCompetitionBufferSize);
+    std::memcpy(&SwosVM::g_memByte[CareerOffsets::kDsegD9C9F], lw.dsegD9C9F, kCup4BufferSize);
+    std::memcpy(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E6], lw.calendar, kCalendarBufferSize);
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3DE]) = lw.calStepIdx;
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E0]) = lw.calByteOfs;
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E2]) = lw.calTotalEntries;
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E4]) = lw.dsegDB3E4;
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDF4F4]) = lw.playMatchBlink;
+    SwosVM::g_memByte[CareerOffsets::kDsegE0048] = lw.dsegE0048;
+    SwosVM::g_memByte[CareerOffsets::kSeasonPlaying] = lw.seasonPlaying;
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCurrentSeasonShowing]) = lw.currentSeasonShowing;
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCurrentSeasonNumber]) = lw.currentSeasonNumber;
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD6CA2]) = lw.dsegD6CA2;
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kSeasonFinished]) = lw.seasonFinished;
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerFinished]) = lw.careerFinished;
+    *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kDseg174576]) = lw.hlIdx;
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDseg174578]) = lw.hlSlotIdx;
+    *reinterpret_cast<uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDseg17457A]) = lw.hlHdr;
+    *reinterpret_cast<uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDseg17457E]) = lw.hlMatchPtr;
+
+    m_roundCalendarIndex = lw.roundCalendarIndex;
+    m_pendingPostMatchCalOfs = lw.pendingPostMatchCalOfs;
+    m_pendingPostMatchSlotIdx = lw.pendingPostMatchSlotIdx;
+    m_calendarSlots = lw.calendarSlots;
+    m_euroCupByCalOfs = lw.euroCupByCalOfs;
+
+    int16_t count = static_cast<int16_t>(std::clamp<int>(lw.numSelectedTeams, 0, kMaxSelectedTeamsCount));
+    swos.g_numSelectedTeams = count;
+    std::memset(swos.g_selectedTeams, 0, kSelectedTeamsBufferSize);
+    size_t copyBytes = std::min(lw.selectedTeams.size(), kSelectedTeamsBufferSize);
+    if (copyBytes > 0) {
+        std::memcpy(swos.g_selectedTeams, lw.selectedTeams.data(), copyBytes);
+    }
+
+    m_activeWorldKey = targetKey;
+    m_hasActiveWorld = true;
+
+    if (m_activePlayerIndex >= 0 && m_activePlayerIndex < m_numPlayers &&
+        worldKeyForPlayer(m_players[m_activePlayerIndex]) == targetKey) {
+        auto& active = m_players[m_activePlayerIndex];
+        active.dsegE0048 = lw.dsegE0048;
+        active.seasonPlaying = lw.seasonPlaying;
+        active.currentSeasonShowing = lw.currentSeasonShowing;
+        active.currentSeasonNumber = lw.currentSeasonNumber;
+        active.dsegD6CA2 = lw.dsegD6CA2;
+        active.playMatchBlink = lw.playMatchBlink;
+        active.dsegD6CDC = targetKey.divisionId;
+    }
+
+    if (relink) {
+        syncPlayersWithSelectedTeams(true);
+        ensureHotseatTeamControlsInSelectedTeams();
+        relinkCompetitionTeamPointers();
+    }
+}
+
+void HotseatCareerManager::captureActiveWorldAsInitial(const LeagueWorldKey& key)
+{
+    m_activeWorldKey = key;
+    m_hasActiveWorld = true;
+    cacheTeamsFromSelectedTeams();
+    saveActiveWorldFromVm();
+}
+
+int32_t HotseatCareerManager::resolveTeamDeltaForCompetition(uint16_t teamWord, uint16_t activeTeamWord, int32_t selTeamsPtrVal, bool& found)
+{
+    found = false;
+    if (teamWord == activeTeamWord) {
+        found = true;
+        return static_cast<int32_t>(CareerOffsets::kCareerTeam) - selTeamsPtrVal;
+    }
+
+    if (selTeamsPtrVal && swos.g_numSelectedTeams > 0) {
+        const auto *selTeams = reinterpret_cast<const TeamFile *>(SwosVM::offsetToPtr(selTeamsPtrVal));
+        if (selTeams) {
+            int count = std::min<int>(swos.g_numSelectedTeams, kMaxSelectedTeamsCount);
+            for (int t = 0; t < count; ++t) {
+                uint16_t slotTeamId = *reinterpret_cast<const uint16_t *>(&selTeams[t]);
+                if (slotTeamId == teamWord) {
+                    found = true;
+                    return static_cast<int32_t>(t * sizeof(TeamFile));
+                }
+            }
+        }
+    }
+
+    int pIdx = findHotseatPlayerByTeamId(static_cast<int16_t>(teamWord));
+    if (pIdx >= 0 && pIdx < m_numPlayers) {
+        uint32_t mirrorOfs = ensureHotseatTeamMirror(pIdx);
+        if (mirrorOfs != 0) {
+            found = true;
+            return static_cast<int32_t>(mirrorOfs) - selTeamsPtrVal;
+        }
+    }
+
+    return 0;
+}
+
+static void relinkSingleCompetitionBuffer(HotseatCareerManager& mgr, uint32_t compOffset, uint16_t activeTeamWord, int32_t selTeamsPtrVal)
 {
     if (compOffset == 0 || compOffset + 100 >= sizeof(SwosVM::g_memByte))
         return;
@@ -482,8 +832,9 @@ static void relinkSingleCompetitionBuffer(uint32_t compOffset, uint16_t activeTe
                 return;
             for (int k = 0; k < numTeams; ++k) {
                 uint16_t teamWord = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[base + 301 + k * 2]);
-                int32_t delta = 0;
-                if (computeTeamCacheDelta(teamWord, activeTeamWord, selTeamsPtrVal, delta)) {
+                bool found = false;
+                int32_t delta = mgr.resolveTeamDeltaForCompetition(teamWord, activeTeamWord, selTeamsPtrVal, found);
+                if (found) {
                     *reinterpret_cast<int32_t *>(&SwosVM::g_memByte[base + 691 + k * 18]) = delta;
                 }
             }
@@ -492,8 +843,9 @@ static void relinkSingleCompetitionBuffer(uint32_t compOffset, uint16_t activeTe
                 return;
             for (int k = 0; k < numTeams; ++k) {
                 uint16_t teamWord = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[base + 589 + k * 2]);
-                int32_t delta = 0;
-                if (computeTeamCacheDelta(teamWord, activeTeamWord, selTeamsPtrVal, delta)) {
+                bool found = false;
+                int32_t delta = mgr.resolveTeamDeltaForCompetition(teamWord, activeTeamWord, selTeamsPtrVal, found);
+                if (found) {
                     *reinterpret_cast<int32_t *>(&SwosVM::g_memByte[base + 835 + k * 4]) = delta;
                 }
             }
@@ -518,6 +870,10 @@ void HotseatCareerManager::relinkCompetitionTeamPointers()
     if (!isActive() || !swos.selTeamsPtr)
         return;
 
+    if (m_leagueWorlds.size() > 1) {
+        ensureCupTeamsInSelectedTeams();
+    }
+
     uint16_t activeTeamWord = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kSelTeamNumber]);
     int32_t selTeamsPtrVal = static_cast<int32_t>(swos.selTeamsPtr);
     if (activeTeamWord == 0 || activeTeamWord == 0xFFFF || selTeamsPtrVal == 0)
@@ -527,17 +883,17 @@ void HotseatCareerManager::relinkCompetitionTeamPointers()
         uint32_t activeContestPtr = *reinterpret_cast<const uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8CAA + c * 4]);
         uint32_t compBufPtr = *reinterpret_cast<const uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kArrayOfPointers + c * 4]);
         if (activeContestPtr != 0 && compBufPtr >= 5000 && compBufPtr < sizeof(SwosVM::g_memByte)) {
-            relinkSingleCompetitionBuffer(compBufPtr, activeTeamWord, selTeamsPtrVal);
+            relinkSingleCompetitionBuffer(*this, compBufPtr, activeTeamWord, selTeamsPtrVal);
         }
     }
 
     uint16_t diyType = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDiyCompetitionStart]);
     if (diyType <= 2) {
-        relinkSingleCompetitionBuffer(static_cast<uint32_t>(CareerOffsets::kDiyCompetitionStart), activeTeamWord, selTeamsPtrVal);
+        relinkSingleCompetitionBuffer(*this, static_cast<uint32_t>(CareerOffsets::kDiyCompetitionStart), activeTeamWord, selTeamsPtrVal);
     }
     uint16_t tourWorkType = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDiyFileBufferCopy]);
     if (tourWorkType == 2) {
-        relinkSingleCompetitionBuffer(static_cast<uint32_t>(CareerOffsets::kDiyFileBufferCopy), activeTeamWord, selTeamsPtrVal);
+        relinkSingleCompetitionBuffer(*this, static_cast<uint32_t>(CareerOffsets::kDiyFileBufferCopy), activeTeamWord, selTeamsPtrVal);
     }
 }
 
@@ -545,6 +901,24 @@ void HotseatCareerManager::switchToPlayer(int index, bool relink /* = true */)
 {
     if (index < 0 || index >= m_numPlayers)
         return;
+
+    LeagueWorldKey targetKey = worldKeyForPlayer(m_players[index]);
+    if (m_hasActiveWorld && targetKey != m_activeWorldKey) {
+        if (relink) {
+            syncPlayersWithSelectedTeams(true);
+        }
+        saveActiveWorldFromVm();
+        m_activePlayerIndex = index;
+        loadWorldToVm(targetKey, false);
+        loadSwosContext(m_players[m_activePlayerIndex], false);
+        syncPlayersWithSelectedTeams(true);
+        if (relink) {
+            ensureHotseatTeamControlsInSelectedTeams();
+            relinkCompetitionTeamPointers();
+        }
+        syncTransferMarketPoolsForCurrentPlayer();
+        return;
+    }
 
     if (relink) {
         syncPlayersWithSelectedTeams(true);
@@ -674,6 +1048,10 @@ void HotseatCareerManager::onBeforeShowPlayMatchMenu()
         st.didSwitch = true;
     } else if (idx1 == m_activePlayerIndex && idx1 >= 0 && origA1 != CareerOffsets::kCareerTeam) {
         A1 = static_cast<uint32_t>(CareerOffsets::kCareerTeam);
+    }
+
+    if (idx2 >= 0 && idx2 < m_numPlayers && idx2 != idx1) {
+        ensureHotseatTeamMirror(idx2);
     }
 
     m_playMatchSetupStack.push_back(st);

@@ -456,6 +456,9 @@ void HotseatCareerManager::onAfterProcessCareerFile()
     syncPlayersWithSelectedTeams(true);
     ensureHotseatTeamControlsInSelectedTeams();
     relinkCompetitionTeamPointers();
+    if (m_leagueWorlds.empty() && m_activePlayerIndex >= 0 && m_activePlayerIndex < m_numPlayers) {
+        captureActiveWorldAsInitial(worldKeyForPlayer(m_players[m_activePlayerIndex]));
+    }
 }
 
 bool HotseatCareerManager::loadFromFile(const std::string& path)

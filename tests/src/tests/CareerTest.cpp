@@ -78,6 +78,7 @@ auto CareerTest::getCases() -> CaseList
         { "test hotseat end-of-season menu sequence and shared job offer dedup", "career-hotseat-end-season-job-offers", {}, bind(&CareerTest::testHotseatEndOfSeasonMenuSequenceAndSharedJobOfferDedup), 1, false },
         { "test hotseat club switch marks old team CPU red and CPU fixtures", "career-hotseat-club-switch-old-cpu", {}, bind(&CareerTest::testHotseatClubSwitchOldTeamCpuRedAndFixtures), 1, false },
         { "test hotseat 8 players isolated mirrors and V8 save load", "career-hotseat-8players", {}, bind(&CareerTest::testHotseatEightPlayersMirrorsAndSaveV8), 1, false },
+        { "test hotseat multi-world country/league multiplexer", "career-hotseat-multi-world-mux", {}, bind(&CareerTest::testHotseatMultiWorldMultiplexer), 1, false },
     };
 }
 
@@ -3951,6 +3952,135 @@ void CareerTest::testHotseatEightPlayersMirrorsAndSaveV8()
     assertEqual(mgr.player(7).teamName, "CLUB_8");
     assertEqual(static_cast<int>(mgr.player(0).careerNumPlayers), 19);
     assertEqual(static_cast<int>(mgr.player(7).careerNumPlayers), 17);
+
+    mgr.reset();
+}
+
+void CareerTest::testHotseatMultiWorldMultiplexer()
+{
+    auto& mgr = HotseatCareerManager::get();
+    mgr.reset();
+
+    const int16_t kEngPremTid = 0x0108; // country 8, ord 1, div 0
+    const int16_t kEngDiv2Tid = 0x2508; // country 8, ord 37, div 2
+    const int16_t kTurDiv0Tid = 0x0126; // country 38, ord 1, div 0
+
+    mgr.initializeHotseat({ kEngPremTid, kEngDiv2Tid, kTurDiv0Tid });
+    assertEqual(mgr.numPlayers(), 3);
+
+    mgr.player(0).dsegD6CDC = 0;
+    mgr.player(0).careerTeamLeague = 0;
+    *reinterpret_cast<int16_t *>(mgr.player(0).careerTeam) = kEngPremTid;
+    mgr.player(0).teamName = "ENG_PREM_0";
+
+    mgr.player(1).dsegD6CDC = 2;
+    mgr.player(1).careerTeamLeague = 2;
+    *reinterpret_cast<int16_t *>(mgr.player(1).careerTeam) = kEngDiv2Tid;
+    mgr.player(1).teamName = "ENG_DIV2_1";
+
+    mgr.player(2).dsegD6CDC = 0;
+    mgr.player(2).careerTeamLeague = 0;
+    *reinterpret_cast<int16_t *>(mgr.player(2).careerTeam) = kTurDiv0Tid;
+    mgr.player(2).teamName = "TUR_PREM_2";
+
+    auto setupSyntheticWorld = [&](int pIdx, uint8_t country, uint8_t div, uint16_t cup1Tag,
+                                   uint16_t leagueTag, uint16_t calTag, int16_t selCount, uint16_t marketSeed) {
+        std::memset(&SwosVM::g_memByte[CareerOffsets::kCompetitionFileBuffer], 0, kCompetitionBufferSize);
+        std::memset(&SwosVM::g_memByte[CareerOffsets::kDsegD8D0A], 0, kCup1BufferSize);
+        std::memset(&SwosVM::g_memByte[CareerOffsets::kDsegD985C], 0, kCup2BufferSize);
+        std::memset(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E6], 0, kCalendarBufferSize);
+        std::memset(swos.g_selectedTeams, 0, kSelectedTeamsBufferSize);
+
+        SwosVM::g_memByte[CareerOffsets::kCompCountryNumber] = country;
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD6CDC]) = div;
+        *reinterpret_cast<uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8CAA + 0]) = 50000;
+        *reinterpret_cast<uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8CAA + 4]) = 50001;
+        *reinterpret_cast<uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kArrayOfPointers + 0]) =
+            static_cast<uint32_t>(CareerOffsets::kCompetitionFileBuffer);
+        *reinterpret_cast<uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kArrayOfPointers + 4]) =
+            static_cast<uint32_t>(CareerOffsets::kDsegD8D0A);
+        swos.selTeamsPtr = 131759;
+
+        // League competition with P[pIdx] + 1 AI club
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCompetitionFileBuffer]) = 0;
+        *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kCompetitionFileBuffer + 49]) = 2;
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCompetitionFileBuffer + 120]) = leagueTag;
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCompetitionFileBuffer + 301]) =
+            static_cast<uint16_t>(mgr.player(pIdx).teamId);
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCompetitionFileBuffer + 303]) =
+            static_cast<uint16_t>(0x1000 + country);
+
+        // Shared country cup with all hotseat teams across country + P2 in Euro Cup
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8D0A]) = 1;
+        *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8D0A + 49]) = 3;
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8D0A + 120]) = cup1Tag;
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8D0A + 589]) =
+            static_cast<uint16_t>(kEngPremTid);
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8D0A + 591]) =
+            static_cast<uint16_t>(kEngDiv2Tid);
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8D0A + 593]) =
+            static_cast<uint16_t>(kTurDiv0Tid);
+
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E2]) = 1;
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E6 + 10]) = calTag;
+
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumHomeMarketPlayers]) = 1;
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kHomeMarketPlayers]) = marketSeed;
+
+        swos.g_numSelectedTeams = selCount;
+        auto *sel = reinterpret_cast<TeamFile *>(swos.g_selectedTeams);
+        std::memcpy(&sel[0], mgr.player(pIdx).careerTeam, sizeof(TeamFile));
+        *reinterpret_cast<uint16_t *>(&sel[1]) = static_cast<uint16_t>(0x1000 + country);
+
+        mgr.loadSwosContext(mgr.player(pIdx), false);
+        mgr.captureActiveWorldAsInitial(mgr.worldKeyForPlayer(mgr.player(pIdx)));
+    };
+
+    setupSyntheticWorld(0, 8, 0, 0xAAAA, 0x1111, 0x2222, 2, 0x0508);
+    setupSyntheticWorld(1, 8, 2, 0xAAAA, 0x3333, 0x4444, 2, 0x0508);
+    setupSyntheticWorld(2, 38, 0, 0xBBBB, 0x5555, 0x6666, 2, 0x0526);
+
+    assertEqual(mgr.worldCount(), 3);
+    assertEqual(mgr.countryWorldCount(), 2);
+
+    // Activate P0 (Eng Prem), mutate England's Cup 1 buffer
+    mgr.switchToPlayer(0, true);
+    assertEqual(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCompetitionFileBuffer + 120]),
+                static_cast<uint16_t>(0x1111));
+    assertEqual(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E6 + 10]),
+                static_cast<uint16_t>(0x2222));
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8D0A + 122]) = 0xCAFE;
+
+    // Cross-world cup opponents not in g_selectedTeams must relink to their live mirror offsets
+    int32_t selPtrVal = static_cast<int32_t>(swos.selTeamsPtr);
+    int32_t div2Delta = *reinterpret_cast<const int32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8D0A + 835 + 4]);
+    int32_t turDelta = *reinterpret_cast<const int32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8D0A + 835 + 8]);
+    uint32_t div2Ptr = static_cast<uint32_t>(selPtrVal + div2Delta);
+    uint32_t turPtr = static_cast<uint32_t>(selPtrVal + turDelta);
+    assertEqual(*reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[div2Ptr]), kEngDiv2Tid);
+    assertEqual(*reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[turPtr]), kTurDiv0Tid);
+
+    // Switching to P1 (Eng Div 2) must keep P0's CountryWorld Cup1 mutation while loading Div 2's league/calendar
+    mgr.switchToPlayer(1, true);
+    assertEqual(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCompetitionFileBuffer + 120]),
+                static_cast<uint16_t>(0x3333));
+    assertEqual(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E6 + 10]),
+                static_cast<uint16_t>(0x4444));
+    assertEqual(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8D0A + 122]),
+                static_cast<uint16_t>(0xCAFE));
+
+    // Switching to P2 (Turkey Div 0) must keep Turkey's Cup1 & league completely isolated from England
+    mgr.switchToPlayer(2, true);
+    assertEqual(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCompetitionFileBuffer + 120]),
+                static_cast<uint16_t>(0x5555));
+    assertEqual(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E6 + 10]),
+                static_cast<uint16_t>(0x6666));
+    assertEqual(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8D0A + 120]),
+                static_cast<uint16_t>(0xBBBB));
+    assertEqual(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8D0A + 122]),
+                static_cast<uint16_t>(0));
+    assertEqual(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kHomeMarketPlayers]),
+                static_cast<uint16_t>(0x0526));
 
     mgr.reset();
 }

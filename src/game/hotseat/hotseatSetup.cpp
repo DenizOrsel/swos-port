@@ -483,6 +483,7 @@ void startCareerMode()
         firstTurnPlayer = 0;
 
     mgr.switchToPlayer(firstTurnPlayer, true);
+    mgr.captureActiveWorldAsInitial(mgr.worldKeyForPlayer(mgr.player(firstTurnPlayer)));
     logInfo("Hotseat Career successfully initialized with %d players! Starting P%d's turn.",
             numPlayers, firstTurnPlayer + 1);
 

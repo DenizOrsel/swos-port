@@ -800,4 +800,5 @@ void HotseatCareerManager::onNewSeasonInitialized()
     if (firstPlayer < 0)
         firstPlayer = 0;
     switchToPlayer(firstPlayer, true);
+    captureActiveWorldAsInitial(worldKeyForPlayer(m_players[firstPlayer]));
 }

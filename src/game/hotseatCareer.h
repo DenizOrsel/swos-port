@@ -12,8 +12,14 @@ constexpr int kCareerTeamBufferSize = 1292;
 constexpr int kCareerHistoryBufferSize = 2120;
 constexpr int kUserTacticsSize = 370;
 constexpr int kNumEuroCups = 3;
-constexpr size_t kEuroCupBufferSize = 3026; // dseg_DA0E2..euroCupCopy (105044..108070)
+constexpr size_t kCup1BufferSize = 2898;     // dseg_D8D0A..dseg_D985C (99964..102862)
 constexpr size_t kCup2BufferSize = 1091;     // dseg_D985C..dseg_D9C9F (102862..103953)
+constexpr size_t kCup4BufferSize = 1091;     // dseg_D9C9F..dseg_DA0E2 (103953..105044)
+constexpr size_t kEuroCupBufferSize = 3026;  // dseg_DA0E2..euroCupCopy (105044..108070)
+constexpr size_t kCalendarBufferSize = 1870; // dseg_DB3E6 (109912..111782)
+constexpr size_t kCompetitionBufferSize = 2898; // competitionFileBuffer..dseg_E0048 (126568..129466)
+constexpr int kMaxSelectedTeamsCount = 100;
+constexpr size_t kSelectedTeamsBufferSize = 68400; // 100 * sizeof(TeamFile)
 constexpr int kTransferAiOffersSize = 70;    // dseg_D6DBA
 constexpr int kJobOffersBufferSize = 130;    // newJobOffers / jobOffers
 constexpr int kListedPlayersSize = 10;       // playersOnTransferMarket / dseg_D6F26..E
@@ -65,10 +71,12 @@ namespace CareerOffsets {
     constexpr size_t kTeamNoOfferAccepted = 91670;      // int16_t
     constexpr size_t kTeamFundsAccepted = 91672;        // int32_t
     constexpr size_t kIsNationalSelector = 91676;       // int16_t
+    constexpr size_t kDsegD6CB8 = 91690;                // uint8_t
     constexpr size_t kSelTeamNumber = 91720;            // int16_t
     constexpr size_t kCoachOrPlayer = 91722;            // int16_t
     constexpr size_t kCareerTeamLeague = 91724;         // uint16_t
     constexpr size_t kDsegD6CDC = 91726;                // uint16_t
+    constexpr size_t kDsegD6CDE = 91728;                // uint16_t (division count)
     constexpr size_t kMrOrMs = 91734;                   // int16_t
     constexpr size_t kManagerSexBuffer = 91736;         // 5 bytes
     constexpr size_t kManagerNameBuffer = 91741;        // 9 bytes
@@ -120,10 +128,14 @@ namespace CareerOffsets {
     constexpr size_t kCareerFinished = 99866;           // uint16_t
     constexpr size_t kDsegD8CAA = 99868;                // uint32_t[5] (active competition ptrs)
     constexpr size_t kDsegD8CB6 = 99880;                // uint32_t (active euro cup ptr)
+    constexpr size_t kDsegD8CBA = 99884;                // uint32_t (playoff/supercup ptr)
     constexpr size_t kDsegD8CBE = 99888;                // uint16_t (active euro cup idx)
+    constexpr size_t kDsegD8CC0 = 99890;                // uint32_t (cup4 init ptr)
     constexpr size_t kSeasonNumberOfSquads = 99894;     // uint16_t
     constexpr size_t kArrayOfPointers = 99944;          // uint32_t[5] (competition buffer ptrs)
+    constexpr size_t kDsegD8D0A = 99964;                // 2898 bytes (cup 1 buffer)
     constexpr size_t kDsegD985C = 102862;               // 1091 bytes (cup 2 buffer)
+    constexpr size_t kDsegD9C9F = 103953;               // 1091 bytes (cup 4 buffer)
     constexpr size_t kDsegDA0E2 = 105044;               // 3026 bytes (euro cup buffer)
     constexpr size_t kDsegDA109 = 105083;               // uint32_t (euro cup season string ptr)
     constexpr size_t kDsegDA11F = 105105;               // 6 bytes (dseg_DA11F..23)
@@ -136,6 +148,7 @@ namespace CareerOffsets {
     constexpr size_t kDsegDB3E4 = 109910;               // uint16_t
     constexpr size_t kDsegDB3E6 = 109912;               // calendar entries array
     constexpr size_t kDsegDF4F4 = 126566;               // uint16_t (play match indicator)
+    constexpr size_t kCompetitionFileBuffer = 126568;   // 2898 bytes (league buffer)
     constexpr size_t kDsegE0048 = 129466;               // uint8_t (calendar week byte)
     constexpr size_t kSeasonPlaying = 129467;           // uint8_t
     constexpr size_t kDsegE0052 = 129476;               // uint16_t (0=career cup select)
@@ -296,6 +309,69 @@ struct WizardPlayerInfo {
     int16_t mrOrMs = 0;
 };
 
+struct LeagueWorldKey {
+    uint8_t countryFileNo = 0;
+    uint8_t divisionId = 0;
+
+    bool operator<(const LeagueWorldKey& o) const {
+        return countryFileNo < o.countryFileNo ||
+               (countryFileNo == o.countryFileNo && divisionId < o.divisionId);
+    }
+    bool operator==(const LeagueWorldKey& o) const {
+        return countryFileNo == o.countryFileNo && divisionId == o.divisionId;
+    }
+    bool operator!=(const LeagueWorldKey& o) const {
+        return !(*this == o);
+    }
+};
+
+struct CountryWorldState {
+    uint8_t countryFileNo = 0;
+    bool initialized = false;
+    uint32_t dsegD8CAE = 0;
+    uint32_t dsegD8CB2 = 0;
+    uint16_t dsegD6CDE = 1;
+    uint8_t cup1[kCup1BufferSize] = {0};
+    uint8_t cup2[kCup2BufferSize] = {0};
+    uint16_t numHomeMarketPlayers = 0;
+    uint8_t homeMarketPlayers[25 * 4] = {0};
+    uint16_t numForeignMarketPlayers = 0;
+    uint8_t foreignMarketPlayers[15 * 4] = {0};
+};
+
+struct LeagueWorldState {
+    LeagueWorldKey key{};
+    bool initialized = false;
+    uint32_t dsegD8CAA[5] = {0};
+    uint32_t dsegD8CC0 = 0;
+    uint8_t competitionFileBuffer[kCompetitionBufferSize] = {0};
+    uint8_t dsegD9C9F[kCup4BufferSize] = {0};
+    uint8_t calendar[kCalendarBufferSize] = {0};
+    uint16_t calStepIdx = 0;
+    uint16_t calByteOfs = 0;
+    uint16_t calTotalEntries = 0;
+    uint16_t dsegDB3E4 = 0;
+    uint16_t playMatchBlink = 0;
+    uint8_t dsegE0048 = 0;
+    uint8_t seasonPlaying = 94;
+    uint16_t currentSeasonShowing = 0;
+    uint16_t currentSeasonNumber = 0;
+    uint16_t dsegD6CA2 = 0;
+    uint16_t seasonFinished = 0;
+    uint16_t careerFinished = 0;
+    int16_t hlIdx = -1;
+    uint16_t hlSlotIdx = 0;
+    uint32_t hlHdr = 0;
+    uint32_t hlMatchPtr = 0;
+    int roundCalendarIndex = 0;
+    int pendingPostMatchCalOfs = -1;
+    int pendingPostMatchSlotIdx = -1;
+    std::map<uint16_t, std::vector<std::array<uint8_t, 12>>> calendarSlots;
+    std::map<uint16_t, int> euroCupByCalOfs;
+    int16_t numSelectedTeams = 0;
+    std::vector<uint8_t> selectedTeams;
+};
+
 class HotseatCareerManager {
 public:
     static HotseatCareerManager& get();
@@ -361,6 +437,25 @@ public:
     void relinkCompetitionTeamPointers();
     void syncPlayersWithSelectedTeams(bool writeToSelected);
     void ensureHotseatTeamControlsInSelectedTeams();
+
+    // Multi-League / Multi-Country World Multiplexer
+    static LeagueWorldKey worldKeyForPlayer(const HotseatPlayerContext& ctx);
+    LeagueWorldKey activeWorldKey() const { return m_activeWorldKey; }
+    bool hasActiveWorld() const { return m_hasActiveWorld; }
+    int worldCount() const { return static_cast<int>(m_leagueWorlds.size()); }
+    int countryWorldCount() const { return static_cast<int>(m_countryWorlds.size()); }
+    const std::map<LeagueWorldKey, LeagueWorldState>& leagueWorlds() const { return m_leagueWorlds; }
+    std::map<LeagueWorldKey, LeagueWorldState>& leagueWorlds() { return m_leagueWorlds; }
+    const std::map<uint8_t, CountryWorldState>& countryWorlds() const { return m_countryWorlds; }
+    std::map<uint8_t, CountryWorldState>& countryWorlds() { return m_countryWorlds; }
+    void saveActiveWorldFromVm();
+    void loadWorldToVm(const LeagueWorldKey& targetKey, bool relink = true);
+    void captureActiveWorldAsInitial(const LeagueWorldKey& key);
+    void cacheTeamsFromSelectedTeams();
+    void cacheTeamFile(const TeamFile& tf);
+    bool lookupCachedTeamFile(uint16_t teamId, TeamFile& outTf) const;
+    void ensureCupTeamsInSelectedTeams();
+    int32_t resolveTeamDeltaForCompetition(uint16_t teamWord, uint16_t activeTeamWord, int32_t selTeamsPtrVal, bool& found);
 
     // Turn Management & Calendar Synchronization
     bool canEndTurn() const;
@@ -572,6 +667,13 @@ private:
     int m_emergencyLoanDepth = 0;
     std::vector<PlayMatchSetupState> m_playMatchSetupStack;
     std::vector<H2hPackedTeamMap> m_h2hPackMaps;
+
+    // Multi-world state (country shared cups/markets + division calendars/tables)
+    bool m_hasActiveWorld = false;
+    LeagueWorldKey m_activeWorldKey{};
+    std::map<uint8_t, CountryWorldState> m_countryWorlds;
+    std::map<LeagueWorldKey, LeagueWorldState> m_leagueWorlds;
+    std::map<uint16_t, TeamFile> m_clubTeamCache;
 
     void unpackH2hPackedTeam(int playerIdx);
     void unpackAllH2hPackedTeams();

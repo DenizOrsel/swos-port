@@ -48,4 +48,5 @@ private:
     void testHotseatEndOfSeasonMenuSequenceAndSharedJobOfferDedup();
     void testHotseatClubSwitchOldTeamCpuRedAndFixtures();
     void testHotseatEightPlayersMirrorsAndSaveV8();
+    void testHotseatMultiWorldMultiplexer();
 };
