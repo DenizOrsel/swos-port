@@ -64,6 +64,7 @@ void HotseatCareerManager::reset()
     m_playMatchSetupStack.clear();
     m_hasActiveWorld = false;
     m_activeWorldKey = {};
+    m_globalWeek = 0;
     m_countryWorlds.clear();
     m_leagueWorlds.clear();
     m_clubTeamCache.clear();
@@ -162,7 +163,11 @@ void HotseatCareerManager::saveCurrentSwosContext(HotseatPlayerContext& ctx)
     ctx.teamNoOfferAccepted = *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kTeamNoOfferAccepted]);
     ctx.teamFundsAccepted = *reinterpret_cast<int32_t *>(&SwosVM::g_memByte[CareerOffsets::kTeamFundsAccepted]);
     ctx.isNationalSelector = *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kIsNationalSelector]);
-    ctx.dsegD6CDC = *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD6CDC]);
+    bool preserveCrossWorldIdentity =
+        (m_hasActiveWorld && m_leagueWorlds.size() > 1 && worldKeyForPlayer(ctx) != m_activeWorldKey);
+    if (!preserveCrossWorldIdentity) {
+        ctx.dsegD6CDC = *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD6CDC]);
+    }
     ctx.numOffers = *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumOffers]);
     ctx.timeToNegotiate = *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kTimeToNegotiate]);
     ctx.dsegD6D0A = *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD6D0A]);
@@ -185,7 +190,9 @@ void HotseatCareerManager::saveCurrentSwosContext(HotseatPlayerContext& ctx)
     ctx.currentSeasonShowing = *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCurrentSeasonShowing]);
     ctx.currentSeasonNumber = *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCurrentSeasonNumber]);
     ctx.seasonPlaying = SwosVM::g_memByte[CareerOffsets::kSeasonPlaying];
-    ctx.dsegE0048 = SwosVM::g_memByte[CareerOffsets::kDsegE0048];
+    if (!preserveCrossWorldIdentity) {
+        ctx.dsegE0048 = SwosVM::g_memByte[CareerOffsets::kDsegE0048];
+    }
     ctx.playMatchBlink = *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDF4F4]);
     ctx.careerNumPlayers = *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]);
     std::memcpy(ctx.seasonFinancesBlock, &SwosVM::g_memByte[CareerOffsets::kSeasonFinancesBlock], kSeasonFinancesBlockSize);

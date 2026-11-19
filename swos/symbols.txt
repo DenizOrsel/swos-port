@@ -875,6 +875,7 @@ cseg_92D55
 cseg_9307A
 cseg_9339D
 ShowPlayMatchMenu
+PlayMatchMenu
 cseg_52956
 CareerOverInit
 

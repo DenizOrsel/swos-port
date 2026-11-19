@@ -27,6 +27,30 @@ void captureSlotForHeader(std::map<uint16_t, std::vector<HotseatCareerManager::C
     }
 }
 
+int inspectNextPendingCalendarEntry(const uint8_t *calendar, uint16_t startIdx, uint16_t startOfs,
+                                    uint16_t totalEntries, uint8_t& outCompSlot, int& outRemSlots)
+{
+    if (!calendar || totalEntries == 0)
+        return -1;
+
+    uint16_t idx = startIdx;
+    uint16_t ofs = startOfs;
+    while (idx < totalEntries && ofs + 22 <= kCalendarBufferSize) {
+        const uint8_t *entry = &calendar[ofs];
+        uint16_t len = *reinterpret_cast<const uint16_t *>(entry + 2);
+        if (len < 22)
+            break;
+        if (entry[4] == 0) {
+            outCompSlot = entry[0];
+            outRemSlots = static_cast<int8_t>(entry[6]);
+            return static_cast<int>(entry[1]);
+        }
+        ofs += len;
+        ++idx;
+    }
+    return -1;
+}
+
 } // namespace
 
 int HotseatCareerManager::findNextPlayerForCurrentCalendarSlot() const
@@ -566,6 +590,279 @@ bool HotseatCareerManager::advanceTurnAndResolveRound()
     return true;
 }
 
+bool HotseatCareerManager::areAllWorldsSeasonFinished() const
+{
+    if (!m_hasActiveWorld || m_leagueWorlds.empty()) {
+        uint16_t sFin = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kSeasonFinished]);
+        return sFin != 0;
+    }
+
+    for (const auto& kv : m_leagueWorlds) {
+        if (!kv.second.initialized)
+            continue;
+        if (kv.first == m_activeWorldKey) {
+            uint16_t sFin = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kSeasonFinished]);
+            if (sFin == 0)
+                return false;
+        } else if (kv.second.seasonFinished == 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool HotseatCareerManager::stepActiveWorldOneCpuEntrySilently()
+{
+    uint16_t sFin = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kSeasonFinished]);
+    uint16_t totalEntries = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E2]);
+    uint16_t curCalIdx = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3DE]);
+    uint16_t curCalOfs = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E0]);
+
+    if (sFin != 0 || totalEntries == 0 || curCalIdx >= totalEntries ||
+        curCalOfs + 22 > kCalendarBufferSize) {
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kSeasonFinished]) = 1;
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerFinished]) = 1;
+        saveActiveWorldFromVm();
+        return false;
+    }
+
+    syncPlayersWithSelectedTeams(true);
+    ensureHotseatTeamControlsInSelectedTeams();
+    relinkCompetitionTeamPointers();
+
+    uint8_t *entry = &SwosVM::g_memByte[CareerOffsets::kDsegDB3E6 + curCalOfs];
+    if (entry[4] == 0 && static_cast<int8_t>(entry[6]) > 0) {
+        entry[6] = 0;
+    }
+
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E4]) = 0;
+
+    extern void cseg_8E841();
+    extern void cseg_8EA82();
+    extern void cseg_8EC2B();
+
+    save68kRegisters();
+    if (entry[4] == 0) {
+        cseg_8E841();
+    }
+    cseg_8EA82();
+    cseg_8EC2B();
+    restore68kRegisters();
+
+    sFin = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kSeasonFinished]);
+    if (sFin == 0 && totalEntries > 0) {
+        uint16_t newOfs = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E0]);
+        if (newOfs + 22 <= kCalendarBufferSize) {
+            SwosVM::g_memByte[CareerOffsets::kDsegE0048] =
+                SwosVM::g_memByte[CareerOffsets::kDsegDB3E6 + newOfs + 1];
+        }
+    }
+
+    if (m_activePlayerIndex >= 0 && m_activePlayerIndex < m_numPlayers) {
+        saveCurrentSwosContext(m_players[m_activePlayerIndex]);
+    }
+    saveCurrentEuroCup();
+    syncPlayersWithSelectedTeams(true);
+    saveActiveWorldFromVm();
+    return true;
+}
+
+bool HotseatCareerManager::resolveLockstepAndSelectPlayer(bool refreshUi /* = true */)
+{
+    if (!isActive() || m_numPlayers <= 1 || swos.g_gameType != kGameTypeCareer)
+        return false;
+
+    if (m_leagueWorlds.size() <= 1)
+        return syncActivePlayerToHighlightedSlot(refreshUi);
+
+    if (m_activePlayerIndex >= 0 && m_activePlayerIndex < m_numPlayers) {
+        saveCurrentSwosContext(m_players[m_activePlayerIndex]);
+    }
+    saveActiveWorldFromVm();
+    saveCurrentEuroCup();
+
+    int prevActiveIdx = m_activePlayerIndex;
+    auto findRepPlayerInWorld = [&](const LeagueWorldKey& k) -> int {
+        for (int p = 0; p < m_numPlayers; ++p) {
+            if (worldKeyForPlayer(m_players[p]) == k)
+                return p;
+        }
+        return (m_activePlayerIndex >= 0 && m_activePlayerIndex < m_numPlayers) ? m_activePlayerIndex : 0;
+    };
+
+    auto updateUiFixtures = [&]() {
+        stageActiveCalendarSlotToVm();
+        extern void cseg_34DA3();
+        extern void cseg_3563E();
+        save68kRegisters();
+        cseg_34DA3();
+        cseg_3563E();
+        restore68kRegisters();
+        if (refreshUi) {
+            refreshContestMenuUi();
+        }
+    };
+
+    for (int step = 0; step < 512; ++step) {
+        int minWeek = -1;
+        for (const auto& kv : m_leagueWorlds) {
+            const auto& lw = kv.second;
+            if (!lw.initialized || lw.seasonFinished != 0)
+                continue;
+            uint8_t dummyComp = 0;
+            int dummyRem = 0;
+            int w = inspectNextPendingCalendarEntry(lw.calendar, lw.calStepIdx, lw.calByteOfs,
+                                                    lw.calTotalEntries, dummyComp, dummyRem);
+            if (w >= 0 && (minWeek < 0 || w < minWeek))
+                minWeek = w;
+        }
+
+        if (minWeek < 0) {
+            for (const auto& kv : m_leagueWorlds) {
+                if (!kv.second.initialized)
+                    continue;
+                if (kv.second.seasonFinished == 0) {
+                    int rep = findRepPlayerInWorld(kv.first);
+                    if (kv.first != m_activeWorldKey) {
+                        loadWorldToVm(kv.first, false);
+                    }
+                    m_activePlayerIndex = rep;
+                    loadSwosContext(m_players[rep], false);
+                    stepActiveWorldOneCpuEntrySilently();
+                    minWeek = 0;
+                    break;
+                }
+            }
+            if (minWeek < 0) {
+                updateUiFixtures();
+                return m_activePlayerIndex != prevActiveIdx;
+            }
+            continue;
+        }
+
+        m_globalWeek = static_cast<uint16_t>(minWeek);
+
+        // 1) Step any world whose next entry at minWeek has no human matches ([entry+6] <= 0)
+        bool steppedCpu = false;
+        for (const auto& kv : m_leagueWorlds) {
+            const auto& lw = kv.second;
+            if (!lw.initialized || lw.seasonFinished != 0)
+                continue;
+            uint8_t compSlot = 0;
+            int remSlots = 0;
+            int w = inspectNextPendingCalendarEntry(lw.calendar, lw.calStepIdx, lw.calByteOfs,
+                                                    lw.calTotalEntries, compSlot, remSlots);
+            if (w == minWeek && remSlots <= 0) {
+                int rep = findRepPlayerInWorld(kv.first);
+                if (kv.first != m_activeWorldKey) {
+                    loadWorldToVm(kv.first, false);
+                }
+                m_activePlayerIndex = rep;
+                loadSwosContext(m_players[rep], false);
+                stepActiveWorldOneCpuEntrySilently();
+                steppedCpu = true;
+                break;
+            }
+        }
+        if (steppedCpu)
+            continue;
+
+        // 2) Pick a world with an active human match at minWeek (preferring current active world)
+        LeagueWorldKey chosenWorld{};
+        bool foundWorld = false;
+        uint8_t chosenCompSlot = 0;
+        {
+            auto curIt = m_leagueWorlds.find(m_activeWorldKey);
+            if (curIt != m_leagueWorlds.end() && curIt->second.initialized &&
+                curIt->second.seasonFinished == 0) {
+                int remSlots = 0;
+                int w = inspectNextPendingCalendarEntry(curIt->second.calendar, curIt->second.calStepIdx,
+                                                        curIt->second.calByteOfs, curIt->second.calTotalEntries,
+                                                        chosenCompSlot, remSlots);
+                if (w == minWeek && remSlots > 0) {
+                    chosenWorld = curIt->first;
+                    foundWorld = true;
+                }
+            }
+            if (!foundWorld) {
+                for (const auto& kv : m_leagueWorlds) {
+                    const auto& lw = kv.second;
+                    if (!lw.initialized || lw.seasonFinished != 0)
+                        continue;
+                    int remSlots = 0;
+                    int w = inspectNextPendingCalendarEntry(lw.calendar, lw.calStepIdx, lw.calByteOfs,
+                                                            lw.calTotalEntries, chosenCompSlot, remSlots);
+                    if (w == minWeek && remSlots > 0) {
+                        chosenWorld = kv.first;
+                        foundWorld = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (!foundWorld) {
+            updateUiFixtures();
+            return m_activePlayerIndex != prevActiveIdx;
+        }
+
+        if (chosenWorld != m_activeWorldKey) {
+            loadWorldToVm(chosenWorld, false);
+        }
+
+        stageActiveCalendarSlotToVm();
+        extern void cseg_34DA3();
+        save68kRegisters();
+        cseg_34DA3();
+        restore68kRegisters();
+
+        int slotOwner = findNextPlayerForCurrentCalendarSlot();
+        if (slotOwner < 0) {
+            // Defensive guard: entry reported remaining human slots, yet no active human team found in slot.
+            int rep = findRepPlayerInWorld(chosenWorld);
+            m_activePlayerIndex = rep;
+            loadSwosContext(m_players[rep], false);
+            stepActiveWorldOneCpuEntrySilently();
+            continue;
+        }
+
+        m_activePlayerIndex = slotOwner;
+        loadSwosContext(m_players[slotOwner], false);
+        if (worldKeyForPlayer(m_players[slotOwner]) != chosenWorld) {
+            const auto& hostLw = m_leagueWorlds[chosenWorld];
+            if (chosenWorld.countryFileNo != 0xFF) {
+                SwosVM::g_memByte[CareerOffsets::kCompCountryNumber] = chosenWorld.countryFileNo;
+                SwosVM::g_memByte[CareerOffsets::kDsegD6CB8] = chosenWorld.countryFileNo;
+            }
+            *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD6CDC]) = chosenWorld.divisionId;
+            SwosVM::g_memByte[CareerOffsets::kDsegE0048] = hostLw.dsegE0048;
+        }
+        syncPlayersWithSelectedTeams(true);
+        ensureHotseatTeamControlsInSelectedTeams();
+        relinkCompetitionTeamPointers();
+        syncTransferMarketPoolsForCurrentPlayer();
+        updateUiFixtures();
+        return m_activePlayerIndex != prevActiveIdx;
+    }
+
+    updateUiFixtures();
+    return m_activePlayerIndex != prevActiveIdx;
+}
+
+void HotseatCareerManager::onBeforePlayMatchMenu()
+{
+    if (!isActive() || m_numPlayers <= 1 || swos.g_gameType != kGameTypeCareer || m_leagueWorlds.size() <= 1)
+        return;
+    if (isVmNationalSelector())
+        return;
+
+    uint16_t sFin = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kSeasonFinished]);
+    uint16_t cFin = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerFinished]);
+    if ((sFin != 0 || cFin != 0) && !areAllWorldsSeasonFinished()) {
+        resolveLockstepAndSelectPlayer(true);
+    }
+}
+
 void HotseatCareerManager::recordHeadToHeadResult(int topPlayerIdx, int botPlayerIdx, uint16_t topGoals, uint16_t botGoals,
                                                   uint16_t topPenGoals /* = 0 */, uint16_t botPenGoals /* = 0 */)
 {
@@ -602,7 +899,10 @@ void HotseatCareerManager::onAfterPlayMatch()
     }
     m_roundCalendarIndex = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3DE]);
 
-    if (syncActivePlayerToHighlightedSlot(true)) {
+    bool switched = (m_leagueWorlds.size() > 1)
+        ? resolveLockstepAndSelectPlayer(true)
+        : syncActivePlayerToHighlightedSlot(true);
+    if (switched) {
         setPendingOfferPrompt(true);
     }
 }
@@ -629,6 +929,10 @@ void HotseatCareerManager::onWeeklyTickForAllPlayers()
     for (int i = 0; i < m_numPlayers; ++i) {
         if (i == activeIdx)
             continue;
+        if (m_hasActiveWorld && m_leagueWorlds.size() > 1 &&
+            worldKeyForPlayer(m_players[i]) != m_activeWorldKey) {
+            continue;
+        }
 
         loadSwosContext(m_players[i], false);
 
@@ -644,7 +948,10 @@ void HotseatCareerManager::onWeeklyTickForAllPlayers()
     }
 
     for (int i = 0; i < m_numPlayers; ++i) {
-        m_players[i].playMatchBlink = 0;
+        if (!m_hasActiveWorld || m_leagueWorlds.size() <= 1 ||
+            worldKeyForPlayer(m_players[i]) == m_activeWorldKey) {
+            m_players[i].playMatchBlink = 0;
+        }
     }
 
     loadSwosContext(m_players[activeIdx], false);

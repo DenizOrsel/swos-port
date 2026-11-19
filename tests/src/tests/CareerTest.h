@@ -49,4 +49,5 @@ private:
     void testHotseatClubSwitchOldTeamCpuRedAndFixtures();
     void testHotseatEightPlayersMirrorsAndSaveV8();
     void testHotseatMultiWorldMultiplexer();
+    void testHotseatMultiWorldLockstep();
 };

@@ -464,6 +464,13 @@ public:
     bool endTurn(); // Legacy round-robin step (kept for unit compatibility)
     int roundCalendarIndex() const { return m_roundCalendarIndex; }
     void setRoundCalendarIndex(int idx) { m_roundCalendarIndex = idx; }
+    uint16_t globalWeek() const { return m_globalWeek; }
+    void setGlobalWeek(uint16_t week) { m_globalWeek = week; }
+    bool areAllWorldsSeasonFinished() const;
+    bool stepActiveWorldOneCpuEntrySilently();
+    bool resolveLockstepAndSelectPlayer(bool refreshUi = true);
+    void onBeforePlayMatchMenu();
+    void synchronizeSharedCupCalendarEntries();
     int findNextPlayerForCurrentCalendarSlot() const;
     bool ensureActivePlayerMatchesCurrentSlot();
     bool syncActivePlayerToHighlightedSlot(bool refreshUi = true);
@@ -671,6 +678,9 @@ private:
     // Multi-world state (country shared cups/markets + division calendars/tables)
     bool m_hasActiveWorld = false;
     LeagueWorldKey m_activeWorldKey{};
+    uint16_t m_globalWeek = 0;
+    std::array<bool, kNumEuroCups> m_euroCupHostSet{};
+    std::array<LeagueWorldKey, kNumEuroCups> m_euroCupHostKeys{};
     std::map<uint8_t, CountryWorldState> m_countryWorlds;
     std::map<LeagueWorldKey, LeagueWorldState> m_leagueWorlds;
     std::map<uint16_t, TeamFile> m_clubTeamCache;

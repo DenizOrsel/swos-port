@@ -12,6 +12,8 @@ void HotseatCareerManager::resetEuroCups()
     for (int e = 0; e < kNumEuroCups; ++e) {
         m_euroCupActive[e] = false;
         m_euroCupSeasonStrOfs[e] = 0;
+        m_euroCupHostSet[e] = false;
+        m_euroCupHostKeys[e] = {};
         m_euroCupBuffers[e].fill(0);
     }
     m_euroCupByCalOfs.clear();
@@ -353,4 +355,84 @@ void HotseatCareerManager::addHumanTeamsToCupSelection(uint32_t listBaseVm)
     D6 = remSlots;
     A2 = listCurVm;
     A4 = selEndVm;
+}
+
+void HotseatCareerManager::synchronizeSharedCupCalendarEntries()
+{
+    if (!isActive() || m_leagueWorlds.size() <= 1)
+        return;
+
+    saveActiveWorldFromVm();
+
+    std::map<uint8_t, LeagueWorldKey> countryHost;
+    for (const auto& kv : m_leagueWorlds) {
+        if (!kv.second.initialized)
+            continue;
+        auto it = countryHost.find(kv.first.countryFileNo);
+        if (it == countryHost.end()) {
+            countryHost[kv.first.countryFileNo] = kv.first;
+        }
+    }
+
+    for (int e = 0; e < kNumEuroCups; ++e) {
+        if (!m_euroCupActive[e]) {
+            m_euroCupHostSet[e] = false;
+            continue;
+        }
+        if (m_euroCupHostSet[e] && m_leagueWorlds.count(m_euroCupHostKeys[e]) != 0)
+            continue;
+        m_euroCupHostSet[e] = false;
+        for (const auto& kv : m_leagueWorlds) {
+            if (!kv.second.initialized)
+                continue;
+            for (const auto& ec : kv.second.euroCupByCalOfs) {
+                if (ec.second == e) {
+                    m_euroCupHostKeys[e] = kv.first;
+                    m_euroCupHostSet[e] = true;
+                    break;
+                }
+            }
+            if (m_euroCupHostSet[e])
+                break;
+        }
+    }
+
+    for (auto& kv : m_leagueWorlds) {
+        LeagueWorldState& lw = kv.second;
+        if (!lw.initialized)
+            continue;
+
+        bool isCountryHost = (countryHost.count(kv.first.countryFileNo) && countryHost[kv.first.countryFileNo] == kv.first);
+        uint16_t ofs = 0;
+        for (uint16_t i = 0; i < lw.calTotalEntries && ofs + 22 <= kCalendarBufferSize; ++i) {
+            uint8_t *entry = &lw.calendar[ofs];
+            uint16_t len = *reinterpret_cast<const uint16_t *>(entry + 2);
+            if (len < 22)
+                break;
+
+            uint8_t compSlot = entry[0];
+            if ((compSlot == 1 || compSlot == 2) && !isCountryHost) {
+                entry[4] = 1;
+                entry[5] = 0;
+                entry[6] = 0;
+            } else if (compSlot == 3) {
+                auto ecIt = lw.euroCupByCalOfs.find(ofs);
+                if (ecIt != lw.euroCupByCalOfs.end()) {
+                    int eIdx = ecIt->second;
+                    if (eIdx >= 0 && eIdx < kNumEuroCups && m_euroCupHostSet[eIdx] &&
+                        m_euroCupHostKeys[eIdx] != kv.first) {
+                        entry[4] = 1;
+                        entry[5] = 0;
+                        entry[6] = 0;
+                    }
+                }
+            }
+            ofs += len;
+        }
+    }
+
+    if (m_hasActiveWorld) {
+        loadWorldToVm(m_activeWorldKey, false);
+        loadSwosContext(m_players[m_activePlayerIndex], true);
+    }
 }

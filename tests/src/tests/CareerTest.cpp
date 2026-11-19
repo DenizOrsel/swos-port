@@ -79,6 +79,7 @@ auto CareerTest::getCases() -> CaseList
         { "test hotseat club switch marks old team CPU red and CPU fixtures", "career-hotseat-club-switch-old-cpu", {}, bind(&CareerTest::testHotseatClubSwitchOldTeamCpuRedAndFixtures), 1, false },
         { "test hotseat 8 players isolated mirrors and V8 save load", "career-hotseat-8players", {}, bind(&CareerTest::testHotseatEightPlayersMirrorsAndSaveV8), 1, false },
         { "test hotseat multi-world country/league multiplexer", "career-hotseat-multi-world-mux", {}, bind(&CareerTest::testHotseatMultiWorldMultiplexer), 1, false },
+        { "test hotseat multi-world lockstep and cpu round stepping", "career-hotseat-multi-world-lockstep", {}, bind(&CareerTest::testHotseatMultiWorldLockstep), 1, false },
     };
 }
 
@@ -4083,4 +4084,124 @@ void CareerTest::testHotseatMultiWorldMultiplexer()
                 static_cast<uint16_t>(0x0526));
 
     mgr.reset();
+}
+
+void CareerTest::testHotseatMultiWorldLockstep()
+{
+    SWOS_UnitTest::setMenuCallback([&] {
+        SetExitMenuFlag();
+        return true;
+    });
+
+    extern void InitCareer();
+    auto& mgr = HotseatCareerManager::get();
+    mgr.reset();
+
+    // P0: England Div 3 (long 46-round season), P1: Turkey Div 0 (shorter 34-round season)
+    const int16_t kTurTeam = 0x0526; // Fenerbahce (country 38)
+    const int16_t kEngTeam = 0x4508; // England Div 3 club (country 8, ord 69)
+
+    mgr.initializeHotseat({ kEngTeam, kTurTeam });
+    assertEqual(mgr.numPlayers(), 2);
+
+    // Initialize World(8, Div3) via real InitCareer under initializingSeason guard
+    mgr.setInitializingSeason(true);
+    swos.g_gameType = kGameTypeCareer;
+    swos.coachOrPlayer = 1;
+    D0 = static_cast<uint16_t>(kEngTeam);
+    InitCareer();
+    swos.g_gameType = kGameTypeCareer;
+    uint16_t engDiv = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD6CDC]);
+    mgr.player(0).dsegD6CDC = engDiv;
+    mgr.saveCurrentSwosContext(mgr.player(0));
+    LeagueWorldKey engKey = mgr.worldKeyForPlayer(mgr.player(0));
+    mgr.captureActiveWorldAsInitial(engKey);
+    uint16_t engEntries = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E2]);
+    assertTrue(engEntries > 10);
+
+    // Initialize World(38, Div0) via real InitCareer cleanly for P1
+    swos.g_gameType = kGameTypeCareer;
+    swos.coachOrPlayer = 1;
+    D0 = static_cast<uint16_t>(kTurTeam);
+    InitCareer();
+    swos.g_gameType = kGameTypeCareer;
+    mgr.setInitializingSeason(false);
+
+    // Snapshot P1 into World(38, Div0)
+    uint16_t turDiv = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD6CDC]);
+    mgr.player(1).dsegD6CDC = turDiv;
+    mgr.saveCurrentSwosContext(mgr.player(1));
+    LeagueWorldKey turKey = mgr.worldKeyForPlayer(mgr.player(1));
+    mgr.captureActiveWorldAsInitial(turKey);
+    uint16_t turEntries = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E2]);
+    assertTrue(turEntries > 10);
+
+    assertEqual(mgr.worldCount(), 2);
+    assertEqual(mgr.numPlayers(), 2);
+    assertTrue(mgr.isActive());
+    assertFalse(mgr.areAllWorldsSeasonFinished());
+
+    // Verify actual SWOS start weeks (engWeek0 <= turWeek0): lockstep must hold Turkey until globalWeek >= turWeek0
+    uint8_t engWeek0 = mgr.leagueWorlds().at(engKey).calendar[mgr.leagueWorlds().at(engKey).calByteOfs + 1];
+    mgr.switchToPlayer(1, true);
+    uint16_t curCalOfs = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E0]);
+    uint8_t turWeek0 = SwosVM::g_memByte[CareerOffsets::kDsegDB3E6 + curCalOfs + 1];
+    uint16_t prevEngIdx = mgr.leagueWorlds().at(engKey).calStepIdx;
+    SwosVM::g_memByte[CareerOffsets::kDsegDB3E6 + curCalOfs + 6] = 0; // make Turkey entry 0 CPU-only
+    mgr.saveActiveWorldFromVm();
+
+    mgr.resolveLockstepAndSelectPlayer(false);
+    if (engWeek0 < turWeek0) {
+        // England starts earlier than Turkey: Turkey waits while England leads!
+        assertEqual(mgr.activeWorldKey().countryFileNo, engKey.countryFileNo);
+        assertEqual(mgr.leagueWorlds().at(turKey).calStepIdx, static_cast<uint16_t>(0));
+        int preGuard = 0;
+        while (mgr.leagueWorlds().at(engKey).seasonFinished == 0 && preGuard < 50) {
+            uint16_t eOfs = mgr.leagueWorlds().at(engKey).calByteOfs;
+            uint8_t eW = mgr.leagueWorlds().at(engKey).calendar[eOfs + 1];
+            if (eW >= turWeek0)
+                break;
+            mgr.switchToPlayer(0, true);
+            mgr.stepActiveWorldOneCpuEntrySilently();
+            ++preGuard;
+        }
+        mgr.resolveLockstepAndSelectPlayer(false);
+    }
+
+    assertTrue(mgr.leagueWorlds().at(turKey).calStepIdx > 0);
+    if (engWeek0 >= turWeek0) {
+        assertEqual(mgr.leagueWorlds().at(engKey).calStepIdx, prevEngIdx);
+    }
+
+    // Fast-forward Turkey to seasonFinished = 1 while England still has remaining rounds
+    mgr.loadWorldToVm(turKey, false);
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kSeasonFinished]) = 1;
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerFinished]) = 1;
+    mgr.saveActiveWorldFromVm();
+    assertFalse(mgr.areAllWorldsSeasonFinished());
+
+    // Calling onBeforePlayMatchMenu while in finished Turkey must hold SeasonFinished and route to England!
+    mgr.onBeforePlayMatchMenu();
+    assertEqual(mgr.activeWorldKey().countryFileNo, engKey.countryFileNo);
+    assertEqual(mgr.activePlayerIndex(), 0);
+    assertEqual(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kSeasonFinished]),
+                static_cast<uint16_t>(0));
+
+    // Step England silently through trailing entries until both worlds finish
+    int guardSteps = 0;
+    while (!mgr.areAllWorldsSeasonFinished() && guardSteps < 200) {
+        mgr.stepActiveWorldOneCpuEntrySilently();
+        ++guardSteps;
+    }
+    assertTrue(mgr.areAllWorldsSeasonFinished());
+    assertTrue(guardSteps > 0 && guardSteps < 200);
+    assertTrue(mgr.leagueWorlds().at(engKey).seasonFinished != 0);
+    assertTrue(mgr.leagueWorlds().at(turKey).seasonFinished != 0);
+
+    // Verify Turkey's calendar buffer stayed untouched while England simulated to season completion
+    assertEqual(mgr.leagueWorlds().at(turKey).calTotalEntries, turEntries);
+    assertTrue(turWeek0 <= 200);
+
+    mgr.reset();
+    SWOS_UnitTest::setMenuCallback();
 }

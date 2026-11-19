@@ -22,7 +22,10 @@ void activateEuroCupForVmSelectedTeam()
 
 void InitCareerVariables_OnEnter()
 {
-    HotseatCareerManager::get().reset();
+    auto& mgr = HotseatCareerManager::get();
+    if (!mgr.isInitializingSeason()) {
+        mgr.reset();
+    }
 }
 
 void CareerInitVars_OnEnter()
@@ -287,6 +290,11 @@ void Hotseat_OnAfterEnsureCareerPlayers()
 void ShowPlayMatchMenu_OnEnter()
 {
     HotseatCareerManager::get().onBeforeShowPlayMatchMenu();
+}
+
+void PlayMatchMenu_OnEnter()
+{
+    HotseatCareerManager::get().onBeforePlayMatchMenu();
 }
 
 void Hotseat_OnAfterShowPlayMatchMenu()
