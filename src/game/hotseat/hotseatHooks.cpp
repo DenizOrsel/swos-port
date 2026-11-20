@@ -45,6 +45,21 @@ void StartContest_OnEnter()
     if (swos.g_gameType != kGameTypeCareer) {
         mgr.reset();
     } else {
+        if (mgr.hasActiveWorld() && mgr.activePlayerIndex() >= 0 && mgr.activePlayerIndex() < mgr.numPlayers()) {
+            int16_t tid = mgr.activePlayer().teamId;
+            auto *selTeams = reinterpret_cast<const TeamFile *>(swos.g_selectedTeams);
+            int count = std::clamp<int>(swos.g_numSelectedTeams, 0, kMaxSelectedTeamsCount);
+            bool foundActive = false;
+            for (int i = 0; i < count; ++i) {
+                if (*reinterpret_cast<const int16_t *>(&selTeams[i]) == tid) {
+                    foundActive = true;
+                    break;
+                }
+            }
+            if (!foundActive) {
+                mgr.loadWorldToVm(mgr.activeWorldKey(), false);
+            }
+        }
         mgr.syncPlayersWithSelectedTeams(true);
         mgr.relinkCompetitionTeamPointers();
         mgr.syncTransferMarketPoolsForCurrentPlayer();

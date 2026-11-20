@@ -1,5 +1,8 @@
 #include "hotseatInternal.h"
 #include "menus.h"
+#include "continueAbortMenu.h"
+#include "drawMenu.h"
+#include "mainMenu.h"
 #include "careerPlayerCount.mnu.h"
 
 using namespace HotseatInternal;
@@ -187,15 +190,295 @@ int HotseatCareerManager::getAssignedSlotCount() const
     return static_cast<int>(m_assignedTeamSlots.size());
 }
 
+bool HotseatCareerManager::isTeamSelectionMenuOffset(uint32_t menuOffset) const
+{
+    return menuOffset == CareerOffsets::kChooseTeamsFriendly ||
+           menuOffset == CareerOffsets::kChooseTeamsFriendlyMenu;
+}
+
 int HotseatCareerManager::getTeamSlotFromEntry(const MenuEntry *entry) const
 {
-    if (!entry || !entry->fg.string || entry->invisible)
+    if (!entry || entry->invisible || !entry->isString())
         return -1;
     auto packed = getCurrentPackedMenu();
-    if (!packed || !SwosVM::isSwosPtr(packed) || SwosVM::ptrToOffset(packed) != 485019)
+    if (!packed || !SwosVM::isSwosPtr(packed))
+        return -1;
+    uint32_t offset = SwosVM::ptrToOffset(packed);
+    if (offset == CareerOffsets::kChooseTeamsFriendly) {
+        if (entry->ordinal < 8 || entry->ordinal > 73)
+            return -1;
+    } else if (offset == CareerOffsets::kChooseTeamsFriendlyMenu) {
+        if (entry->ordinal < 7 || entry->ordinal > 54)
+            return -1;
+    } else {
+        return -1;
+    }
+    if (!entry->string() || !SwosVM::isSwosPtr(entry->fg.string) || SwosVM::ptrToOffset(entry->fg.string) < 5)
         return -1;
     auto tf = reinterpret_cast<const TeamFile *>(entry->fg.string - 5);
     return getTeamSlot(tf->globalTeamNumber);
+}
+
+void HotseatCareerManager::syncSelectedTeamsFromAssignedSlots()
+{
+    if (m_assignedSlotInfos.empty()) {
+        swos.g_numSelectedTeams = 0;
+        return;
+    }
+
+    bool hasAnyTeamFile = false;
+    for (const auto& kv : m_assignedSlotInfos) {
+        if (kv.second.teamFile.teamName[0] != '\0') {
+            hasAnyTeamFile = true;
+            break;
+        }
+    }
+    if (!hasAnyTeamFile)
+        return;
+
+    if (!swos.selTeamsPtr) {
+        swos.selTeamsPtr = SwosVM::ptrToOffset(swos.g_selectedTeams);
+    }
+    auto *dst = reinterpret_cast<TeamFile *>(SwosVM::offsetToPtr(swos.selTeamsPtr));
+    if (!dst) {
+        dst = reinterpret_cast<TeamFile *>(swos.g_selectedTeams);
+        swos.selTeamsPtr = SwosVM::ptrToOffset(swos.g_selectedTeams);
+    }
+
+    int written = 0;
+    for (int slot = 0; slot < m_careerNumPlayers && written < kMaxSelectedTeamsCount; ++slot) {
+        auto it = m_assignedSlotInfos.find(slot);
+        if (it == m_assignedSlotInfos.end() || it->second.teamFile.teamName[0] == '\0')
+            continue;
+
+        dst[written] = it->second.teamFile;
+        int16_t role = (slot < wizardTotalPlayers()) ? wizardPlayer(slot).coachOrPlayer : 1;
+        dst[written].teamControls = (role == 1) ? kPlayerCoach : kCoach;
+        ++written;
+    }
+    swos.g_numSelectedTeams = static_cast<int16_t>(written);
+}
+
+void HotseatCareerManager::refreshTeamSelectionMenu(uint32_t menuOffset)
+{
+    if (!m_isSelectingCareerTeams || !isTeamSelectionMenuOffset(menuOffset))
+        return;
+
+    // Allow exiting across divisions, countries, and continents freely during multi-club career setup
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kTopOfStackMark]) = 0;
+
+    auto *menu = getCurrentMenu();
+    if (!menu)
+        return;
+
+    bool isFriendly = (menuOffset == CareerOffsets::kChooseTeamsFriendly);
+    int minTeamOrd = isFriendly ? 8 : 7;
+    int maxTeamOrd = isFriendly ? 73 : 54;
+    int playOrd = isFriendly ? 76 : 55;
+    int statusOrd = isFriendly ? 77 : 58;
+
+    for (int ord = minTeamOrd; ord <= maxTeamOrd && ord < menu->numEntries; ++ord) {
+        auto *e = getMenuEntry(ord);
+        if (!e || e->invisible || !e->isString())
+            continue;
+        int slot = getTeamSlotFromEntry(e);
+        if (slot >= 0) {
+            int16_t role = (slot < wizardTotalPlayers()) ? wizardPlayer(slot).coachOrPlayer : 1;
+            if (SwosVM::isSwosPtr(e->fg.string) && SwosVM::ptrToOffset(e->fg.string) >= 5) {
+                auto *team = reinterpret_cast<TeamFile *>(e->fg.string - 5);
+                team->teamControls = (role == 1) ? kPlayerCoach : kCoach;
+            }
+            e->bg.entryColor = (role == 1) ? 11 : 13;
+        } else {
+            if (!isFriendly) {
+                e->bg.entryColor = 9;
+            } else if (e->bg.entryColor == 11 || e->bg.entryColor == 13) {
+                if (SwosVM::isSwosPtr(e->fg.string) && SwosVM::ptrToOffset(e->fg.string) >= 5) {
+                    auto *team = reinterpret_cast<TeamFile *>(e->fg.string - 5);
+                    team->teamControls = kComputerTeam;
+                }
+                e->bg.entryColor = 10;
+            }
+        }
+    }
+
+    int assigned = getAssignedSlotCount();
+    int needed = m_careerNumPlayers;
+    bool ready = (assigned >= needed);
+
+    if (playOrd < menu->numEntries) {
+        auto *playBtn = getMenuEntry(playOrd);
+        if (ready) {
+            playBtn->show();
+            playBtn->enable();
+        } else {
+            playBtn->hide();
+            playBtn->disable();
+        }
+    }
+
+    if (statusOrd < menu->numEntries) {
+        auto *statusLbl = getMenuEntry(statusOrd);
+        if (ready) {
+            statusLbl->hide();
+        } else {
+            statusLbl->show();
+        }
+        statusLbl->disable();
+    }
+
+    if (!isFriendly) {
+        if (56 < menu->numEntries) {
+            auto *viewBtn = getMenuEntry(56);
+            if (assigned > 0) {
+                viewBtn->show();
+                viewBtn->enable();
+            } else {
+                viewBtn->hide();
+                viewBtn->disable();
+            }
+        }
+        if (57 < menu->numEntries) {
+            auto *exitBtn = getMenuEntry(57);
+            exitBtn->show();
+            exitBtn->enable();
+        }
+    }
+
+    auto selected = menu->selectedEntry;
+    if (!selected || selected->invisible || (selected->ordinal == playOrd && !ready)) {
+        if (isFriendly) {
+            setCurrentEntry(ready ? 76 : 74);
+        } else {
+            setCurrentEntry(ready ? 55 : (assigned > 0 ? 56 : 57));
+        }
+    }
+}
+
+bool HotseatCareerManager::handleTeamSelectionMenuSelect(uint32_t menuOffset, MenuEntry *entry)
+{
+    if (!m_isSelectingCareerTeams || !isTeamSelectionMenuOffset(menuOffset) || !entry)
+        return false;
+
+    extern void ChooseTeamsFriendlyInit();
+    extern void ChooseTeamsFriendlyInitFinish();
+
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kTopOfStackMark]) = 0;
+
+    bool isFriendly = (menuOffset == CareerOffsets::kChooseTeamsFriendly);
+    int minTeamOrd = isFriendly ? 8 : 7;
+    int maxTeamOrd = isFriendly ? 73 : 54;
+    int playOrd = isFriendly ? 76 : 55;
+
+    auto reinitAfterModal = [&]() {
+        save68kRegisters();
+        if (isFriendly)
+            ChooseTeamsFriendlyInit();
+        else
+            ChooseTeamsFriendlyInitFinish();
+        restore68kRegisters();
+        refreshTeamSelectionMenu(menuOffset);
+    };
+
+    if (entry->ordinal >= minTeamOrd && entry->ordinal <= maxTeamOrd &&
+        !entry->invisible && entry->isString() &&
+        SwosVM::isSwosPtr(entry->fg.string) && SwosVM::ptrToOffset(entry->fg.string) >= 5) {
+        auto *team = reinterpret_cast<TeamFile *>(entry->fg.string - 5);
+        int curSlot = getTeamSlot(team->globalTeamNumber);
+
+        if (curSlot >= 0) {
+            unassignTeamSlot(team->globalTeamNumber);
+            team->teamControls = isFriendly ? kComputerTeam : kTeamNotSelected;
+            entry->bg.entryColor = isFriendly ? 10 : 9;
+            if (!isFriendly)
+                syncSelectedTeamsFromAssignedSlots();
+            refreshTeamSelectionMenu(menuOffset);
+            entry->drawn = 0;
+            drawMenu();
+            return true;
+        }
+
+        int nextSlot = getNextAvailableSlot();
+        if (nextSlot >= 0 && nextSlot < m_careerNumPlayers) {
+            assignTeamSlot(team->globalTeamNumber, nextSlot, team);
+            int16_t role = (nextSlot < wizardTotalPlayers()) ? wizardPlayer(nextSlot).coachOrPlayer : 1;
+            team->teamControls = (role == 1) ? kPlayerCoach : kCoach;
+            entry->bg.entryColor = (role == 1) ? 11 : 13;
+            if (!isFriendly)
+                syncSelectedTeamsFromAssignedSlots();
+            refreshTeamSelectionMenu(menuOffset);
+            entry->drawn = 0;
+            drawMenu();
+            return true;
+        }
+
+        char msg[64];
+        snprintf(msg, sizeof(msg), "ALL %d CLUBS SELECTED! DESELECT ONE FIRST.", m_careerNumPlayers);
+        showContinueAbortPrompt("CLUB SELECTION", "OK", nullptr, { msg }, false);
+        reinitAfterModal();
+        return true;
+    }
+
+    if (entry->ordinal == playOrd) {
+        int assigned = getAssignedSlotCount();
+        int needed = m_careerNumPlayers;
+        if (assigned < needed) {
+            char msg[48];
+            snprintf(msg, sizeof(msg), "SELECT %d MORE CLUB%s!", needed - assigned, (needed - assigned == 1) ? "" : "S");
+            showContinueAbortPrompt("CLUB SELECTION", "OK", nullptr, { msg }, false);
+            reinitAfterModal();
+            return true;
+        }
+
+        syncSelectedTeamsFromAssignedSlots();
+        save68kRegisters();
+        swos.controlMask = 0;
+        A5 = entry;
+        entry->onSelect();
+        restore68kRegisters();
+        return true;
+    }
+
+    if (isFriendly && entry->ordinal == 74) {
+        // CHANGE / OTHER LEAGUES button: run SWOS ChangeTeams then keep all picked hotseat clubs
+        save68kRegisters();
+        swos.controlMask = 0;
+        A5 = entry;
+        entry->onSelect();
+        restore68kRegisters();
+        syncSelectedTeamsFromAssignedSlots();
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kTopOfStackMark]) = 0;
+        return true;
+    }
+
+    if (!isFriendly && entry->ordinal == 56) {
+        // VIEW SELECTED button on chooseTeamsFriendlyMenu (499317)
+        if (getAssignedSlotCount() <= 0) {
+            refreshTeamSelectionMenu(menuOffset);
+            return true;
+        }
+        syncSelectedTeamsFromAssignedSlots();
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kTopOfStackMark]) = 0;
+        save68kRegisters();
+        swos.controlMask = 0;
+        A5 = entry;
+        entry->onSelect();
+        restore68kRegisters();
+        return true;
+    }
+
+    if (!isFriendly && entry->ordinal == 57) {
+        // EXIT button on chooseTeamsFriendlyMenu (499317): navigate back to league/country list
+        *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kTopOfStackMark]) = 0;
+        save68kRegisters();
+        swos.controlMask = 0;
+        A5 = entry;
+        entry->onSelect();
+        restore68kRegisters();
+        return true;
+    }
+
+    return false;
 }
 
 void cseg_5DEB9();
@@ -447,21 +730,55 @@ void startCareerMode()
 {
     extern void cseg_4C6EE();
     extern void CommonMenuExit();
+    extern void CheckContinueAbortPrompt();
 
     logInfo("Starting Career Mode setup flow");
+
+    if (swos.g_gameType != kGameTypeNoGame) {
+        save68kRegisters();
+        A0 = 18550; // offset aCareer ("CAREER")
+        CheckContinueAbortPrompt();
+        uint16_t aborted = D0.asWord();
+        restore68kRegisters();
+        swos.g_exitMenu = 0;
+        if (aborted != 0 || swos.g_gameType != kGameTypeNoGame) {
+            if (mainMenuActive())
+                CommonMenuExit();
+            return;
+        }
+        if (mainMenuActive())
+            CommonMenuExit();
+    }
+
+    auto& mgr = HotseatCareerManager::get();
+    mgr.reset();
+
+    auto abortCareerSetup = [&]() {
+        mgr.setSelectingCareerTeams(false);
+        mgr.unassignAllTeamSlots();
+        mgr.setWizardActive(false);
+        mgr.reset();
+        save68kRegisters();
+        D0 = kGameTypeNoGame;
+        ::CareerInitVars();
+        restore68kRegisters();
+        swos.g_exitMenu = 0;
+        if (mainMenuActive())
+            CommonMenuExit();
+    };
 
     s_chosenPlayerCount = 0;
     s_playerCountConfirmed = false;
     showMenu(careerPlayerCountMenu);
     if (!s_playerCountConfirmed || s_chosenPlayerCount < 1 || s_chosenPlayerCount > kMaxHotseatPlayers) {
         logInfo("Career player count selection canceled or exited");
+        abortCareerSetup();
         return;
     }
 
     int numPlayers = s_chosenPlayerCount;
     logInfo("Career Mode: %d player(s) selected", numPlayers);
 
-    auto& mgr = HotseatCareerManager::get();
     if (numPlayers == 1) {
         extern void CareerMenu();
         mgr.reset();
@@ -481,7 +798,7 @@ void startCareerMode()
 
         if (!mgr.wizardAdvanced()) {
             logInfo("Player %d setup aborted by user", p + 1);
-            mgr.setWizardActive(false);
+            abortCareerSetup();
             return;
         }
     }
@@ -499,6 +816,7 @@ void startCareerMode()
     if (result == 0 || mgr.getAssignedSlotCount() < numPlayers) {
         logInfo("Career club selection canceled or incomplete (assigned=%d, needed=%d)",
                 mgr.getAssignedSlotCount(), numPlayers);
+        abortCareerSetup();
         return;
     }
 

@@ -14,6 +14,7 @@
 #include "continueAbortMenu.h"
 #include "mockLog.h"
 #include "mockSdlMixer.h"
+#include "drawMenu.h"
 #include <cstdio>
 #include <fstream>
 
@@ -82,6 +83,8 @@ auto CareerTest::getCases() -> CaseList
         { "test hotseat multi-world lockstep and cpu round stepping", "career-hotseat-multi-world-lockstep", {}, bind(&CareerTest::testHotseatMultiWorldLockstep), 1, false },
         { "test hotseat Div 3 to Div 2 split and cross-league job offer", "career-hotseat-div3-div2-split", {}, bind(&CareerTest::testHotseatDiv3ToDiv2SplitAndCrossLeagueJobOffer), 1, false },
         { "test hotseat multi-country career setup, cross-country transfers, V9 save, and season transition", "career-hotseat-multi-country", {}, bind(&CareerTest::testHotseatMultiCountryCareer), 1, false },
+        { "test hotseat club selection menu multi-league flow and mouse/restore safety", "career-hotseat-club-selection-menus", {}, bind(&CareerTest::testHotseatClubSelectionMenuMultiLeagueAndMouseSafety), 1, false },
+        { "test hotseat startCareerMode cancel preserves or clears active contest", "career-hotseat-start-career-cancel", {}, bind(&CareerTest::testHotseatStartCareerCancelPreservesOrClearsActiveContest), 1, false },
     };
 }
 
@@ -4836,5 +4839,364 @@ void CareerTest::testHotseatMultiCountryCareer()
     assertTrue(otherEngS2->teamControls == kPlayerCoach || otherEngS2->teamControls == kCoach);
 
     mgr.reset();
+    SWOS_UnitTest::setMenuCallback();
+}
+
+void CareerTest::testHotseatClubSelectionMenuMultiLeagueAndMouseSafety()
+{
+    extern void cseg_4C6EE();
+
+    D0 = kGameTypeNoGame;
+    ::CareerInitVars();
+    auto& mgr = HotseatCareerManager::get();
+    mgr.resetWizard(2);
+    mgr.wizardPlayer(0).coachOrPlayer = 1; // Purple (11)
+    mgr.wizardPlayer(1).coachOrPlayer = 0; // Light Blue (13)
+    mgr.setWizardActive(false);
+
+    mgr.setSelectingCareerTeams(true);
+    mgr.setCareerNumPlayers(2);
+    mgr.unassignAllTeamSlots();
+
+    auto findEntryBySubstring = [](const char *needle) -> int {
+        auto *menu = getCurrentMenu();
+        if (!menu)
+            return -1;
+        for (int i = 0; i < menu->numEntries; ++i) {
+            auto *e = getMenuEntry(i);
+            if (!e || e->invisible || !e->isString() || !e->string())
+                continue;
+            if (std::strstr(e->string(), needle) != nullptr)
+                return i;
+        }
+        return -1;
+    };
+
+    enum class Step {
+        PickEuropeForItaly,
+        PickItaly,
+        PickSerieA,
+        VerifyFriendlyPromptAndPickP1ThenChange,
+        ExitItalyToEurope,
+        PickEngland,
+        PickFirstDivThenExitBack,
+        PickPremierDiv,
+        PickP2InBrowseAndTestExitAndViewSelected,
+        ConfirmFinalPlayCareer,
+        Done,
+    };
+    Step step = Step::PickEuropeForItaly;
+    bool testedIncompletePromptRestore = false;
+    bool verifiedItalyExitButtonNotAbort = false;
+    bool verifiedEnglandExitButtonNotAbort = false;
+    bool verifiedBackFromDiv1ToLeagues = false;
+    bool verifiedBrowseUnassignedColorsReset = false;
+    bool verifiedPlayButtonHiddenUntilReady = false;
+    bool verifiedPlayButtonShownWhenReady = false;
+    bool verifiedViewSelectedCrossCountry = false;
+    uint8_t p1SavedFileNo = 0;
+    int safetyGuard = 0;
+
+    SWOS_UnitTest::setMenuCallback([&] {
+        if (++safetyGuard > 50) {
+            SetExitMenuFlag();
+            return false;
+        }
+        auto packed = getCurrentPackedMenu();
+        uint32_t ofs = (packed && SwosVM::isSwosPtr(packed)) ? SwosVM::ptrToOffset(packed) : 0;
+
+        if (ofs == CareerOffsets::kSelectTeamsMenu) {
+            if (step == Step::PickEuropeForItaly) {
+                int ord = findEntryBySubstring("EUROPE");
+                assertTrue(ord >= 0);
+                step = Step::PickItaly;
+                selectEntry(ord);
+                return false;
+            }
+            if (step == Step::PickItaly) {
+                int ord = findEntryBySubstring("ITALY");
+                assertTrue(ord >= 0);
+                step = Step::PickSerieA;
+                selectEntry(ord);
+                return false;
+            }
+            if (step == Step::PickSerieA) {
+                int ord = findEntryBySubstring("SERIE A");
+                assertTrue(ord >= 0);
+                step = Step::VerifyFriendlyPromptAndPickP1ThenChange;
+                selectEntry(ord);
+                return false;
+            }
+            if (step == Step::ExitItalyToEurope) {
+                // Critical: topOfStackMark must be 0 so EXIT (88) says EXIT and goes to Europe (not ABORT)
+                auto *exitBtn = getMenuEntry(88);
+                assertTrue(exitBtn && exitBtn->isString() && exitBtn->string() != nullptr);
+                assertTrue(std::strstr(exitBtn->string(), "EXIT") != nullptr);
+                verifiedItalyExitButtonNotAbort = true;
+                step = Step::PickEngland;
+                selectEntry(88);
+                return false;
+            }
+            if (step == Step::PickEngland) {
+                int engOrd = findEntryBySubstring("ENGLAND");
+                if (engOrd < 0) {
+                    int eurOrd = findEntryBySubstring("EUROPE");
+                    assertTrue(eurOrd >= 0);
+                    selectEntry(eurOrd);
+                    return false;
+                }
+                step = Step::PickFirstDivThenExitBack;
+                selectEntry(engOrd);
+                return false;
+            }
+            if (step == Step::PickFirstDivThenExitBack) {
+                int divOrd = findEntryBySubstring("DIVISION ONE");
+                if (divOrd < 0)
+                    divOrd = findEntryBySubstring("DIVISION 1");
+                assertTrue(divOrd >= 0);
+                selectEntry(divOrd);
+                return false;
+            }
+            if (step == Step::PickPremierDiv) {
+                int ord = findEntryBySubstring("PREMIER");
+                assertTrue(ord >= 0);
+                verifiedBackFromDiv1ToLeagues = true;
+                step = Step::PickP2InBrowseAndTestExitAndViewSelected;
+                selectEntry(ord);
+                return false;
+            }
+        }
+
+        if (ofs == CareerOffsets::kChooseTeamsFriendly) {
+            if (!testedIncompletePromptRestore) {
+                drawMenu();
+                // Initially 0/2 assigned: entry 76 must be hidden, entry 77 visible
+                assertTrue(getMenuEntry(76)->invisible != 0);
+                assertTrue(getMenuEntry(77)->invisible == 0);
+                verifiedPlayButtonHiddenUntilReady = true;
+
+                // Pick P1 (Italy Serie A club)
+                selectEntry(8);
+                assertEqual(mgr.getAssignedSlotCount(), 1);
+                assertEqual(mgr.getTeamSlotFromEntry(getMenuEntry(8)), 0);
+                assertEqual(static_cast<int>(getMenuEntry(8)->bg.entryColor), 11);
+                p1SavedFileNo = mgr.getAssignedSlotInfo(0)->teamFileNo;
+
+                // Even if entry 76 is triggered directly with 1/2 assigned, continueAbortMenu opens and
+                // returning from it must re-populate 485019 entries cleanly (never leaving nullptr / STDMENUTXT).
+                testedIncompletePromptRestore = true;
+                selectEntry(76);
+
+                auto *e8After = getMenuEntry(8);
+                assertTrue(e8After != nullptr && !e8After->invisible && e8After->isString());
+                assertTrue(e8After->string() != nullptr);
+                assertTrue(std::strcmp(e8After->string(), "STDMENUTXT") != 0);
+                assertEqual(mgr.getTeamSlotFromEntry(e8After), 0);
+
+                // Now click CHANGE/OTHER LEAGUES (74) to browse another country
+                step = Step::ExitItalyToEurope;
+                selectEntry(74);
+                return false;
+            }
+
+            if (step == Step::ConfirmFinalPlayCareer) {
+                drawMenu();
+                assertEqual(mgr.getAssignedSlotCount(), 2);
+                assertFalse(mgr.areAllAssignedTeamsInSameLeague());
+                assertTrue(getMenuEntry(76)->invisible == 0);
+                assertTrue(getMenuEntry(77)->invisible != 0);
+
+                // Verify both P1 (Italy) and P2 (England) appear in ViewSelected (485019)
+                int p0Ord = -1, p1Ord = -1;
+                for (int ord = 8; ord <= 73; ++ord) {
+                    int s = mgr.getTeamSlotFromEntry(getMenuEntry(ord));
+                    if (s == 0) p0Ord = ord;
+                    if (s == 1) p1Ord = ord;
+                }
+                assertTrue(p0Ord >= 8 && p1Ord >= 8 && p0Ord != p1Ord);
+                verifiedViewSelectedCrossCountry = true;
+                step = Step::Done;
+                selectEntry(76); // PLAY CAREER
+                return false;
+            }
+        }
+
+        if (packed == nullptr || (!SwosVM::isSwosPtr(packed) && getCurrentMenu()->numEntries == 4)) {
+            // Continue/Abort OK prompt opened from 485019 play check -> click OK (entry 2)
+            selectEntry(2);
+            return false;
+        }
+
+        if (ofs == CareerOffsets::kChooseTeamsFriendlyMenu) {
+            drawMenu();
+            assertEqual(static_cast<int>(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kTopOfStackMark])), 0);
+            auto *exitBtn = getMenuEntry(57);
+            assertTrue(exitBtn && exitBtn->isString() && exitBtn->string() != nullptr);
+            assertTrue(std::strstr(exitBtn->string(), "EXIT") != nullptr);
+            verifiedEnglandExitButtonNotAbort = true;
+
+            if (step == Step::PickFirstDivThenExitBack) {
+                // Click EXIT (57) inside chooseTeamsFriendlyMenu -> must go back to England's league list
+                step = Step::PickPremierDiv;
+                selectEntry(57);
+                return false;
+            }
+
+            // Before selecting P2 in England Prem, verify no English club inherits Italy P1's teamsTable color (all gray=9)
+            if (mgr.getAssignedSlotCount() == 1) {
+                bool anyWrongHumanColor = false;
+                for (int ord = 7; ord <= 54; ++ord) {
+                    auto *e = getMenuEntry(ord);
+                    if (e && !e->invisible && e->bg.entryColor != 9) {
+                        anyWrongHumanColor = true;
+                        break;
+                    }
+                }
+                assertFalse(anyWrongHumanColor);
+                verifiedBrowseUnassignedColorsReset = true;
+
+                // Entry 55 (PLAY) hidden, Entry 56 (VIEW SELECTED) visible, Entry 58 (SELECT MORE) visible
+                assertTrue(getMenuEntry(55)->invisible != 0);
+                assertTrue(getMenuEntry(56)->invisible == 0);
+                assertTrue(getMenuEntry(58)->invisible == 0);
+
+                // Select P2 in England Prem (entry 7)
+                selectEntry(7);
+                assertEqual(mgr.getAssignedSlotCount(), 2);
+                assertEqual(mgr.getTeamSlotFromEntry(getMenuEntry(7)), 1);
+                assertEqual(static_cast<int>(getMenuEntry(7)->bg.entryColor), 13);
+                assertTrue(getMenuEntry(55)->invisible == 0);
+                assertTrue(getMenuEntry(58)->invisible != 0);
+                verifiedPlayButtonShownWhenReady = true;
+
+                // Open VIEW SELECTED (56) -> verify 485019 displays both P1 (Italy) + P2 (England)
+                step = Step::ConfirmFinalPlayCareer;
+                selectEntry(56);
+                return false;
+            }
+        }
+
+        SetExitMenuFlag();
+        return false;
+    });
+
+    cseg_4C6EE();
+    mgr.setSelectingCareerTeams(false);
+
+    assertTrue(testedIncompletePromptRestore);
+    assertTrue(verifiedPlayButtonHiddenUntilReady);
+    assertTrue(verifiedItalyExitButtonNotAbort);
+    assertTrue(verifiedEnglandExitButtonNotAbort);
+    assertTrue(verifiedBackFromDiv1ToLeagues);
+    assertTrue(verifiedBrowseUnassignedColorsReset);
+    assertTrue(verifiedPlayButtonShownWhenReady);
+    assertTrue(verifiedViewSelectedCrossCountry);
+    assertEqual(static_cast<int>(step), static_cast<int>(Step::Done));
+    assertEqual(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kChooseTeamsResult]), uint16_t{1});
+    assertEqual(mgr.getAssignedSlotCount(), 2);
+    assertEqual(mgr.getAssignedSlotInfo(0)->teamFileNo, p1SavedFileNo);
+    assertTrue(mgr.getAssignedSlotInfo(1)->teamFileNo != p1SavedFileNo);
+    assertEqual(mgr.getAssignedSlotInfo(1)->teamFileNo, uint8_t{8}); // England
+
+    mgr.reset();
+    D0 = kGameTypeNoGame;
+    ::CareerInitVars();
+    SWOS_UnitTest::setMenuCallback();
+}
+
+void CareerTest::testHotseatStartCareerCancelPreservesOrClearsActiveContest()
+{
+    extern void VerifyTeamLoaded();
+    constexpr int16_t kManUtd = 0x0b08;    // England (8), ordinal 11
+    constexpr int16_t kFenerbahce = 0x0926; // Turkey (38), ordinal 9
+
+    // 1. Active career + user clicks ABORT on CheckContinueAbortPrompt -> existing career stays completely intact
+    initTwoPlayerHotseatFromTeams(kManUtd, kFenerbahce);
+    auto& mgr = HotseatCareerManager::get();
+    mgr.switchToPlayer(0, true);
+    assertEqual(static_cast<int>(swos.g_gameType), static_cast<int>(kGameTypeCareer));
+    assertTrue(mgr.isActive());
+
+    int promptSeen = 0;
+    SWOS_UnitTest::setMenuCallback([&] {
+        auto packed = getCurrentPackedMenu();
+        if (!packed || !SwosVM::isSwosPtr(packed)) {
+            if (getCurrentMenu()->numEntries == 4) {
+                ++promptSeen;
+                selectEntry(3); // ABORT overwriting current career
+                return false;
+            }
+        }
+        SetExitMenuFlag();
+        return false;
+    });
+
+    startCareerMode();
+    assertEqual(promptSeen, 1);
+    assertTrue(mgr.isActive());
+    assertEqual(static_cast<int>(swos.g_gameType), static_cast<int>(kGameTypeCareer));
+    assertTrue(swos.g_numSelectedTeams > 0);
+    D0 = mgr.player(0).teamId;
+    VerifyTeamLoaded(); // Must succeed without hitting debugBreak
+
+    // 2. Confirm CONTINUE (2), pick 2 PLAYERS (2), finish 2 wizards (10), then ABORT Continents (88):
+    //    Old career AND partial selection must both be cleanly reset (no broken g_gameType/continueContest).
+    int wizardCount = 0;
+    bool abortedSelectTeams = false;
+    bool confirmedOverwrite = false;
+    bool picked2Players = false;
+    SWOS_UnitTest::setMenuCallback([&] {
+        auto packed = getCurrentPackedMenu();
+        uint32_t ofs = (packed && SwosVM::isSwosPtr(packed)) ? SwosVM::ptrToOffset(packed) : 0;
+        if (!packed || !SwosVM::isSwosPtr(packed)) {
+            if (getCurrentMenu()->numEntries == 4) {
+                confirmedOverwrite = true;
+                selectEntry(2); // CONTINUE (overwrite existing career)
+                return false;
+            }
+            if (getCurrentMenu()->numEntries == 9) {
+                picked2Players = true;
+                selectEntry(2); // 2 PLAYERS on careerPlayerCountMenu
+                return false;
+            }
+        }
+        if (ofs == 483353) { // careerMenu wizard
+            ++wizardCount;
+            selectEntry(10); // NEXT PLAYER / CHOOSE CLUB
+            return false;
+        }
+        if (ofs == CareerOffsets::kSelectTeamsMenu) {
+            abortedSelectTeams = true;
+            selectEntry(88); // ABORT on Continents
+            return false;
+        }
+        SetExitMenuFlag();
+        return false;
+    });
+
+    startCareerMode();
+    assertTrue(confirmedOverwrite);
+    assertTrue(picked2Players);
+    assertEqual(wizardCount, 2);
+    assertTrue(abortedSelectTeams);
+    assertFalse(mgr.isActive());
+    assertFalse(mgr.isSelectingCareerTeams());
+    assertFalse(mgr.isWizardActive());
+    assertEqual(static_cast<int>(swos.g_gameType), static_cast<int>(kGameTypeNoGame));
+
+    // 3. StartContest_OnEnter fallback restores g_selectedTeams if externally cleared while activeWorld exists
+    initTwoPlayerHotseatFromTeams(kManUtd, 0x0c08);
+    mgr.switchToPlayer(0, true);
+    mgr.captureActiveWorldAsInitial(mgr.worldKeyForPlayer(mgr.player(0)));
+    swos.g_numSelectedTeams = 0;
+    std::memset(swos.g_selectedTeams, 0, kSelectedTeamsBufferSize);
+    SWOS::StartContest_OnEnter();
+    assertTrue(swos.g_numSelectedTeams > 0);
+    D0 = mgr.player(0).teamId;
+    VerifyTeamLoaded();
+
+    mgr.reset();
+    D0 = kGameTypeNoGame;
+    ::CareerInitVars();
     SWOS_UnitTest::setMenuCallback();
 }

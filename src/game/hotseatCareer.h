@@ -172,6 +172,10 @@ namespace CareerOffsets {
     constexpr size_t kDseg17457E = 482097;              // uint32_t (current match slot ptr)
     constexpr size_t kContestMenu = 482233;             // PackedMenu contestMenu
     constexpr size_t kCareerOverMenu = 483813;          // PackedMenu careerOverMenu
+    constexpr size_t kChooseTeamsFriendly = 485019;     // PackedMenu chooseTeamsFriendly
+    constexpr size_t kChooseTeamsFriendlyMenu = 499317; // PackedMenu chooseTeamsFriendlyMenu
+    constexpr size_t kSelectTeamsMenu = 497495;         // PackedMenu selectTeamsMenu
+    constexpr size_t kTopOfStackMark = 329978;          // uint16_t selectedTeams stack mark
     constexpr size_t kCurrentSeasonNumber = 484815;     // uint16_t (display copy)
     constexpr size_t kSeasonFinancesBlock = 484991;     // uint8_t[24] (dseg_1750CC..E0)
     constexpr size_t kDseg17A3CE = 503554;              // uint16_t national selector flag
@@ -430,6 +434,10 @@ public:
     int getAssignedSlotCount() const;
     int getTeamSlotFromEntry(const struct MenuEntry *entry) const;
     bool areAllAssignedTeamsInSameLeague() const;
+    bool isTeamSelectionMenuOffset(uint32_t menuOffset) const;
+    void syncSelectedTeamsFromAssignedSlots();
+    void refreshTeamSelectionMenu(uint32_t menuOffset);
+    bool handleTeamSelectionMenuSelect(uint32_t menuOffset, struct MenuEntry *entry);
 
     // Context Swapping & Competition Pointer Linking
     void saveCurrentSwosContext(HotseatPlayerContext& ctx);

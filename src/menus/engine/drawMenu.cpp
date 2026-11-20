@@ -51,6 +51,12 @@ void drawMenu(bool updateScreen /* = true */)
     clearAllItemsDrawnFlag();
     executeMenuOnDrawFunction();
 
+    if (HotseatCareerManager::get().isSelectingCareerTeams()) {
+        auto packed = getCurrentPackedMenu();
+        uint32_t offset = (packed && SwosVM::isSwosPtr(packed)) ? SwosVM::ptrToOffset(packed) : 0;
+        HotseatCareerManager::get().refreshTeamSelectionMenu(offset);
+    }
+
     if (HotseatCareerManager::get().isActive()) {
         auto packed = getCurrentPackedMenu();
         uint32_t offset = (packed && SwosVM::isSwosPtr(packed)) ? SwosVM::ptrToOffset(packed) : 0;
@@ -405,17 +411,50 @@ static void drawStringMenuItem(MenuEntry *entry, const char *string)
         }
     }
 
-    if (HotseatCareerManager::get().isSelectingCareerTeams() && offset == 485019) {
-        if (entry->ordinal == 76) {
+    if (HotseatCareerManager::get().isSelectingCareerTeams() &&
+        HotseatCareerManager::get().isTeamSelectionMenuOffset(offset)) {
+        auto& mgr = HotseatCareerManager::get();
+        int assigned = mgr.getAssignedSlotCount();
+        int needed = mgr.careerNumPlayers();
+        bool isFriendly = (offset == CareerOffsets::kChooseTeamsFriendly);
+        int playOrdinal = isFriendly ? 76 : 55;
+        int statusOrdinal = isFriendly ? 77 : 58;
+        int minTeamOrd = isFriendly ? 8 : 7;
+        int maxTeamOrd = isFriendly ? 73 : 54;
+
+        if (entry->ordinal == 0 && string && *string) {
+            static char careerHeaderBuf[96];
+            std::string hdr(string);
+            trimTrailingSwosPadding(hdr);
+            size_t pos = hdr.find("PLAY SEASON");
+            if (pos != std::string::npos)
+                hdr.replace(pos, 11, "CAREER");
+            if (isFriendly && assigned > 0 && !mgr.areAllAssignedTeamsInSameLeague()) {
+                snprintf(careerHeaderBuf, sizeof(careerHeaderBuf),
+                         "SELECTED CAREER CLUBS (%d/%d)", assigned, needed);
+            } else {
+                snprintf(careerHeaderBuf, sizeof(careerHeaderBuf),
+                         "%s (%d/%d)", hdr.c_str(), assigned, needed);
+            }
+            string = careerHeaderBuf;
+        } else if (isFriendly && entry->ordinal == 74) {
+            string = (assigned < needed) ? "OTHER LEAGUES" : "CHANGE CLUBS";
+        } else if (entry->ordinal == playOrdinal) {
             string = "PLAY CAREER";
-        } else if (entry->ordinal >= 8 && entry->ordinal <= 73 && !entry->invisible && string && *string) {
-            int slot = HotseatCareerManager::get().getTeamSlotFromEntry(entry);
+        } else if (entry->ordinal == statusOrdinal) {
+            static char selectMoreBuf[48];
+            int rem = std::max(0, needed - assigned);
+            snprintf(selectMoreBuf, sizeof(selectMoreBuf),
+                     "SELECT %d MORE CLUB%s", rem, rem == 1 ? "" : "S");
+            string = selectMoreBuf;
+        } else if (entry->ordinal >= minTeamOrd && entry->ordinal <= maxTeamOrd && !entry->invisible && string && *string) {
+            int slot = mgr.getTeamSlotFromEntry(entry);
             if (slot >= 0) {
-                // Re-apply human colors when returning to a league list after browsing other countries/leagues
-                auto& mgr = HotseatCareerManager::get();
                 int16_t role = (slot < mgr.wizardTotalPlayers()) ? mgr.wizardPlayer(slot).coachOrPlayer : 1;
-                auto *team = reinterpret_cast<TeamFile *>(entry->fg.string - 5);
-                team->teamControls = (role == 1) ? kPlayerCoach : kCoach;
+                if (SwosVM::isSwosPtr(entry->fg.string) && SwosVM::ptrToOffset(entry->fg.string) >= 5) {
+                    auto *team = reinterpret_cast<TeamFile *>(entry->fg.string - 5);
+                    team->teamControls = (role == 1) ? kPlayerCoach : kCoach;
+                }
                 entry->bg.entryColor = (role == 1) ? 11 : 13;
                 std::string tName(string);
                 trimTrailingSwosPadding(tName);

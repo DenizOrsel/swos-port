@@ -97,69 +97,10 @@ void selectEntry(MenuEntry *entry, int controlMask /* = kShortFireMask */)
         }
 
         // Career Club Selection: assign P1..P4 slots using each player's chosen role
-        if (HotseatCareerManager::get().isSelectingCareerTeams() && currentPackedOfs == 485019) {
-            if (entry->ordinal >= 8 && entry->ordinal <= 73 && !entry->invisible && entry->fg.string) {
-                auto team = reinterpret_cast<TeamFile *>(entry->fg.string - 5);
-                int curSlot = HotseatCareerManager::get().getTeamSlot(team->globalTeamNumber);
-
-                if (curSlot >= 0) {
-                    HotseatCareerManager::get().unassignTeamSlot(team->globalTeamNumber);
-                    team->teamControls = kComputerTeam;
-                    entry->bg.entryColor = 10; // Red (CPU)
-                    entry->drawn = 0;
-                    drawMenu();
-                    return;
-                } else {
-                    int nextSlot = HotseatCareerManager::get().getNextAvailableSlot();
-                    if (nextSlot >= 0 && nextSlot < HotseatCareerManager::get().careerNumPlayers()) {
-                        HotseatCareerManager::get().assignTeamSlot(team->globalTeamNumber, nextSlot, team);
-                        int16_t role = 1;
-                        if (nextSlot < HotseatCareerManager::get().wizardTotalPlayers()) {
-                            role = HotseatCareerManager::get().wizardPlayer(nextSlot).coachOrPlayer;
-                        }
-                        team->teamControls = (role == 1) ? kPlayerCoach : kCoach;
-                        entry->bg.entryColor = (role == 1) ? 11 : 13; // Purplish (Player-Coach) / Light Blue (Coach)
-                        entry->drawn = 0;
-                        drawMenu();
-                        return;
-                    } else {
-                        logInfo("All %d hotseat players already have teams assigned!",
-                                HotseatCareerManager::get().careerNumPlayers());
-                        return;
-                    }
-                }
-            }
-
-            if (entry->ordinal == 76) {
-                // PLAY CAREER button
-                int assigned = HotseatCareerManager::get().getAssignedSlotCount();
-                int needed = HotseatCareerManager::get().careerNumPlayers();
-                if (assigned < needed) {
-                    char msg[48];
-                    snprintf(msg, sizeof(msg), "SELECT %d MORE CLUB%s!", needed - assigned, (needed - assigned == 1) ? "" : "S");
-                    showContinueAbortPrompt("CLUB SELECTION", "OK", nullptr, { msg }, false);
-                    return;
-                }
-                // Human clubs may come from different leagues, divisions and countries: each distinct
-                // (country, division) becomes its own LeagueWorld when the career starts.
-                save68kRegisters();
-                swos.controlMask = controlMask;
-                A5 = entry;
-                entry->onSelect();
-                restore68kRegisters();
+        if (HotseatCareerManager::get().isSelectingCareerTeams() &&
+            HotseatCareerManager::get().isTeamSelectionMenuOffset(currentPackedOfs)) {
+            if (HotseatCareerManager::get().handleTeamSelectionMenuSelect(currentPackedOfs, entry))
                 return;
-            }
-
-            if (entry->ordinal == 74) {
-                // CHOOSE/CHANGE TEAMS button: browse another country/league while keeping already assigned
-                // clubs, so players can pick clubs from different leagues and countries.
-                save68kRegisters();
-                swos.controlMask = controlMask;
-                A5 = entry;
-                entry->onSelect();
-                restore68kRegisters();
-                return;
-            }
         }
 
         if (HotseatCareerManager::get().isActive()) {

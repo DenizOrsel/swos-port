@@ -53,4 +53,6 @@ private:
     void testHotseatMultiWorldLockstep();
     void testHotseatDiv3ToDiv2SplitAndCrossLeagueJobOffer();
     void testHotseatMultiCountryCareer();
+    void testHotseatClubSelectionMenuMultiLeagueAndMouseSafety();
+    void testHotseatStartCareerCancelPreservesOrClearsActiveContest();
 };

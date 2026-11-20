@@ -140,8 +140,10 @@ static bool isEntryScroller(const MenuEntry& entry)
         return true;
 
     // also quicken +/- fields
-    if (entry.isString() && (entry.string()[0] == '+' || entry.string()[0] == '-') && entry.string()[1] == '\0')
-        return true;
+    if (entry.isString()) {
+        if (const char *str = entry.string(); str && (str[0] == '+' || str[0] == '-') && str[1] == '\0')
+            return true;
+    }
 
     return false;
 }
