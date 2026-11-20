@@ -495,22 +495,46 @@ static ScreenMapper makeScreenMapper(float xOffset, float yOffset)
     return m;
 }
 
-static void drawSolidBarRect(SDL_Renderer *renderer, float x0, float y0, float x1, float y1,
-    SDL_Color fillColor, SDL_Color borderColor, float borderPx)
+static void drawCylindricalBar(SDL_Renderer *renderer, float x0, float y0, float x1, float y1,
+    bool isHorizontal)
 {
-    float left = std::floor(std::min(x0, x1));
-    float top = std::floor(std::min(y0, y1));
-    float right = std::ceil(std::max(x0, x1));
-    float bottom = std::ceil(std::max(y0, y1));
-    float b = std::max(1.0f, std::round(borderPx));
+    float left = std::min(x0, x1);
+    float top = std::min(y0, y1);
+    float totalW = std::max(1.5f, std::max(x0, x1) - left);
+    float totalH = std::max(1.5f, std::max(y0, y1) - top);
 
-    SDL_SetRenderDrawColor(renderer, borderColor.r, borderColor.g, borderColor.b, borderColor.a);
-    SDL_FRect outerRect{ left - b, top - b, (right - left) + 2.0f * b, (bottom - top) + 2.0f * b };
-    SDL_RenderFillRectF(renderer, &outerRect);
+    // 7-band cylindrical shading profile from lit top/left side to shadowed bottom/right underside,
+    // with a subtle translucent outer contact edge instead of a bulky black border.
+    struct BandSpec {
+        uint8_t r, g, b, a;
+    };
+    static constexpr BandSpec kCylinderBands[7] = {
+        {  90,  96, 102, 145 }, // 0: soft outer contact edge (top/left)
+        { 226, 230, 234, 250 }, // 1: upper curvature
+        { 252, 254, 255, 255 }, // 2: bright specular core
+        { 242, 245, 248, 255 }, // 3: main cylinder body
+        { 208, 214, 220, 255 }, // 4: lower curvature roll-off
+        { 158, 165, 174, 250 }, // 5: cylinder underside shadow
+        {  48,  54,  60, 175 }, // 6: soft underside ambient occlusion edge
+    };
 
-    SDL_SetRenderDrawColor(renderer, fillColor.r, fillColor.g, fillColor.b, fillColor.a);
-    SDL_FRect innerRect{ left, top, std::max(1.0f, right - left), std::max(1.0f, bottom - top) };
-    SDL_RenderFillRectF(renderer, &innerRect);
+    if (isHorizontal) {
+        float bandH = totalH / 7.0f;
+        for (int i = 0; i < 7; ++i) {
+            const auto& b = kCylinderBands[i];
+            SDL_SetRenderDrawColor(renderer, b.r, b.g, b.b, b.a);
+            SDL_FRect r{ left, top + i * bandH, totalW, std::max(0.75f, bandH + 0.35f) };
+            SDL_RenderFillRectF(renderer, &r);
+        }
+    } else {
+        float bandW = totalW / 7.0f;
+        for (int i = 0; i < 7; ++i) {
+            const auto& b = kCylinderBands[i];
+            SDL_SetRenderDrawColor(renderer, b.r, b.g, b.b, b.a);
+            SDL_FRect r{ left + i * bandW, top, std::max(0.75f, bandW + 0.35f), totalH };
+            SDL_RenderFillRectF(renderer, &r);
+        }
+    }
 }
 
 static void drawThickSegment(SDL_Renderer *renderer, SDL_FPoint p0, SDL_FPoint p1,
@@ -549,7 +573,8 @@ static void drawDynamicGoalNetShadow(SDL_Renderer *renderer, const ScreenMapper&
     const GoalNetMesh& mesh, float pixelScale)
 {
     // Projects the live 3D net and goalposts onto the grass (Z = 0) along SWOS's oblique sun vector
-    // (+0.65 * Z in X, +0.38 * Z in Y), so the shadow on the real pitch tiles ripples with the net!
+    // (+0.65 * Z in X, +0.38 * Z in Y), with a multi-pass penumbra so the shadow on the grass is
+    // soft, dimmed, and blurry while rippling dynamically with the net.
     constexpr float kSunDirX = 0.65f;
     constexpr float kSunDirY = 0.38f;
 
@@ -562,42 +587,75 @@ static void drawDynamicGoalNetShadow(SDL_Renderer *renderer, const ScreenMapper&
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
-    // 1. Soft shadow mesh strands on the grass
-    SDL_SetRenderDrawColor(renderer, 10, 25, 5, 58);
-    for (const auto& sp : mesh.springs) {
-        if (!sp.draw)
-            continue;
-        SDL_RenderDrawLineF(renderer,
-            s_shadowProj[sp.a].x, s_shadowProj[sp.a].y,
-            s_shadowProj[sp.b].x, s_shadowProj[sp.b].y);
+    // 1. Soft, blurry ambient penumbra under the net footprint (3 concentric soft passes)
+    float blurStep = std::max(0.75f, 0.45f * pixelScale);
+    static constexpr float kBlurOffsets[5][2] = {
+        {  0.0f,  0.0f },
+        { -1.0f,  0.0f },
+        {  1.0f,  0.0f },
+        {  0.0f, -1.0f },
+        {  0.0f,  1.0f },
+    };
+
+    // Ultra-low-alpha blurred mesh strands (gives a diffused shadow rather than sharp black wires)
+    for (int pass = 0; pass < 5; ++pass) {
+        float ox = kBlurOffsets[pass][0] * blurStep;
+        float oy = kBlurOffsets[pass][1] * blurStep;
+        uint8_t strandAlpha = (pass == 0) ? 14 : 7;
+        SDL_SetRenderDrawColor(renderer, 8, 22, 4, strandAlpha);
+        for (const auto& sp : mesh.springs) {
+            if (!sp.draw)
+                continue;
+            SDL_RenderDrawLineF(renderer,
+                s_shadowProj[sp.a].x + ox, s_shadowProj[sp.a].y + oy,
+                s_shadowProj[sp.b].x + ox, s_shadowProj[sp.b].y + oy);
+        }
     }
 
-    // 2. Shadow knots on the grass (mimics the classic pixelated SWOS goal shadow pattern, now dynamic!)
-    float shadowDot = std::clamp(0.65f * pixelScale, 1.2f, 3.8f);
-    SDL_SetRenderDrawColor(renderer, 8, 22, 4, 72);
+    // 2. Softened, blurred shadow knots on the grass (outer halo + dim core)
+    float haloSize = std::clamp(1.25f * pixelScale, 2.0f, 6.5f);
+    float coreSize = std::clamp(0.65f * pixelScale, 1.0f, 3.4f);
     for (size_t i = 0; i < mesh.nodes.size(); ++i) {
         if (mesh.nodes[i].z < 0.5f)
             continue;
-        SDL_FRect dotRect{
-            s_shadowProj[i].x - shadowDot * 0.5f,
-            s_shadowProj[i].y - shadowDot * 0.5f,
-            shadowDot,
-            shadowDot
+        SDL_SetRenderDrawColor(renderer, 8, 22, 4, 11);
+        SDL_FRect haloRect{
+            s_shadowProj[i].x - haloSize * 0.5f,
+            s_shadowProj[i].y - haloSize * 0.5f,
+            haloSize,
+            haloSize
         };
-        SDL_RenderFillRectF(renderer, &dotRect);
+        SDL_RenderFillRectF(renderer, &haloRect);
+
+        SDL_SetRenderDrawColor(renderer, 8, 22, 4, 18);
+        SDL_FRect coreRect{
+            s_shadowProj[i].x - coreSize * 0.5f,
+            s_shadowProj[i].y - coreSize * 0.5f,
+            coreSize,
+            coreSize
+        };
+        SDL_RenderFillRectF(renderer, &coreRect);
     }
 
-    // 3. Goalpost & crossbar ground shadow
+    // 3. Soft multi-pass blurred goalpost & crossbar ground shadow
     const float frontY = mesh.isTopGoal ? kTopGoalFrontY : kBottomGoalFrontY;
     SDL_FPoint postLB = mapper.project(kGoalLeftX, frontY, 0.0f);
     SDL_FPoint postLTShadow = mapper.project(kGoalLeftX + kFrontHeightZ * kSunDirX, frontY + kFrontHeightZ * kSunDirY, 0.0f);
     SDL_FPoint postRB = mapper.project(kGoalRightX, frontY, 0.0f);
     SDL_FPoint postRTShadow = mapper.project(kGoalRightX + kFrontHeightZ * kSunDirX, frontY + kFrontHeightZ * kSunDirY, 0.0f);
-    float postShadowThick = std::max(1.0f, 0.85f * pixelScale);
-    SDL_Color postShadowColor{ 8, 22, 4, 85 };
-    drawThickSegment(renderer, postLB, postLTShadow, postShadowThick, postShadowColor);
-    drawThickSegment(renderer, postRB, postRTShadow, postShadowThick, postShadowColor);
-    drawThickSegment(renderer, postLTShadow, postRTShadow, postShadowThick, postShadowColor);
+
+    float outerShadowThick = std::max(1.2f, 0.95f * pixelScale);
+    float innerShadowThick = std::max(0.7f, 0.48f * pixelScale);
+    SDL_Color penumbraColor{ 8, 22, 4, 18 };
+    SDL_Color umbraColor{ 8, 22, 4, 26 };
+
+    drawThickSegment(renderer, postLB, postLTShadow, outerShadowThick, penumbraColor);
+    drawThickSegment(renderer, postRB, postRTShadow, outerShadowThick, penumbraColor);
+    drawThickSegment(renderer, postLTShadow, postRTShadow, outerShadowThick, penumbraColor);
+
+    drawThickSegment(renderer, postLB, postLTShadow, innerShadowThick, umbraColor);
+    drawThickSegment(renderer, postRB, postRTShadow, innerShadowThick, umbraColor);
+    drawThickSegment(renderer, postLTShadow, postRTShadow, innerShadowThick, umbraColor);
 }
 
 static void drawGoalNetLayer(const GoalNetMesh& mesh, uint8_t layer, float xOffset, float yOffset)
@@ -709,51 +767,36 @@ static void drawGoalNetLayer(const GoalNetMesh& mesh, uint8_t layer, float xOffs
         SDL_FPoint stR1 = mapper.project(kGoalRightX, backY, backHeightZ);
         SDL_FPoint stR2 = mapper.project(kGoalRightX, botBackY, 0.0f);
 
-        float stanchionThick = std::max(1.0f, 0.55f * pixelScale);
-        SDL_Color stanchionColor{ 130, 140, 145, 220 };
+        float stanchionThick = std::max(0.75f, 0.36f * pixelScale);
+        SDL_Color stanchionColor{ 140, 150, 156, 175 };
         drawThickSegment(renderer, stL0, stL1, stanchionThick, stanchionColor);
         drawThickSegment(renderer, stL1, stL2, stanchionThick, stanchionColor);
         drawThickSegment(renderer, stR0, stR1, stanchionThick, stanchionColor);
         drawThickSegment(renderer, stR1, stR2, stanchionThick, stanchionColor);
 
-        // Rigid white front goalposts and crossbar drawn as solid pixel-aligned rectangles (never fuzzy or striped!)
+        // Slender cylindrical 3D-shaded front goalposts and crossbar (no bulky black box outline)
         SDL_FPoint postLB = mapper.project(kGoalLeftX, frontY, 0.0f);
         SDL_FPoint postLT = mapper.project(kGoalLeftX, frontY, kFrontHeightZ);
         SDL_FPoint postRB = mapper.project(kGoalRightX, frontY, 0.0f);
         SDL_FPoint postRT = mapper.project(kGoalRightX, frontY, kFrontHeightZ);
 
-        float postHalfW = std::max(1.0f, 0.90f * pixelScale);
-        float borderPx = std::max(1.0f, 0.38f * pixelScale);
-        SDL_Color outlineColor{ 22, 22, 22, 245 };
-        SDL_Color postWhite{ 246, 248, 246, 255 };
-        SDL_Color postShade{ 195, 200, 205, 255 };
+        float postHalfW = std::max(1.1f, 0.56f * pixelScale);
 
-        // Left & right vertical goalposts (outer black border + solid white post + inner shaded edge)
-        drawSolidBarRect(renderer,
-            postLB.x - postHalfW, postLT.y - postHalfW,
+        // Left & right vertical cylindrical goalposts
+        drawCylindricalBar(renderer,
+            postLB.x - postHalfW, postLT.y,
             postLB.x + postHalfW, postLB.y,
-            postWhite, outlineColor, borderPx);
-        drawSolidBarRect(renderer,
-            postRB.x - postHalfW, postRT.y - postHalfW,
+            false);
+        drawCylindricalBar(renderer,
+            postRB.x - postHalfW, postRT.y,
             postRB.x + postHalfW, postRB.y,
-            postWhite, outlineColor, borderPx);
+            false);
 
-        // Horizontal crossbar spanning across both posts
-        drawSolidBarRect(renderer,
-            postLT.x - postHalfW, postLT.y - postHalfW,
-            postRT.x + postHalfW, postRT.y + postHalfW,
-            postWhite, outlineColor, borderPx);
-
-        // Subtle inner shadow along the underside of the crossbar and inside edges of the posts (classic SWOS 3D cylinder look)
-        float shadeH = std::max(1.0f, 0.45f * pixelScale);
-        SDL_SetRenderDrawColor(renderer, postShade.r, postShade.g, postShade.b, postShade.a);
-        SDL_FRect crossbarUnderShade{
-            std::floor(postLT.x + postHalfW),
-            std::ceil(postLT.y + postHalfW) - shadeH,
-            std::max(1.0f, std::ceil(postRT.x - postHalfW) - std::floor(postLT.x + postHalfW)),
-            shadeH
-        };
-        SDL_RenderFillRectF(renderer, &crossbarUnderShade);
+        // Horizontal cylindrical crossbar spanning across both posts
+        drawCylindricalBar(renderer,
+            postLT.x - postHalfW * 0.85f, postLT.y - postHalfW,
+            postRT.x + postHalfW * 0.85f, postRT.y + postHalfW,
+            true);
     }
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
