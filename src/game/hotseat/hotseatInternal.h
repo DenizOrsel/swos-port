@@ -44,11 +44,11 @@ constexpr size_t kTourSubCompOffset = CareerOffsets::kDiyCompetitionStart - Care
 // Isolated layout inside the dedicated hotseat extra VM memory region (from src/init.cpp):
 // [0 .. 256): negative-offset safety padding (e.g. PoolPlayer - 56)
 // [256 .. 320): PoolPlayerEntry scratch buffer
-// [320 .. 672): 16 x 22-byte calendar row scratch slots for resolveGameListSlotPtr()
-// [672 .. kHotseatExtraMemSize): per-player 1292-byte team mirrors
+// [320 .. 1024): 16 x 36-byte calendar row scratch slots for resolveGameListSlotPtr()
+// [1024 .. kHotseatExtraMemSize): per-player 1292-byte team mirrors
 constexpr uint32_t kPoolScratchSubOffset = 256;
 constexpr uint32_t kGameListScratchSubOffset = 320;
-constexpr uint32_t kMirrorBaseSubOffset = 672;
+constexpr uint32_t kMirrorBaseSubOffset = 1024;
 
 #pragma pack(push, 1)
 struct MarketEntry {

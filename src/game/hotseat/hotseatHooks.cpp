@@ -155,9 +155,34 @@ void Hotseat_OnCalendarInsertSpace()
     HotseatCareerManager::get().shiftCalendarSlots(A4.asDword(), D5.asWord());
 }
 
+void cseg_34D5A_OnEnter()
+{
+    HotseatCareerManager::get().onGameListCenter();
+}
+
+void Hotseat_OnGameListScrollUp()
+{
+    HotseatCareerManager::get().onGameListScrollUp();
+}
+
+void Hotseat_OnGameListScrollDown()
+{
+    HotseatCareerManager::get().onGameListScrollDown();
+}
+
+void Hotseat_OnAfterBuildGameList()
+{
+    HotseatCareerManager::get().onAfterBuildGameList();
+}
+
 void Hotseat_ResolveGameListSlotPtr()
 {
     HotseatCareerManager::get().resolveGameListSlotPtr();
+}
+
+void Hotseat_RestoreGameListContext()
+{
+    HotseatCareerManager::get().restoreGameListContext();
 }
 
 void cseg_8DAC3_OnEnter()

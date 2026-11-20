@@ -859,6 +859,7 @@ CareerInitVars
 StartContest
 InitializeNewSeason
 cseg_34DA3
+cseg_34D5A
 cseg_8B8B8
 cseg_94DB1
 cseg_3C07C
@@ -911,7 +912,14 @@ cseg_34DA3, 66, Hotseat_OnAfterCalcNextMatch
 cseg_8C516, cseg_8C574, Hotseat_OnCalendarInsertSpace
 cseg_32128, cseg_321C3, Hotseat_OnDomesticCupTeamSelect
 cseg_3252E, cseg_325BD, Hotseat_OnTournamentTeamSelect
+cseg_34C08, @@out, Hotseat_OnGameListScrollUp
+cseg_34CCA, cseg_34D59, Hotseat_OnGameListScrollDown
+cseg_3563E, 44, Hotseat_OnAfterBuildGameList
+cseg_3563E, 57, Hotseat_OnAfterBuildGameList
+cseg_3563E, 69, Hotseat_OnAfterBuildGameList
 CareerGameListCommon, 36, Hotseat_ResolveGameListSlotPtr
+CareerGameListCommon, 808, Hotseat_RestoreGameListContext
+CareerGameListCommon, 870, Hotseat_RestoreGameListContext
 cseg_52A3E, 58, Hotseat_OnAfterReplacementPlayer
 cseg_52956, 48, Hotseat_OnAfterEmergencyLoan
 cseg_52588, @@out, Hotseat_OnAfterEnsureCareerPlayers

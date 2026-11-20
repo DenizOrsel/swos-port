@@ -72,6 +72,10 @@ void HotseatCareerManager::reset()
     m_countryWorlds.clear();
     m_leagueWorlds.clear();
     m_clubTeamCache.clear();
+    m_unifiedGameListRows.clear();
+    m_unifiedGameListTopRow = 0;
+    m_unifiedGameListActiveRow = -1;
+    m_savedGameListCtx = {};
 }
 
 void HotseatCareerManager::initializeHotseat(const std::vector<int16_t>& teamIds)
@@ -577,13 +581,14 @@ void HotseatCareerManager::ensureCupTeamsInSelectedTeams()
             return;
         if (tid == 0 || tid == 0xFFFF || tid == activeTeamWord)
             return;
-        if (findHotseatPlayerByTeamId(static_cast<int16_t>(tid)) >= 0)
-            return;
         if (hasTeamInSel(tid))
             return;
         TeamFile tf{};
         if (lookupCachedTeamFile(tid, tf)) {
-            tf.teamControls = kComputerTeam;
+            int owner = findHotseatPlayerByTeamId(static_cast<int16_t>(tid));
+            tf.teamControls = (owner >= 0)
+                ? ((m_players[owner].coachOrPlayer == 1) ? kPlayerCoach : kCoach)
+                : kComputerTeam;
             selTeams[swos.g_numSelectedTeams++] = tf;
         }
     };

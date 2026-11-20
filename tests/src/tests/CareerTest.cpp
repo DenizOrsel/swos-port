@@ -5222,6 +5222,88 @@ void CareerTest::testHotseatClubSelectionMenuMultiLeagueAndMouseSafety()
             const auto& serieBLw = mgr.leagueWorlds().at({ 20, 1 });
             assertEqual(static_cast<int>(*reinterpret_cast<const int16_t *>(&serieALw.competitionFileBuffer[49])), 18);
             assertEqual(static_cast<int>(*reinterpret_cast<const int16_t *>(&serieBLw.competitionFileBuffer[49])), 20);
+            // Verify suppressed shared Coppa Italia entry 0 in Serie B world advanced calStepIdx to 1 (Serie B Round 1)
+            assertTrue(serieBLw.calStepIdx >= 1);
+            assertEqual(static_cast<int>(serieBLw.calendar[serieBLw.calByteOfs]), 0);
+
+            // Finish Coppa Italia Round 2 Leg 1 in host world (20, 0) and verify lockstep scheduling at week 64:
+            // Both Serie A Round 1 (Juventus) and Serie B Round 1 (Foggia) must be scheduled at (week=64, compSlot=0)
+            // BEFORE European Cup Round 1 (Juventus, week=64, compSlot=3), and the unified Contest Menu gameListArray
+            // must include both Serie A (division=0) and Serie B (division=1) rows.
+            extern void cseg_8EA82();
+            extern void cseg_8EC2B();
+            calEntry = &SwosVM::g_memByte[CareerOffsets::kDsegDB3E6 + curCalOfs];
+            calEntry[4] = 1;
+            calEntry[6] = 0;
+            save68kRegisters();
+            cseg_8EA82();
+            cseg_8EC2B();
+            restore68kRegisters();
+            mgr.onAfterPlayMatch();
+
+            // First league match at week 64 (compSlot=0): Player 1's league (Serie A if order==0, Serie B if order==1)
+            assertEqual(mgr.activePlayerIndex(), 0);
+            uint16_t league1Ofs = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E0]);
+            uint8_t *league1Entry = &SwosVM::g_memByte[CareerOffsets::kDsegDB3E6 + league1Ofs];
+            assertEqual(static_cast<int>(league1Entry[0]), 0); // League (compSlot = 0)
+            assertTrue(static_cast<int>(league1Entry[6]) > 0);
+
+            // Verify unified Contest Menu gameListArray contains both Serie A (div 0) and Serie B (div 1) rows
+            const auto *gameList = reinterpret_cast<const uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kGameListArray]);
+            bool sawDiv0Row = false;
+            bool sawDiv1Row = false;
+            for (int r = 0; r < 14; ++r) {
+                uint32_t rowA6 = gameList[r * 2 + 0];
+                uint32_t rowA4 = gameList[r * 2 + 1];
+                if (rowA6 == 0)
+                    continue;
+                save68kRegisters();
+                D0 = static_cast<uint16_t>(r << 3);
+                A6 = rowA6;
+                A4 = rowA4;
+                mgr.resolveGameListSlotPtr();
+                uint8_t rowComp = SwosVM::g_memByte[A6.asDword()];
+                uint16_t rowDiv = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD6CDC]);
+                if (rowComp == 0 && rowDiv == 0)
+                    sawDiv0Row = true;
+                if (rowComp == 0 && rowDiv == 1)
+                    sawDiv1Row = true;
+                mgr.restoreGameListContext();
+                restore68kRegisters();
+            }
+            assertTrue(sawDiv0Row && sawDiv1Row);
+
+            // Complete Player 1's Round 1 league match -> must switch immediately to Player 2's Round 1 league match
+            // (Serie B for Foggia when order==0, Serie A for Juventus when order==1) before European Cup Round 1!
+            league1Entry[4] = 1;
+            league1Entry[6] = 0;
+            save68kRegisters();
+            cseg_8EA82();
+            cseg_8EC2B();
+            restore68kRegisters();
+            mgr.onAfterPlayMatch();
+
+            assertEqual(mgr.activePlayerIndex(), 1);
+            LeagueWorldKey p2Key = mgr.worldKeyForPlayer(mgr.player(1));
+            assertTrue(mgr.activeWorldKey() == p2Key);
+            uint16_t league2Ofs = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E0]);
+            uint8_t *league2Entry = &SwosVM::g_memByte[CareerOffsets::kDsegDB3E6 + league2Ofs];
+            assertEqual(static_cast<int>(league2Entry[0]), 0); // Player 2's League Round 1 (compSlot = 0)
+            assertTrue(static_cast<int>(league2Entry[6]) > 0);
+
+            // Complete Player 2's Round 1 league match -> now European Cup Round 1 (compSlot = 3, Juventus) is next!
+            league2Entry[4] = 1;
+            league2Entry[6] = 0;
+            save68kRegisters();
+            cseg_8EA82();
+            cseg_8EC2B();
+            restore68kRegisters();
+            mgr.onAfterPlayMatch();
+
+            assertEqual(mgr.activePlayerIndex(), juveIdx);
+            uint16_t euroOfs = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E0]);
+            uint8_t *euroEntry = &SwosVM::g_memByte[CareerOffsets::kDsegDB3E6 + euroOfs];
+            assertEqual(static_cast<int>(euroEntry[0]), 3); // European Cup Round 1 (compSlot = 3)
         }
     }
 

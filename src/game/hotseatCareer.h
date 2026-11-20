@@ -166,10 +166,14 @@ namespace CareerOffsets {
     constexpr size_t kDseg10F0F6 = 319030;              // cup team word list
     constexpr size_t kChooseTeamsResult = 330146;       // uint16_t
     constexpr size_t kUserTacticsStart = 129478;        // 6 * 370 bytes
+    constexpr size_t kDseg174570 = 482083;              // uint16_t (top calendar entry idx in game list)
+    constexpr size_t kCurrentGame = 482085;             // uint16_t (top calendar slot idx in game list)
+    constexpr size_t kDseg174574 = 482087;              // uint16_t (total calendar entries in game list)
     constexpr size_t kDseg174576 = 482089;              // int16_t (highlighted cal row idx)
     constexpr size_t kDseg174578 = 482091;              // uint16_t (current calendar slot idx)
     constexpr size_t kDseg17457A = 482093;              // uint32_t (current calendar header ptr)
     constexpr size_t kDseg17457E = 482097;              // uint32_t (current match slot ptr)
+    constexpr size_t kGameListArray = 482119;           // uint32_t[28] (14 x {calEntryVm, slotVm})
     constexpr size_t kContestMenu = 482233;             // PackedMenu contestMenu
     constexpr size_t kCareerOverMenu = 483813;          // PackedMenu careerOverMenu
     constexpr size_t kChooseTeamsFriendly = 485019;     // PackedMenu chooseTeamsFriendly
@@ -523,7 +527,12 @@ public:
     void resolvePostMatchCalendarSlotPtr();
     void commitAndStageNextCalendarSlot();
     void clampCalcNextMatchSlotPtr();
+    void onGameListCenter();
+    void onGameListScrollUp();
+    void onGameListScrollDown();
+    void onAfterBuildGameList();
     void resolveGameListSlotPtr();
+    void restoreGameListContext();
     const std::map<uint16_t, std::vector<CalendarSlotBytes>>& calendarSlots() const { return m_calendarSlots; }
 
     // Match, Weekly, & Season Lifecycle Hooks
@@ -712,6 +721,35 @@ private:
     std::map<uint8_t, CountryWorldState> m_countryWorlds;
     std::map<LeagueWorldKey, LeagueWorldState> m_leagueWorlds;
     std::map<uint16_t, TeamFile> m_clubTeamCache;
+
+    struct UnifiedGameListRow {
+        LeagueWorldKey worldKey{};
+        uint16_t calOfs = 0;
+        uint16_t slotIdx = 0;
+        uint8_t headerBytes[10]{};
+        CalendarSlotBytes slotBytes{};
+        bool isContinuationRow = false;
+        bool isLastSlotOfEntry = true;
+        bool isActiveHighlight = false;
+        int euroCupIdx = -1;
+    };
+    struct SavedGameListVmContext {
+        bool active = false;
+        uint32_t dsegD8CAA[5]{};
+        uint16_t dsegD6CDC = 0;
+        uint16_t compType0 = 0;
+        uint16_t compType1 = 0;
+        uint16_t compType2 = 0;
+        uint16_t compType3 = 0;
+        uint16_t compType4 = 0;
+        uint32_t hlHdr = 0;
+        uint32_t hlMatchPtr = 0;
+    };
+    std::vector<UnifiedGameListRow> m_unifiedGameListRows;
+    int m_unifiedGameListTopRow = 0;
+    int m_unifiedGameListActiveRow = -1;
+    SavedGameListVmContext m_savedGameListCtx{};
+    void rebuildUnifiedGameListRows();
 
     void unpackH2hPackedTeam(int playerIdx);
     void unpackAllH2hPackedTeams();

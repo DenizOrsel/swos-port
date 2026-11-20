@@ -504,6 +504,7 @@ void HotseatCareerManager::synchronizeSharedCupCalendarEntries()
                 entry[4] = 1;
                 entry[5] = 0;
                 entry[6] = 0;
+                lw.calendarSlots.erase(ofs);
             } else if (compSlot == 3) {
                 auto ecIt = lw.euroCupByCalOfs.find(ofs);
                 if (ecIt != lw.euroCupByCalOfs.end()) {
@@ -513,10 +514,24 @@ void HotseatCareerManager::synchronizeSharedCupCalendarEntries()
                         entry[4] = 1;
                         entry[5] = 0;
                         entry[6] = 0;
+                        lw.calendarSlots.erase(ofs);
                     }
                 }
             }
             ofs += len;
+        }
+
+        while (lw.calStepIdx < lw.calTotalEntries && lw.calByteOfs + 22 <= kCalendarBufferSize) {
+            const uint8_t *curEntry = &lw.calendar[lw.calByteOfs];
+            uint16_t len = *reinterpret_cast<const uint16_t *>(curEntry + 2);
+            if (len < 22 || curEntry[4] == 0)
+                break;
+            lw.calByteOfs = static_cast<uint16_t>(lw.calByteOfs + len);
+            lw.calStepIdx = static_cast<uint16_t>(lw.calStepIdx + 1);
+        }
+        if (lw.calStepIdx < lw.calTotalEntries && lw.calByteOfs + 22 <= kCalendarBufferSize) {
+            lw.dsegE0048 = lw.calendar[lw.calByteOfs + 1];
+            lw.roundCalendarIndex = lw.calStepIdx;
         }
     }
 
