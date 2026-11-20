@@ -772,8 +772,10 @@ bool HotseatCareerManager::loadFromFile(const std::string& path)
     }
     stageActiveCalendarSlotToVm();
     loadSwosContext(m_players[m_activePlayerIndex]);
+    applyActivePlayerLeagueOverlayIfNeeded();
     if (swos.selTeamsPtr && swos.g_numSelectedTeams > 0) {
         syncPlayersWithSelectedTeams(true);
+        relinkCompetitionTeamPointers();
     }
     syncTransferMarketPoolsForCurrentPlayer();
     logInfo("HotseatCareerManager: Successfully loaded hotseat state (%d players, active P%d) from %s",

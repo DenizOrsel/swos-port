@@ -66,6 +66,8 @@ void HotseatCareerManager::reset()
     m_playMatchSetupStack.clear();
     m_hasActiveWorld = false;
     m_activeWorldKey = {};
+    m_hasLeagueOverlay = false;
+    m_leagueOverlayKey = {};
     m_globalWeek = 0;
     m_countryWorlds.clear();
     m_leagueWorlds.clear();
@@ -593,6 +595,15 @@ void HotseatCareerManager::ensureCupTeamsInSelectedTeams()
         uint32_t base = compOffset;
         uint16_t blockType = compType;
         if (compType == 2) {
+            int16_t tourTeams = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[compOffset + 49]);
+            uint32_t tourTableOfs = compOffset + 153;
+            if (tourTeams > 0 && tourTeams <= 64 &&
+                tourTableOfs + static_cast<uint32_t>(tourTeams) * 2 <= sizeof(SwosVM::g_memByte)) {
+                for (int k = 0; k < tourTeams; ++k) {
+                    uint16_t tid = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[tourTableOfs + k * 2]);
+                    addTeamIfMissing(tid);
+                }
+            }
             base = compOffset + static_cast<uint32_t>(kTourSubCompOffset);
             if (base + 52 >= sizeof(SwosVM::g_memByte))
                 return;
@@ -615,13 +626,37 @@ void HotseatCareerManager::ensureCupTeamsInSelectedTeams()
         }
     };
 
-    for (int c = 1; c < 5; ++c) {
+    int startComp = m_hasLeagueOverlay ? 0 : 1;
+    for (int c = startComp; c < 5; ++c) {
         uint32_t activePtr = *reinterpret_cast<const uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8CAA + c * 4]);
         uint32_t bufPtr = *reinterpret_cast<const uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kArrayOfPointers + c * 4]);
         if (activePtr != 0 && bufPtr >= 5000 && bufPtr < sizeof(SwosVM::g_memByte)) {
             scanComp(bufPtr);
         }
     }
+}
+
+void HotseatCareerManager::applyActivePlayerLeagueOverlayIfNeeded()
+{
+    if (!m_hasActiveWorld || m_leagueWorlds.size() <= 1 ||
+        m_activePlayerIndex < 0 || m_activePlayerIndex >= m_numPlayers) {
+        return;
+    }
+
+    LeagueWorldKey ownerKey = worldKeyForPlayer(m_players[m_activePlayerIndex]);
+    if (ownerKey == m_activeWorldKey)
+        return;
+
+    auto ownerIt = m_leagueWorlds.find(ownerKey);
+    if (ownerIt == m_leagueWorlds.end() || !ownerIt->second.initialized)
+        return;
+
+    std::memcpy(&SwosVM::g_memByte[CareerOffsets::kCompetitionFileBuffer],
+                ownerIt->second.competitionFileBuffer,
+                kCompetitionBufferSize);
+    *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD6CA2]) = ownerIt->second.dsegD6CA2;
+    m_hasLeagueOverlay = true;
+    m_leagueOverlayKey = ownerKey;
 }
 
 void HotseatCareerManager::saveActiveWorldFromVm()
@@ -637,17 +672,36 @@ void HotseatCareerManager::saveActiveWorldFromVm()
     cw.dsegD6CDE = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD6CDE]);
     std::memcpy(cw.cup1, &SwosVM::g_memByte[CareerOffsets::kDsegD8D0A], kCup1BufferSize);
     std::memcpy(cw.cup2, &SwosVM::g_memByte[CareerOffsets::kDsegD985C], kCup2BufferSize);
-    cw.numHomeMarketPlayers = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumHomeMarketPlayers]);
-    std::memcpy(cw.homeMarketPlayers, &SwosVM::g_memByte[CareerOffsets::kHomeMarketPlayers], sizeof(cw.homeMarketPlayers));
-    cw.numForeignMarketPlayers = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumForeignMarketPlayers]);
-    std::memcpy(cw.foreignMarketPlayers, &SwosVM::g_memByte[CareerOffsets::kForeignMarketPlayers], sizeof(cw.foreignMarketPlayers));
+
+    uint8_t marketCountry = (m_hasLeagueOverlay && m_countryWorlds.count(m_leagueOverlayKey.countryFileNo) != 0)
+        ? m_leagueOverlayKey.countryFileNo
+        : m_activeWorldKey.countryFileNo;
+    auto& mcw = m_countryWorlds[marketCountry];
+    mcw.countryFileNo = marketCountry;
+    mcw.initialized = true;
+    mcw.numHomeMarketPlayers = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumHomeMarketPlayers]);
+    std::memcpy(mcw.homeMarketPlayers, &SwosVM::g_memByte[CareerOffsets::kHomeMarketPlayers], sizeof(mcw.homeMarketPlayers));
+    mcw.numForeignMarketPlayers = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumForeignMarketPlayers]);
+    std::memcpy(mcw.foreignMarketPlayers, &SwosVM::g_memByte[CareerOffsets::kForeignMarketPlayers], sizeof(mcw.foreignMarketPlayers));
 
     auto& lw = m_leagueWorlds[m_activeWorldKey];
     lw.key = m_activeWorldKey;
     lw.initialized = true;
-    std::memcpy(lw.dsegD8CAA, &SwosVM::g_memByte[CareerOffsets::kDsegD8CAA], sizeof(lw.dsegD8CAA));
+    if (m_hasLeagueOverlay) {
+        std::memcpy(&lw.dsegD8CAA[1], &SwosVM::g_memByte[CareerOffsets::kDsegD8CAA + 4], 4 * sizeof(uint32_t));
+        auto ovIt = m_leagueWorlds.find(m_leagueOverlayKey);
+        if (ovIt != m_leagueWorlds.end() && ovIt->second.initialized) {
+            std::memcpy(ovIt->second.competitionFileBuffer,
+                        &SwosVM::g_memByte[CareerOffsets::kCompetitionFileBuffer],
+                        kCompetitionBufferSize);
+            ovIt->second.dsegD6CA2 = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD6CA2]);
+        }
+    } else {
+        std::memcpy(lw.dsegD8CAA, &SwosVM::g_memByte[CareerOffsets::kDsegD8CAA], sizeof(lw.dsegD8CAA));
+        std::memcpy(lw.competitionFileBuffer, &SwosVM::g_memByte[CareerOffsets::kCompetitionFileBuffer], kCompetitionBufferSize);
+        lw.dsegD6CA2 = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD6CA2]);
+    }
     lw.dsegD8CC0 = *reinterpret_cast<const uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8CC0]);
-    std::memcpy(lw.competitionFileBuffer, &SwosVM::g_memByte[CareerOffsets::kCompetitionFileBuffer], kCompetitionBufferSize);
     std::memcpy(lw.dsegD9C9F, &SwosVM::g_memByte[CareerOffsets::kDsegD9C9F], kCup4BufferSize);
     std::memcpy(lw.calendar, &SwosVM::g_memByte[CareerOffsets::kDsegDB3E6], kCalendarBufferSize);
     lw.calStepIdx = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3DE]);
@@ -659,7 +713,6 @@ void HotseatCareerManager::saveActiveWorldFromVm()
     lw.seasonPlaying = SwosVM::g_memByte[CareerOffsets::kSeasonPlaying];
     lw.currentSeasonShowing = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCurrentSeasonShowing]);
     lw.currentSeasonNumber = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCurrentSeasonNumber]);
-    lw.dsegD6CA2 = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD6CA2]);
     lw.seasonFinished = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kSeasonFinished]);
     lw.careerFinished = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerFinished]);
     lw.hlIdx = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kDseg174576]);
@@ -672,17 +725,21 @@ void HotseatCareerManager::saveActiveWorldFromVm()
     lw.calendarSlots = m_calendarSlots;
     lw.euroCupByCalOfs = m_euroCupByCalOfs;
 
-    int16_t count = static_cast<int16_t>(std::clamp<int>(swos.g_numSelectedTeams, 0, kMaxSelectedTeamsCount));
-    lw.numSelectedTeams = count;
-    size_t selBytes = static_cast<size_t>(count) * sizeof(TeamFile);
-    lw.selectedTeams.resize(selBytes);
-    if (selBytes > 0) {
-        std::memcpy(lw.selectedTeams.data(), swos.g_selectedTeams, selBytes);
+    if (!m_hasLeagueOverlay) {
+        int16_t count = static_cast<int16_t>(std::clamp<int>(swos.g_numSelectedTeams, 0, kMaxSelectedTeamsCount));
+        lw.numSelectedTeams = count;
+        size_t selBytes = static_cast<size_t>(count) * sizeof(TeamFile);
+        lw.selectedTeams.resize(selBytes);
+        if (selBytes > 0) {
+            std::memcpy(lw.selectedTeams.data(), swos.g_selectedTeams, selBytes);
+        }
     }
 }
 
 void HotseatCareerManager::loadWorldToVm(const LeagueWorldKey& targetKey, bool relink /* = true */)
 {
+    m_hasLeagueOverlay = false;
+    m_leagueOverlayKey = {};
     auto lwIt = m_leagueWorlds.find(targetKey);
     if (lwIt == m_leagueWorlds.end() || !lwIt->second.initialized) {
         m_activeWorldKey = targetKey;
@@ -916,7 +973,7 @@ void HotseatCareerManager::switchToPlayer(int index, bool relink /* = true */)
         return;
 
     LeagueWorldKey targetKey = worldKeyForPlayer(m_players[index]);
-    if (m_hasActiveWorld && targetKey != m_activeWorldKey) {
+    if (m_hasActiveWorld && (targetKey != m_activeWorldKey || m_hasLeagueOverlay)) {
         if (relink) {
             syncPlayersWithSelectedTeams(true);
         }

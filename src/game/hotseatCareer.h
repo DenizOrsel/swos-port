@@ -460,6 +460,9 @@ public:
     std::map<uint8_t, CountryWorldState>& countryWorlds() { return m_countryWorlds; }
     void saveActiveWorldFromVm();
     void loadWorldToVm(const LeagueWorldKey& targetKey, bool relink = true);
+    void applyActivePlayerLeagueOverlayIfNeeded();
+    bool hasLeagueOverlay() const { return m_hasLeagueOverlay; }
+    LeagueWorldKey leagueOverlayKey() const { return m_leagueOverlayKey; }
     void captureActiveWorldAsInitial(const LeagueWorldKey& key);
     void cacheTeamsFromSelectedTeams();
     void cacheTeamFile(const TeamFile& tf);
@@ -701,6 +704,8 @@ private:
     // Multi-world state (country shared cups/markets + division calendars/tables)
     bool m_hasActiveWorld = false;
     LeagueWorldKey m_activeWorldKey{};
+    bool m_hasLeagueOverlay = false;
+    LeagueWorldKey m_leagueOverlayKey{};
     uint16_t m_globalWeek = 0;
     std::array<bool, kNumEuroCups> m_euroCupHostSet{};
     std::array<LeagueWorldKey, kNumEuroCups> m_euroCupHostKeys{};

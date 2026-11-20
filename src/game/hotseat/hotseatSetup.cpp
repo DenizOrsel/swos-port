@@ -277,6 +277,23 @@ void HotseatCareerManager::refreshTeamSelectionMenu(uint32_t menuOffset)
     int playOrd = isFriendly ? 76 : 55;
     int statusOrd = isFriendly ? 77 : 58;
 
+    if (!isFriendly) {
+        uint32_t selLeagueText = *reinterpret_cast<const uint32_t *>(&SwosVM::g_memByte[329642]); // selectedTeamText
+        if (selLeagueText != 0) {
+            *reinterpret_cast<uint32_t *>(&SwosVM::g_memByte[329654]) = selLeagueText; // gameTypeStr
+        }
+        uint8_t loadedCountry = SwosVM::g_memByte[316568]; // lastLoadedExtNumber
+        if (loadedCountry < 0xFE) {
+            extern void GetCountryName();
+            extern void ChooseTeamsSetHeader();
+            save68kRegisters();
+            D0 = loadedCountry;
+            GetCountryName();
+            ChooseTeamsSetHeader();
+            restore68kRegisters();
+        }
+    }
+
     for (int ord = minTeamOrd; ord <= maxTeamOrd && ord < menu->numEntries; ++ord) {
         auto *e = getMenuEntry(ord);
         if (!e || e->invisible || !e->isString())
@@ -291,7 +308,7 @@ void HotseatCareerManager::refreshTeamSelectionMenu(uint32_t menuOffset)
             e->bg.entryColor = (role == 1) ? 11 : 13;
         } else {
             if (!isFriendly) {
-                e->bg.entryColor = 9;
+                e->bg.entryColor = 10;
             } else if (e->bg.entryColor == 11 || e->bg.entryColor == 13) {
                 if (SwosVM::isSwosPtr(e->fg.string) && SwosVM::ptrToOffset(e->fg.string) >= 5) {
                     auto *team = reinterpret_cast<TeamFile *>(e->fg.string - 5);

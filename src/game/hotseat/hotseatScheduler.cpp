@@ -723,7 +723,7 @@ bool HotseatCareerManager::resolveLockstepAndSelectPlayer(bool refreshUi /* = tr
                     continue;
                 if (kv.second.seasonFinished == 0) {
                     int rep = findRepPlayerInWorld(kv.first);
-                    if (kv.first != m_activeWorldKey) {
+                    if (kv.first != m_activeWorldKey || m_hasLeagueOverlay) {
                         loadWorldToVm(kv.first, false);
                     }
                     m_activePlayerIndex = rep;
@@ -754,7 +754,7 @@ bool HotseatCareerManager::resolveLockstepAndSelectPlayer(bool refreshUi /* = tr
                                                     lw.calTotalEntries, compSlot, remSlots);
             if (w == minWeek && remSlots <= 0) {
                 int rep = findRepPlayerInWorld(kv.first);
-                if (kv.first != m_activeWorldKey) {
+                if (kv.first != m_activeWorldKey || m_hasLeagueOverlay) {
                     loadWorldToVm(kv.first, false);
                 }
                 m_activePlayerIndex = rep;
@@ -806,7 +806,7 @@ bool HotseatCareerManager::resolveLockstepAndSelectPlayer(bool refreshUi /* = tr
             return m_activePlayerIndex != prevActiveIdx;
         }
 
-        if (chosenWorld != m_activeWorldKey) {
+        if (chosenWorld != m_activeWorldKey || m_hasLeagueOverlay) {
             loadWorldToVm(chosenWorld, false);
         }
 
@@ -836,6 +836,7 @@ bool HotseatCareerManager::resolveLockstepAndSelectPlayer(bool refreshUi /* = tr
             }
             *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD6CDC]) = chosenWorld.divisionId;
             SwosVM::g_memByte[CareerOffsets::kDsegE0048] = hostLw.dsegE0048;
+            applyActivePlayerLeagueOverlayIfNeeded();
         }
         syncPlayersWithSelectedTeams(true);
         ensureHotseatTeamControlsInSelectedTeams();

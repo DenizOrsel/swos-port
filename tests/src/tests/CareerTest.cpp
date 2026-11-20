@@ -5042,12 +5042,12 @@ void CareerTest::testHotseatClubSelectionMenuMultiLeagueAndMouseSafety()
                 return false;
             }
 
-            // Before selecting P2 in England Prem, verify no English club inherits Italy P1's teamsTable color (all gray=9)
+            // Before selecting P2 in England Prem, verify no English club inherits Italy P1's human color (all computer red=10)
             if (mgr.getAssignedSlotCount() == 1) {
                 bool anyWrongHumanColor = false;
                 for (int ord = 7; ord <= 54; ++ord) {
                     auto *e = getMenuEntry(ord);
-                    if (e && !e->invisible && e->bg.entryColor != 9) {
+                    if (e && !e->invisible && e->bg.entryColor != 10) {
                         anyWrongHumanColor = true;
                         break;
                     }
@@ -5170,6 +5170,58 @@ void CareerTest::testHotseatClubSelectionMenuMultiLeagueAndMouseSafety()
                 cseg_3D204();
                 restore68kRegisters();
             }
+
+            // Regression test for crash d532670d-24d9-4245-a15d-d8daf443a14d:
+            // When the non-host division club (e.g. Foggia Serie B in Coppa Italia hosted by Serie A) finishes
+            // its shared domestic cup match, PlayMatchMenu runs cseg_3B860() -> cseg_3CCF0() ->
+            // FindTeamInDIY(selTeamNumber, competitionFileBuffer). Verify the active player's league overlay
+            // is loaded into competitionFileBuffer so cseg_3B860() and cseg_39392() find the club cleanly,
+            // and saving the active world preserves both divisions' league tables.
+            extern void cseg_3B860();
+            extern void cseg_39392();
+            mgr.synchronizeSharedCupCalendarEntries();
+            mgr.resolveLockstepAndSelectPlayer(false);
+
+            // Verify both Coppa Italia slots (remSlots = 2 -> slot 0, remSlots = 1 -> slot 1):
+            // One slot belongs to the host division player and the other belongs to the non-host division player
+            // (whose league overlay must be loaded into competitionFileBuffer). Both must run cseg_3B860() and
+            // cseg_39392() without crashing.
+            uint16_t curCalOfs = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E0]);
+            uint8_t *calEntry = &SwosVM::g_memByte[CareerOffsets::kDsegDB3E6 + curCalOfs];
+            assertEqual(static_cast<int>(calEntry[0]), 1); // Coppa Italia (cup1)
+            assertEqual(static_cast<int>(calEntry[5]), 2); // 2 human match slots (Juventus & Foggia)
+            assertEqual(static_cast<int>(calEntry[6]), 2);
+
+            bool sawOverlaySlot = false;
+            bool sawHostSlot = false;
+            for (int rem = 2; rem >= 1; --rem) {
+                calEntry = &SwosVM::g_memByte[CareerOffsets::kDsegDB3E6 + curCalOfs];
+                calEntry[6] = static_cast<uint8_t>(rem);
+                mgr.onAfterPlayMatch();
+
+                int activeSlotPlayer = mgr.activePlayerIndex();
+                LeagueWorldKey activeOwnerKey = mgr.worldKeyForPlayer(mgr.player(activeSlotPlayer));
+                if (activeOwnerKey != mgr.activeWorldKey()) {
+                    assertTrue(mgr.hasLeagueOverlay());
+                    assertTrue(mgr.leagueOverlayKey() == activeOwnerKey);
+                    sawOverlaySlot = true;
+                } else {
+                    assertFalse(mgr.hasLeagueOverlay());
+                    sawHostSlot = true;
+                }
+
+                save68kRegisters();
+                cseg_3B860();
+                cseg_39392();
+                restore68kRegisters();
+            }
+            assertTrue(sawOverlaySlot && sawHostSlot);
+
+            mgr.saveActiveWorldFromVm();
+            const auto& serieALw = mgr.leagueWorlds().at({ 20, 0 });
+            const auto& serieBLw = mgr.leagueWorlds().at({ 20, 1 });
+            assertEqual(static_cast<int>(*reinterpret_cast<const int16_t *>(&serieALw.competitionFileBuffer[49])), 18);
+            assertEqual(static_cast<int>(*reinterpret_cast<const int16_t *>(&serieBLw.competitionFileBuffer[49])), 20);
         }
     }
 
