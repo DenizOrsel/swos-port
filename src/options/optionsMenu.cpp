@@ -1,5 +1,6 @@
 #include "optionsMenu.h"
 #include "options.h"
+#include "goalNet.h"
 #include "replays.h"
 #include "menus.h"
 #include "videoOptionsMenu.h"

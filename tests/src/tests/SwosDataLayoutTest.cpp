@@ -1,5 +1,6 @@
 #include "SwosDataLayoutTest.h"
 #include "unitTest.h"
+#include "goalNet.h"
 
 static SwosDataLayoutTest t;
 
@@ -26,6 +27,8 @@ auto SwosDataLayoutTest::getCases() -> CaseList
             bind(&SwosDataLayoutTest::verifyFixedFileBuffers) },
         { "original frame table area", "original-frame-table-area", {},
             bind(&SwosDataLayoutTest::verifyFrameTableArea) },
+        { "physics goal net simulation and toggle", "physics-goal-net-simulation", {},
+            bind(&SwosDataLayoutTest::verifyPhysicsGoalNetSimulation) },
     };
 }
 
@@ -95,4 +98,38 @@ void SwosDataLayoutTest::verifyFrameTableArea()
     assertEqual(animationTablesStart % alignof(int16_t), size_t{ 0 });
     assertEqual(animationTablesStart - frameTablesStart, sizeof(expectedFrameTable));
     assertTrue(!memcmp(swos.frameIndicesTablesStart, expectedFrameTable, sizeof(expectedFrameTable)));
+}
+
+void SwosDataLayoutTest::verifyPhysicsGoalNetSimulation()
+{
+    bool prevOpt = getPhysicsGoalNets();
+    setPhysicsGoalNets(true);
+    assertTrue(getPhysicsGoalNets());
+
+    initGoalNets();
+    auto topRest = getGoalNetTestState(0);
+    auto botRest = getGoalNetTestState(1);
+    assertTrue(topRest.totalNodes > 200);
+    assertTrue(topRest.pinnedNodes > 20);
+    assertEqual(topRest.totalNodes, botRest.totalNodes);
+    assertTrue(topRest.maxDisplacement < 0.001f);
+
+    // Strike the top goal net with a fast shot into the upper-middle back netting
+    notifyGoalNetBallImpact(0, 334.0f, 118.0f, 9.0f, 0.5f, -5.5f, 1.0f);
+    auto topHit = getGoalNetTestState(0);
+    assertTrue(topHit.maxDisplacement > 1.0f);
+    assertTrue(topHit.totalKineticEnergy > 0.1f);
+
+    // Run 60 frames of Verlet + spring solver and verify ripple damping returns toward rest
+    for (int f = 0; f < 60; ++f) {
+        updateGoalNets();
+    }
+    auto topSettled = getGoalNetTestState(0);
+    assertTrue(topSettled.maxDisplacement < topHit.maxDisplacement);
+    assertTrue(topSettled.totalKineticEnergy < topHit.totalKineticEnergy * 0.25f);
+
+    // Verify toggle off pauses physics updates
+    setPhysicsGoalNets(false);
+    assertFalse(getPhysicsGoalNets());
+    setPhysicsGoalNets(prevOpt);
 }

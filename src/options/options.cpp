@@ -11,6 +11,7 @@
 #include "menuItemRenderer.h"
 #include "amigaMode.h"
 #include "pitch.h"
+#include "goalNet.h"
 #include "spinningLogo.h"
 #include "replays.h"
 #include "render.h"
@@ -69,6 +70,7 @@ static const char kShowReplayPercentageKey[] = "showReplayPercentage";
 // gameplay
 static const char kGameStyleKey[] = "gameStyle";
 static const char kShowPreMatchMenusKey[] = "preMatchMenus";
+static const char kPhysicsGoalNetsKey[] = "physicsGoalNets";
 
 static const std::array<OptionVariable<int16_t>, 5> kStandardOptions = {
     "gameLength",  &swos.g_gameLength, 0, 3, 0,
@@ -78,7 +80,7 @@ static const std::array<OptionVariable<int16_t>, 5> kStandardOptions = {
     "pitchType", &swos.g_pitchType, -2, 6, 4,
 };
 
-static const std::array<OptionAccessor<bool>, 13> kBoolOptions = {
+static const std::array<OptionAccessor<bool>, 14> kBoolOptions = {
     soundEnabled, initSoundEnabled, kAudioSection, kSoundEnabledKey, true,
     musicEnabled, initMusicEnabled, kAudioSection, kMusicEnabledKey, true,
     commentaryEnabled, setCommentaryEnabled, kAudioSection, kCommentaryEnabledKey, true,
@@ -92,6 +94,7 @@ static const std::array<OptionAccessor<bool>, 13> kBoolOptions = {
     getShowReplayPercentage, setShowReplayPercentage, kReplaySection, kShowReplayPercentageKey, false,
     menuGradientFillEnabled, enableMenuGradientFill, kVideoSection, kMenuItemGradientBackground, true,
     showPreMatchMenus, setPreMatchMenus, kStandardSection, kShowPreMatchMenusKey, true,
+    getPhysicsGoalNets, setPhysicsGoalNets, kGameplaySection, kPhysicsGoalNetsKey, true,
 };
 
 static const std::array<OptionAccessor<int>, 3> kIntOptions = {

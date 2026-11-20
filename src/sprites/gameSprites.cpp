@@ -6,6 +6,7 @@
 #include "replays.h"
 #include "camera.h"
 #include "ball.h"
+#include "goalNet.h"
 #ifdef SWOS_TEST
 # include "render.h"
 #endif
@@ -199,6 +200,11 @@ void drawSprites(float xOffset, float yOffset)
     auto cameraX = getCameraX();
     auto cameraY = getCameraY();
 
+    if (getPhysicsGoalNets()) {
+        drawTopGoalBackNet(xOffset, yOffset);
+        drawBottomGoalBackNet(xOffset, yOffset);
+    }
+
     for (int i = 0; i < m_numSpritesToRender; i++) {
         auto sprite = m_sortedSprites[i];
 
@@ -211,7 +217,14 @@ void drawSprites(float xOffset, float yOffset)
         auto y = sprite->y - cameraY - sprite->z;
 
         auto zoom = shouldZoomSprite(sprite->imageIndex);
-        sprite->onScreen = drawSprite(sprite->imageIndex, x.asFloat(), y.asFloat(), zoom, xOffset, yOffset);
+        if (getPhysicsGoalNets() && (sprite == &swos.goal1TopSprite || sprite == &swos.goal2BottomSprite)) {
+            if (sprite == &swos.goal1TopSprite)
+                drawTopGoalOverlayNet(xOffset, yOffset);
+            else
+                drawBottomGoalOverlayNet(xOffset, yOffset);
+        } else {
+            sprite->onScreen = drawSprite(sprite->imageIndex, x.asFloat(), y.asFloat(), zoom, xOffset, yOffset);
+        }
 
 #ifdef SWOS_TEST
         const auto& sprImage = getSprite(sprite->imageIndex);

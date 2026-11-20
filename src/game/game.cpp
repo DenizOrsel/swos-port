@@ -17,6 +17,7 @@
 #include "replays.h"
 #include "pitch.h"
 #include "pitchConstants.h"
+#include "goalNet.h"
 #include "direction.h"
 #include "bench.h"
 #include "updateBench.h"
@@ -76,6 +77,7 @@ void initMatch(TeamGame *topTeam, TeamGame *bottomTeam, bool saveOrRestoreTeams)
     initMatchSprites(topTeam, bottomTeam);
     setPitchTypeAndNumber();
     loadPitch();
+    initGoalNets();
     //InitAdvertisements
 
     if (!replayingNow()) {

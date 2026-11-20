@@ -11,6 +11,7 @@
 #include "random.h"
 #include "direction.h"
 #include "updatePlayers.h"
+#include "goalNet.h"
 
 static constexpr int kControlledBallSpeedReduction = 13;
 static constexpr int kBallAirSpeedReduction = 4;
@@ -946,6 +947,17 @@ static void handleGoalFrameCollisions(FixedPoint& previousX, FixedPoint& previou
                         collision = GoalFrameCollision::kNet;
                 }
             }
+        }
+
+        if (collision != GoalFrameCollision::kNone) {
+            int goalIndex = (ballY < kTopPitchLine) ? 0 : 1;
+            float hitX = swos.ballSprite.x.asFloat();
+            float hitY = swos.ballSprite.y.asFloat();
+            float hitZ = std::max(0.0f, swos.ballSprite.z.asFloat());
+            float velX = swos.ballSprite.deltaX.asFloat() * 1.4f;
+            float velY = swos.ballSprite.deltaY.asFloat() * 1.4f;
+            float velZ = swos.ballSprite.deltaZ.asFloat() * 1.1f;
+            notifyGoalNetBallImpact(goalIndex, hitX, hitY, hitZ, velX, velY, velZ);
         }
 
         switch (collision) {

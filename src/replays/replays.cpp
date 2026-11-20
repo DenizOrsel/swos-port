@@ -10,6 +10,7 @@
 #include "music.h"
 #include "sfx.h"
 #include "pitch.h"
+#include "goalNet.h"
 #include "controls.h"
 #include "gameControls.h"
 #include "keyBuffer.h"
@@ -445,6 +446,10 @@ static bool fetchAndRenderFrame(bool isReplay)
 
     float xOffset, yOffset;
     std::tie(xOffset, yOffset) = drawPitch(frameData.cameraX, frameData.cameraY);
+    if (getPhysicsGoalNets()) {
+        drawTopGoalBackNet(xOffset, yOffset);
+        drawBottomGoalBackNet(xOffset, yOffset);
+    }
 
     GameStats stats;
     bool gotStats = false;
@@ -458,7 +463,14 @@ static bool fetchAndRenderFrame(bool isReplay)
                 obj.x += sprite.centerXF + sprite.xOffsetF;
                 obj.y += sprite.centerYF + sprite.yOffsetF;
             }
-            drawSprite(obj.imageIndex, obj.x, obj.y, true, xOffset, yOffset);
+            if (getPhysicsGoalNets() && (obj.imageIndex == kTopGoalSprite || obj.imageIndex == kBottomGoalSprite)) {
+                if (obj.imageIndex == kTopGoalSprite)
+                    drawTopGoalOverlayNet(xOffset, yOffset);
+                else
+                    drawBottomGoalOverlayNet(xOffset, yOffset);
+            } else {
+                drawSprite(obj.imageIndex, obj.x, obj.y, true, xOffset, yOffset);
+            }
             break;
 
         case ReplayDataStorage::ObjectType::kStats:

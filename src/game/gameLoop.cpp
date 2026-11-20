@@ -21,6 +21,7 @@
 #include "hotseatCareer.h"
 #include "pitch.h"
 #include "pitchConstants.h"
+#include "goalNet.h"
 #include "referee.h"
 #include "menus.h"
 #include "menuBackground.h"
@@ -304,6 +305,7 @@ static void coreGameUpdate()
         postUpdateTeamControls(team);
     }
     updateBall();
+    updateGoalNets();
     movePlayers();
     updateReferee();
     updateCornerFlags();

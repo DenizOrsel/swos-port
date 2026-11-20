@@ -115,6 +115,7 @@ Menu gameplayOptionsMenu
     Entry { text: "AUTO SAVE REPLAYS" }
     Entry { text: "SHOW PRE-MATCH MENUS" }
     Entry { text: "GAME STYLE" }
+    Entry { text: "PHYSICS GOAL NETS" }
 
     // start of column 2, where the actual controls are
     defaultX: kOptionsColumn2X
@@ -180,6 +181,12 @@ Menu gameplayOptionsMenu
     Entry gameStyle {
         stringTable: [ ~m_gameStyle, "PC", "AMIGA" ]
         onSelect: toggleGameStyle
+        upEntry: <
+        downEntry: >
+    }
+
+    Entry physicsGoalNets {
+        boolOption: getPhysicsGoalNets, setPhysicsGoalNets, "physics goal nets"
         upEntry: <
         downEntry: >
     }
