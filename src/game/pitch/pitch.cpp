@@ -127,7 +127,7 @@ static uint16_t getCleanPitchPatternIndex(int pitchNumber, int row, int col)
         if (col == 24)
             return indices[row][(pitchNumber == 0 || pitchNumber == 5) ? 28 : 29];
     }
-    if ((row == 45 || row == 46) && col >= 18 && col <= 23) {
+    if (row == 46 && col >= 18 && col <= 23) {
         return indices[row][mapCleanCol(col, 17, 24, { 12, 29 })];
     }
     if (row == 47) {

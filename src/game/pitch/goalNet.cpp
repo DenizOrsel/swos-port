@@ -13,11 +13,11 @@
 
 namespace {
 
-constexpr int kCols = 23; // X divisions along goal width (299..369 -> ~3.18 px spacing)
-constexpr int kRows = 12; // V divisions: 0..5 roof (front-to-back), 5..11 back wall (top-to-ground)
-constexpr int kRoofBackRow = 5;
-constexpr int kSideCols = 6; // U divisions for left/right side curtains (front post to rear stanchion)
-constexpr int kSideRows = 7; // V divisions for left/right side curtains (top edge to ground)
+constexpr int kCols = 39; // Doubled horizontal mesh density along goal width (299.5..368.5 -> ~1.81 px spacing)
+constexpr int kRows = 21; // Doubled vertical/depth mesh density: 0..9 roof (front-to-back), 9..20 back wall (top-to-ground)
+constexpr int kRoofBackRow = 9;
+constexpr int kSideCols = 10; // Doubled U divisions for left/right side curtains
+constexpr int kSideRows = 12; // Doubled V divisions for left/right side curtains
 
 constexpr float kGoalLeftX = 299.5f;
 constexpr float kGoalRightX = 368.5f;
@@ -183,7 +183,8 @@ static void buildGoalNetMesh(GoalNetMesh& mesh, bool isTopGoal)
                 addSpring(mesh, cur, mainNodeIndex(mesh, r, c + 1), 0.90f, true);
             }
             if (r + 1 < kRows) {
-                addSpring(mesh, cur, mainNodeIndex(mesh, r + 1, c), 0.90f, true);
+                // Keep vertical structural springs for physics, but hide vertical lines (draw = false)
+                addSpring(mesh, cur, mainNodeIndex(mesh, r + 1, c), 0.90f, false);
             }
             // Diagonal shear springs for diamond weave & wave propagation
             if (r + 1 < kRows && c + 1 < kCols) {
@@ -257,7 +258,7 @@ static void buildGoalNetMesh(GoalNetMesh& mesh, bool isTopGoal)
                 if (c + 1 < kSideCols)
                     addSpring(mesh, cur, sideIdx(r, c + 1), 0.90f, true);
                 if (r + 1 < kSideRows)
-                    addSpring(mesh, cur, sideIdx(r + 1, c), 0.90f, true);
+                    addSpring(mesh, cur, sideIdx(r + 1, c), 0.90f, false); // Hide vertical side lines too
                 if (r + 1 < kSideRows && c + 1 < kSideCols) {
                     addSpring(mesh, cur, sideIdx(r + 1, c + 1), 0.55f, false);
                     addSpring(mesh, sideIdx(r + 1, c), sideIdx(r, c + 1), 0.55f, false);
@@ -496,40 +497,59 @@ static ScreenMapper makeScreenMapper(float xOffset, float yOffset)
 }
 
 static void drawCylindricalBar(SDL_Renderer *renderer, float x0, float y0, float x1, float y1,
-    bool isHorizontal)
+    bool isHorizontal, int postSide = 0)
 {
     float left = std::min(x0, x1);
     float top = std::min(y0, y1);
     float totalW = std::max(1.5f, std::max(x0, x1) - left);
     float totalH = std::max(1.5f, std::max(y0, y1) - top);
 
-    // 7-band cylindrical shading profile from lit top/left side to shadowed bottom/right underside,
-    // with a subtle translucent outer contact edge instead of a bulky black border.
+    // 7-band cylindrical shading profile from lit outer edge to soft inner roll-off,
+    // WITHOUT any dark/black border on the inside section of the goal mouth!
     struct BandSpec {
         uint8_t r, g, b, a;
     };
-    static constexpr BandSpec kCylinderBands[7] = {
-        {  90,  96, 102, 145 }, // 0: soft outer contact edge (top/left)
-        { 226, 230, 234, 250 }, // 1: upper curvature
+    static constexpr BandSpec kCrossbarBands[7] = {
+        { 140, 148, 155, 160 }, // 0: soft top outer edge
+        { 230, 234, 238, 252 }, // 1: upper curvature
         { 252, 254, 255, 255 }, // 2: bright specular core
-        { 242, 245, 248, 255 }, // 3: main cylinder body
-        { 208, 214, 220, 255 }, // 4: lower curvature roll-off
-        { 158, 165, 174, 250 }, // 5: cylinder underside shadow
-        {  48,  54,  60, 175 }, // 6: soft underside ambient occlusion edge
+        { 245, 248, 250, 255 }, // 3: main cylinder body
+        { 228, 233, 238, 255 }, // 4: lower curvature roll-off
+        { 206, 212, 218, 250 }, // 5: soft underside silver shade
+        { 188, 195, 202, 225 }, // 6: clean light-gray inner underside (no black inner border)
+    };
+    static constexpr BandSpec kLeftPostBands[7] = {
+        { 140, 148, 155, 160 }, // 0: outer left edge
+        { 230, 234, 238, 252 }, // 1: outer left curvature
+        { 252, 254, 255, 255 }, // 2: bright specular core
+        { 245, 248, 250, 255 }, // 3: main cylinder body
+        { 228, 233, 238, 255 }, // 4: inner right curvature
+        { 206, 212, 218, 250 }, // 5: soft inner shade
+        { 188, 195, 202, 225 }, // 6: clean light-gray inside edge (no black inner border)
+    };
+    static constexpr BandSpec kRightPostBands[7] = {
+        { 188, 195, 202, 225 }, // 0: clean light-gray inside edge (no black inner border)
+        { 206, 212, 218, 250 }, // 1: soft inner shade
+        { 228, 233, 238, 255 }, // 2: inner left curvature
+        { 245, 248, 250, 255 }, // 3: main cylinder body
+        { 252, 254, 255, 255 }, // 4: bright specular core
+        { 230, 234, 238, 252 }, // 5: outer right curvature
+        { 140, 148, 155, 160 }, // 6: outer right edge
     };
 
     if (isHorizontal) {
         float bandH = totalH / 7.0f;
         for (int i = 0; i < 7; ++i) {
-            const auto& b = kCylinderBands[i];
+            const auto& b = kCrossbarBands[i];
             SDL_SetRenderDrawColor(renderer, b.r, b.g, b.b, b.a);
             SDL_FRect r{ left, top + i * bandH, totalW, std::max(0.75f, bandH + 0.35f) };
             SDL_RenderFillRectF(renderer, &r);
         }
     } else {
+        const auto *bands = (postSide > 0) ? kRightPostBands : kLeftPostBands;
         float bandW = totalW / 7.0f;
         for (int i = 0; i < 7; ++i) {
-            const auto& b = kCylinderBands[i];
+            const auto& b = bands[i];
             SDL_SetRenderDrawColor(renderer, b.r, b.g, b.b, b.a);
             SDL_FRect r{ left + i * bandW, top, std::max(0.75f, bandW + 0.35f), totalH };
             SDL_RenderFillRectF(renderer, &r);
@@ -601,43 +621,19 @@ static void drawDynamicGoalNetShadow(SDL_Renderer *renderer, const ScreenMapper&
     for (int pass = 0; pass < 5; ++pass) {
         float ox = kBlurOffsets[pass][0] * blurStep;
         float oy = kBlurOffsets[pass][1] * blurStep;
-        uint8_t strandAlpha = (pass == 0) ? 14 : 7;
+        uint8_t strandAlpha = (pass == 0) ? 10 : 5;
         SDL_SetRenderDrawColor(renderer, 8, 22, 4, strandAlpha);
-        for (const auto& sp : mesh.springs) {
-            if (!sp.draw)
-                continue;
+        for (const auto& q : mesh.quads) {
             SDL_RenderDrawLineF(renderer,
-                s_shadowProj[sp.a].x + ox, s_shadowProj[sp.a].y + oy,
-                s_shadowProj[sp.b].x + ox, s_shadowProj[sp.b].y + oy);
+                s_shadowProj[q.n00].x + ox, s_shadowProj[q.n00].y + oy,
+                s_shadowProj[q.n11].x + ox, s_shadowProj[q.n11].y + oy);
+            SDL_RenderDrawLineF(renderer,
+                s_shadowProj[q.n10].x + ox, s_shadowProj[q.n10].y + oy,
+                s_shadowProj[q.n01].x + ox, s_shadowProj[q.n01].y + oy);
         }
     }
 
-    // 2. Softened, blurred shadow knots on the grass (outer halo + dim core)
-    float haloSize = std::clamp(1.25f * pixelScale, 2.0f, 6.5f);
-    float coreSize = std::clamp(0.65f * pixelScale, 1.0f, 3.4f);
-    for (size_t i = 0; i < mesh.nodes.size(); ++i) {
-        if (mesh.nodes[i].z < 0.5f)
-            continue;
-        SDL_SetRenderDrawColor(renderer, 8, 22, 4, 11);
-        SDL_FRect haloRect{
-            s_shadowProj[i].x - haloSize * 0.5f,
-            s_shadowProj[i].y - haloSize * 0.5f,
-            haloSize,
-            haloSize
-        };
-        SDL_RenderFillRectF(renderer, &haloRect);
-
-        SDL_SetRenderDrawColor(renderer, 8, 22, 4, 18);
-        SDL_FRect coreRect{
-            s_shadowProj[i].x - coreSize * 0.5f,
-            s_shadowProj[i].y - coreSize * 0.5f,
-            coreSize,
-            coreSize
-        };
-        SDL_RenderFillRectF(renderer, &coreRect);
-    }
-
-    // 3. Soft multi-pass blurred goalpost & crossbar ground shadow
+    // 2. Soft multi-pass blurred goalpost & crossbar ground shadow
     const float frontY = mesh.isTopGoal ? kTopGoalFrontY : kBottomGoalFrontY;
     SDL_FPoint postLB = mapper.project(kGoalLeftX, frontY, 0.0f);
     SDL_FPoint postLTShadow = mapper.project(kGoalLeftX + kFrontHeightZ * kSunDirX, frontY + kFrontHeightZ * kSunDirY, 0.0f);
@@ -695,7 +691,7 @@ static void drawGoalNetLayer(const GoalNetMesh& mesh, uint8_t layer, float xOffs
         s_disp[i] = std::sqrt(dx * dx + dy * dy + dz * dz);
     }
 
-    // 2. Translucent mesh weave diagonals shaded by height Z and dynamic ripple strain
+    // 2. Translucent diamond mesh weave diagonals shaded by height Z and dynamic ripple strain
     for (const auto& q : mesh.quads) {
         if (q.layer != layer)
             continue;
@@ -704,16 +700,18 @@ static void drawGoalNetLayer(const GoalNetMesh& mesh, uint8_t layer, float xOffs
         const auto& n11 = mesh.nodes[q.n11];
         float zFactor = std::clamp(0.5f * (n00.z + n11.z) / kFrontHeightZ, 0.0f, 1.0f);
         float strain = std::clamp(0.25f * (s_disp[q.n00] + s_disp[q.n10] + s_disp[q.n11] + s_disp[q.n01]) / 3.5f, 0.0f, 1.0f);
-        uint8_t lum = static_cast<uint8_t>(std::clamp(175.0f + 50.0f * zFactor + 30.0f * strain, 130.0f, 255.0f));
-        uint8_t alpha = static_cast<uint8_t>(std::clamp(45.0f + 35.0f * zFactor + 55.0f * strain, 35.0f, 145.0f));
+        uint8_t lum = static_cast<uint8_t>(std::clamp(185.0f + 45.0f * zFactor + 25.0f * strain, 140.0f, 255.0f));
+        uint8_t alpha = static_cast<uint8_t>(std::clamp(80.0f + 45.0f * zFactor + 60.0f * strain, 60.0f, 185.0f));
 
         SDL_SetRenderDrawColor(renderer, lum, lum, static_cast<uint8_t>(std::min(255, lum + 5)), alpha);
         SDL_RenderDrawLineF(renderer, s_proj[q.n00].x, s_proj[q.n00].y, s_proj[q.n11].x, s_proj[q.n11].y);
         SDL_RenderDrawLineF(renderer, s_proj[q.n10].x, s_proj[q.n10].y, s_proj[q.n01].x, s_proj[q.n01].y);
     }
 
-    // 3. Draw net mesh strands & diagonal weave lines
+    // 3. Draw horizontal net mesh strands only (vertical strands have sp.draw == false and point knots are hidden)
     for (const auto& sp : mesh.springs) {
+        if (!sp.draw)
+            continue;
         const auto& na = mesh.nodes[sp.a];
         const auto& nb = mesh.nodes[sp.b];
         uint8_t edgeLayer = std::max(na.layer, nb.layer);
@@ -722,37 +720,14 @@ static void drawGoalNetLayer(const GoalNetMesh& mesh, uint8_t layer, float xOffs
 
         float avgZ = 0.5f * (na.z + nb.z) / kFrontHeightZ;
         float strain = std::clamp(0.5f * (s_disp[sp.a] + s_disp[sp.b]) / 4.0f, 0.0f, 1.0f);
-        uint8_t lum = static_cast<uint8_t>(std::clamp(185.0f + 45.0f * avgZ + 25.0f * strain, 140.0f, 255.0f));
-        uint8_t alpha = sp.draw
-            ? static_cast<uint8_t>(std::clamp(135.0f + 55.0f * avgZ + 55.0f * strain, 110.0f, 245.0f))
-            : static_cast<uint8_t>(std::clamp(70.0f + 35.0f * avgZ + 45.0f * strain, 55.0f, 165.0f));
+        uint8_t lum = static_cast<uint8_t>(std::clamp(190.0f + 45.0f * avgZ + 20.0f * strain, 145.0f, 255.0f));
+        uint8_t alpha = static_cast<uint8_t>(std::clamp(115.0f + 50.0f * avgZ + 55.0f * strain, 90.0f, 220.0f));
 
         SDL_SetRenderDrawColor(renderer, lum, lum, lum, alpha);
         SDL_RenderDrawLineF(renderer, s_proj[sp.a].x, s_proj[sp.a].y, s_proj[sp.b].x, s_proj[sp.b].y);
     }
 
-    // 4. Draw point-cloud knots at each mesh intersection
-    float knotSize = std::clamp(0.55f * pixelScale, 1.2f, 3.5f);
-    for (size_t i = 0; i < mesh.nodes.size(); ++i) {
-        const auto& n = mesh.nodes[i];
-        if (n.layer != layer)
-            continue;
-
-        float zFactor = std::clamp(n.z / kFrontHeightZ, 0.0f, 1.0f);
-        float strain = std::clamp(s_disp[i] / 3.5f, 0.0f, 1.0f);
-        uint8_t lum = static_cast<uint8_t>(std::clamp(210.0f + 30.0f * zFactor + 15.0f * strain, 180.0f, 255.0f));
-        uint8_t alpha = static_cast<uint8_t>(std::clamp(185.0f + 40.0f * zFactor + 30.0f * strain, 160.0f, 255.0f));
-        SDL_SetRenderDrawColor(renderer, lum, lum, lum, alpha);
-        SDL_FRect knotRect{
-            s_proj[i].x - knotSize * 0.5f,
-            s_proj[i].y - knotSize * 0.5f,
-            knotSize,
-            knotSize
-        };
-        SDL_RenderFillRectF(renderer, &knotRect);
-    }
-
-    // 5. On the top overlay layer (layer == 1), draw the rigid 3D goalposts, crossbar, and rear stanchions
+    // 4. On the top overlay layer (layer == 1), draw the rigid 3D goalposts, crossbar, and rear stanchions
     if (layer == 1) {
         const float frontY = mesh.isTopGoal ? kTopGoalFrontY : kBottomGoalFrontY;
         const float backY = mesh.isTopGoal ? kTopGoalBackY : kBottomGoalBackY;
@@ -774,7 +749,7 @@ static void drawGoalNetLayer(const GoalNetMesh& mesh, uint8_t layer, float xOffs
         drawThickSegment(renderer, stR0, stR1, stanchionThick, stanchionColor);
         drawThickSegment(renderer, stR1, stR2, stanchionThick, stanchionColor);
 
-        // Slender cylindrical 3D-shaded front goalposts and crossbar (no bulky black box outline)
+        // Slender cylindrical 3D-shaded front goalposts and crossbar (no dark border on inside section, seamless corner join)
         SDL_FPoint postLB = mapper.project(kGoalLeftX, frontY, 0.0f);
         SDL_FPoint postLT = mapper.project(kGoalLeftX, frontY, kFrontHeightZ);
         SDL_FPoint postRB = mapper.project(kGoalRightX, frontY, 0.0f);
@@ -786,17 +761,34 @@ static void drawGoalNetLayer(const GoalNetMesh& mesh, uint8_t layer, float xOffs
         drawCylindricalBar(renderer,
             postLB.x - postHalfW, postLT.y,
             postLB.x + postHalfW, postLB.y,
-            false);
+            false, -1);
         drawCylindricalBar(renderer,
             postRB.x - postHalfW, postRT.y,
             postRB.x + postHalfW, postRB.y,
-            false);
+            false, +1);
 
         // Horizontal cylindrical crossbar spanning across both posts
         drawCylindricalBar(renderer,
-            postLT.x - postHalfW * 0.85f, postLT.y - postHalfW,
-            postRT.x + postHalfW * 0.85f, postRT.y + postHalfW,
-            true);
+            postLT.x - postHalfW, postLT.y - postHalfW,
+            postRT.x + postHalfW, postRT.y + postHalfW,
+            true, 0);
+
+        // Seamless mitered white corner joints where vertical posts meet the horizontal crossbar
+        SDL_SetRenderDrawColor(renderer, 245, 248, 250, 255);
+        SDL_FRect leftCornerJoin{
+            postLT.x - postHalfW * 0.65f,
+            postLT.y - postHalfW * 0.45f,
+            postHalfW * 1.45f,
+            postHalfW * 1.45f
+        };
+        SDL_FRect rightCornerJoin{
+            postRT.x - postHalfW * 0.80f,
+            postRT.y - postHalfW * 0.45f,
+            postHalfW * 1.45f,
+            postHalfW * 1.45f
+        };
+        SDL_RenderFillRectF(renderer, &leftCornerJoin);
+        SDL_RenderFillRectF(renderer, &rightCornerJoin);
     }
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
