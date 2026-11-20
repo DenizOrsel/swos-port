@@ -570,6 +570,22 @@ void HotseatCareerManager::ensureCupTeamsInSelectedTeams()
         return false;
     };
 
+    auto addTeamIfMissing = [&](uint16_t tid) {
+        if (swos.g_numSelectedTeams >= kMaxSelectedTeamsCount)
+            return;
+        if (tid == 0 || tid == 0xFFFF || tid == activeTeamWord)
+            return;
+        if (findHotseatPlayerByTeamId(static_cast<int16_t>(tid)) >= 0)
+            return;
+        if (hasTeamInSel(tid))
+            return;
+        TeamFile tf{};
+        if (lookupCachedTeamFile(tid, tf)) {
+            tf.teamControls = kComputerTeam;
+            selTeams[swos.g_numSelectedTeams++] = tf;
+        }
+    };
+
     auto scanComp = [&](uint32_t compOffset) {
         if (compOffset < 5000 || compOffset + 100 >= sizeof(SwosVM::g_memByte))
             return;
@@ -594,20 +610,8 @@ void HotseatCareerManager::ensureCupTeamsInSelectedTeams()
             return;
 
         for (int k = 0; k < numTeams; ++k) {
-            if (swos.g_numSelectedTeams >= kMaxSelectedTeamsCount)
-                break;
             uint16_t tid = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[tableOfs + k * 2]);
-            if (tid == 0 || tid == 0xFFFF || tid == activeTeamWord)
-                continue;
-            if (findHotseatPlayerByTeamId(static_cast<int16_t>(tid)) >= 0)
-                continue;
-            if (hasTeamInSel(tid))
-                continue;
-            TeamFile tf{};
-            if (lookupCachedTeamFile(tid, tf)) {
-                tf.teamControls = kComputerTeam;
-                selTeams[swos.g_numSelectedTeams++] = tf;
-            }
+            addTeamIfMissing(tid);
         }
     };
 

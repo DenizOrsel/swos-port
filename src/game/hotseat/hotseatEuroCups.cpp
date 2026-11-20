@@ -145,12 +145,59 @@ void HotseatCareerManager::initAdditionalEuroCups()
         }
         int activeIdx = (m_activePlayerIndex >= 0 && m_activePlayerIndex < m_numPlayers) ? m_activePlayerIndex : 0;
         if (activeIdx >= 0 && activeIdx < m_numPlayers && anyEuroCupActive()) {
+            int activeEuro = m_players[activeIdx].euroCupIndex;
             m_activeEuroCupIndex = -1;
-            activateEuroCup(m_players[activeIdx].euroCupIndex, false);
+            activateEuroCup(activeEuro, false);
+            if (activeEuro >= 0 && activeEuro < kNumEuroCups && m_euroCupActive[activeEuro] && swos.selTeamsPtr) {
+                auto *selTeams = reinterpret_cast<TeamFile *>(SwosVM::offsetToPtr(swos.selTeamsPtr));
+                uint16_t activeTeamWord = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kSelTeamNumber]);
+                int16_t tourTeams = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDA0E2 + 49]);
+                uint32_t tourTableOfs = CareerOffsets::kDsegDA0E2 + 153;
+                if (selTeams && tourTeams > 0 && tourTeams <= 64) {
+                    for (int k = 0; k < tourTeams; ++k) {
+                        if (swos.g_numSelectedTeams >= kMaxSelectedTeamsCount)
+                            break;
+                        uint16_t tid = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[tourTableOfs + k * 2]);
+                        if (tid == 0 || tid == 0xFFFF || tid == activeTeamWord)
+                            continue;
+                        bool present = false;
+                        int count = std::clamp<int>(swos.g_numSelectedTeams, 0, kMaxSelectedTeamsCount);
+                        for (int t = 0; t < count; ++t) {
+                            if (*reinterpret_cast<const uint16_t *>(&selTeams[t]) == tid) {
+                                present = true;
+                                break;
+                            }
+                        }
+                        if (present)
+                            continue;
+                        TeamFile tf{};
+                        if (lookupCachedTeamFile(tid, tf)) {
+                            int owner = findHotseatPlayerByTeamId(static_cast<int16_t>(tid));
+                            tf.teamControls = (owner >= 0)
+                                ? ((m_players[owner].coachOrPlayer == 1) ? kPlayerCoach : kCoach)
+                                : kComputerTeam;
+                            selTeams[swos.g_numSelectedTeams++] = tf;
+                        }
+                    }
+                }
+            }
+            extern void GetCurrentSeasonPointer();
+            save68kRegisters();
+            GetCurrentSeasonPointer();
+            uint32_t seasonPtr = A0.asDword();
+            restore68kRegisters();
+            if (seasonPtr >= CareerOffsets::kCareerHistory &&
+                seasonPtr + kCareerHistoryEntrySize <= CareerOffsets::kCareerHistory + kCareerHistoryBufferSize) {
+                uint32_t strOfs = (activeEuro >= 0 && activeEuro < kNumEuroCups && m_euroCupActive[activeEuro])
+                    ? m_euroCupSeasonStrOfs[activeEuro]
+                    : 0;
+                *reinterpret_cast<uint32_t *>(&SwosVM::g_memByte[seasonPtr + 34]) = strOfs;
+            }
         }
         return;
     }
 
+    cacheTeamsFromSelectedTeams();
     resetEuroCups();
     for (int p = 0; p < m_numPlayers; ++p)
         m_players[p].euroCupIndex = -1;
@@ -232,6 +279,7 @@ void HotseatCareerManager::initAdditionalEuroCups()
         cseg_8B2D3();
         restore68kRegisters();
 
+        cacheTeamsFromSelectedTeams();
         std::memcpy(&SwosVM::g_memByte[CareerOffsets::kDsegDA11F], m_euroCupScheduleTemplate, sizeof(m_euroCupScheduleTemplate));
 
         m_euroCupActive[e] = true;

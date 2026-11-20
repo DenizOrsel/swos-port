@@ -646,6 +646,7 @@ int HotseatCareerManager::initializeStartingWorlds(const std::vector<TeamFile>& 
             m_euroCupByCalOfs.clear();
         }
 
+        m_activePlayerIndex = rep;
         applyPlayerIdentityToVm(m_players[rep]);
         logInfo("Initializing world (country=%d, division=%d) via InitCareer with D0=0x%04x (P%d)",
                 key.countryFileNo, key.divisionId, static_cast<uint16_t>(m_players[rep].teamId), rep + 1);
@@ -658,6 +659,8 @@ int HotseatCareerManager::initializeStartingWorlds(const std::vector<TeamFile>& 
         saveCurrentSwosContext(m_players[rep]);
         reinterpret_cast<TeamFile *>(m_players[rep].careerTeam)->teamControls =
             (m_players[rep].coachOrPlayer == 1 ? kPlayerCoach : kCoach);
+        cacheTeamsFromSelectedTeams();
+        cacheTeamFile(*reinterpret_cast<const TeamFile *>(m_players[rep].careerTeam));
 
         // Divisions of the same country share their domestic cups (e.g. Eng Div 2 & Eng Div 3 in one FA Cup)
         if (multiWorld) {
@@ -676,6 +679,7 @@ int HotseatCareerManager::initializeStartingWorlds(const std::vector<TeamFile>& 
                 std::memcpy(&SwosVM::g_memByte[CareerOffsets::kDsegD985C], cupIt->second.cup2.data(), kCup2BufferSize);
                 *reinterpret_cast<uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8CAA + 4]) = cupIt->second.ptr1;
                 *reinterpret_cast<uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8CAA + 8]) = cupIt->second.ptr2;
+                ensureCupTeamsInSelectedTeams();
             }
         }
 

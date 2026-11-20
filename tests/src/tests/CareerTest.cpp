@@ -5098,6 +5098,81 @@ void CareerTest::testHotseatClubSelectionMenuMultiLeagueAndMouseSafety()
     assertTrue(mgr.getAssignedSlotInfo(1)->teamFileNo != p1SavedFileNo);
     assertEqual(mgr.getAssignedSlotInfo(1)->teamFileNo, uint8_t{8}); // England
 
+    // Regression test for crash 2070653f-eae1-4ad3-9c49-99a3e6b09984:
+    // 2 players in Italy Serie A (JUVENTUS 0x1614, Champions League) + Serie B (FOGGIA 0x1314, no Euro Cup)
+    // in BOTH orders (Serie A -> Serie B and Serie B -> Serie A) must initialize worlds cleanly without
+    // VerifyTeamLoaded crashing on foreign European Cup clubs inside cseg_3D204.
+    {
+        extern void LoadTeamFile();
+        extern void cseg_3D204();
+        constexpr int16_t kJuventus = 0x1614; // Italy Serie A (div 0)
+        constexpr int16_t kFoggia = 0x1314;   // Italy Serie B (div 1)
+
+        save68kRegisters();
+        D0 = 20; // Italy TEAM.020
+        LoadTeamFile();
+        restore68kRegisters();
+
+        uint16_t fileCount = (static_cast<uint16_t>(SwosVM::g_memByte[CareerOffsets::kTeamFileBuffer]) << 8) |
+                             SwosVM::g_memByte[CareerOffsets::kTeamFileBuffer + 1];
+        TeamFile juveTf{}, foggiaTf{};
+        bool gotJuve = false, gotFoggia = false;
+        for (uint16_t t = 0; t < fileCount; ++t) {
+            const auto *tf = reinterpret_cast<const TeamFile *>(
+                &SwosVM::g_memByte[CareerOffsets::kTeamFileBuffer + 2 + static_cast<size_t>(t) * sizeof(TeamFile)]);
+            int16_t tid = static_cast<int16_t>(*reinterpret_cast<const uint16_t *>(tf));
+            if (tid == kJuventus) { juveTf = *tf; gotJuve = true; }
+            if (tid == kFoggia)   { foggiaTf = *tf; gotFoggia = true; }
+        }
+        assertTrue(gotJuve && gotFoggia);
+        assertEqual(juveTf.league, uint8_t{0});
+        assertEqual(foggiaTf.league, uint8_t{1});
+
+        SWOS_UnitTest::setMenuCallback([&] {
+            SetExitMenuFlag();
+            return false;
+        });
+
+        for (int order = 0; order < 2; ++order) {
+            int16_t id0 = (order == 0) ? kJuventus : kFoggia;
+            int16_t id1 = (order == 0) ? kFoggia : kJuventus;
+            std::vector<TeamFile> ordered = (order == 0)
+                ? std::vector<TeamFile>{ juveTf, foggiaTf }
+                : std::vector<TeamFile>{ foggiaTf, juveTf };
+
+            mgr.reset();
+            mgr.initializeHotseat({ id0, id1 });
+            for (int i = 0; i < 2; ++i) {
+                auto& p = mgr.player(i);
+                p.managerName = (i == 0) ? "JON" : "PLAYER";
+                p.managerSurname = (i == 0) ? "HARE" : "2";
+                p.nationality = 8;
+                p.coachOrPlayer = 1;
+                p.careerNumPlayers = 16;
+                std::memcpy(p.careerTeam, &ordered[i], sizeof(TeamFile));
+                reinterpret_cast<TeamFile *>(p.careerTeam)->teamControls = kPlayerCoach;
+                p.careerTeamLeague = ordered[i].league;
+                p.startingBalance = 2'000'000;
+                p.newBalance = 2'000'000;
+                p.oldBalance = 2'000'000;
+            }
+
+            mgr.initializeStartingWorlds(ordered);
+            assertEqual(mgr.worldCount(), 2);
+            int juveIdx = (order == 0) ? 0 : 1;
+            int foggiaIdx = (order == 0) ? 1 : 0;
+            assertTrue(mgr.player(juveIdx).euroCupIndex >= 0);
+            assertEqual(static_cast<int>(mgr.player(foggiaIdx).euroCupIndex), -1);
+
+            for (int pi = 0; pi < 2; ++pi) {
+                mgr.switchToPlayer(pi, true);
+                save68kRegisters();
+                cseg_3D204();
+                restore68kRegisters();
+            }
+        }
+    }
+
     mgr.reset();
     D0 = kGameTypeNoGame;
     ::CareerInitVars();
