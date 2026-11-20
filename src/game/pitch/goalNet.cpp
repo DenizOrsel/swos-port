@@ -83,6 +83,9 @@ struct GoalNetMesh
 static bool m_physicsGoalNetsEnabled = true;
 static GoalNetMesh m_goalNets[2];
 static bool m_initialized = false;
+static bool m_hasCustomRenderCamera = false;
+static float m_customCameraX = 0.0f;
+static float m_customCameraY = 0.0f;
 
 static int mainNodeIndex(const GoalNetMesh& mesh, int r, int c)
 {
@@ -478,8 +481,8 @@ struct ScreenMapper
 static ScreenMapper makeScreenMapper(float xOffset, float yOffset)
 {
     ScreenMapper m;
-    m.camX = getCameraX().asFloat();
-    m.camY = getCameraY().asFloat();
+    m.camX = m_hasCustomRenderCamera ? m_customCameraX : getCameraX().asFloat();
+    m.camY = m_hasCustomRenderCamera ? m_customCameraY : getCameraY().asFloat();
     m.xOffset = xOffset;
     m.yOffset = yOffset;
     m.scale = getGameScale();
@@ -492,22 +495,52 @@ static ScreenMapper makeScreenMapper(float xOffset, float yOffset)
     return m;
 }
 
+static void drawSolidBarRect(SDL_Renderer *renderer, float x0, float y0, float x1, float y1,
+    SDL_Color fillColor, SDL_Color borderColor, float borderPx)
+{
+    float left = std::floor(std::min(x0, x1));
+    float top = std::floor(std::min(y0, y1));
+    float right = std::ceil(std::max(x0, x1));
+    float bottom = std::ceil(std::max(y0, y1));
+    float b = std::max(1.0f, std::round(borderPx));
+
+    SDL_SetRenderDrawColor(renderer, borderColor.r, borderColor.g, borderColor.b, borderColor.a);
+    SDL_FRect outerRect{ left - b, top - b, (right - left) + 2.0f * b, (bottom - top) + 2.0f * b };
+    SDL_RenderFillRectF(renderer, &outerRect);
+
+    SDL_SetRenderDrawColor(renderer, fillColor.r, fillColor.g, fillColor.b, fillColor.a);
+    SDL_FRect innerRect{ left, top, std::max(1.0f, right - left), std::max(1.0f, bottom - top) };
+    SDL_RenderFillRectF(renderer, &innerRect);
+}
+
 static void drawThickSegment(SDL_Renderer *renderer, SDL_FPoint p0, SDL_FPoint p1,
     float halfThickness, SDL_Color color)
 {
     float dx = p1.x - p0.x;
     float dy = p1.y - p0.y;
+    if (std::abs(dx) < 0.75f || std::abs(dy) < 0.75f) {
+        // Purely horizontal or vertical bar: use a solid filled rectangle (zero sub-pixel gaps!)
+        float left = std::min(p0.x, p1.x) - (std::abs(dx) < 0.75f ? halfThickness : 0.0f);
+        float right = std::max(p0.x, p1.x) + (std::abs(dx) < 0.75f ? halfThickness : 0.0f);
+        float top = std::min(p0.y, p1.y) - (std::abs(dy) < 0.75f ? halfThickness : 0.0f);
+        float bottom = std::max(p0.y, p1.y) + (std::abs(dy) < 0.75f ? halfThickness : 0.0f);
+        SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+        SDL_FRect rect{ left, top, std::max(1.0f, right - left), std::max(1.0f, bottom - top) };
+        SDL_RenderFillRectF(renderer, &rect);
+        return;
+    }
+
     float len = std::sqrt(dx * dx + dy * dy);
     if (len < 0.01f)
         return;
 
     float nx = -dy / len;
     float ny = dx / len;
-    int numPasses = std::clamp(static_cast<int>(std::ceil(halfThickness * 2.5f)), 1, 9);
+    int numPasses = std::clamp(static_cast<int>(std::ceil(halfThickness * 4.0f)) + 1, 2, 25);
 
     SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
     for (int i = 0; i < numPasses; ++i) {
-        float t = (numPasses == 1) ? 0.0f : (-halfThickness + (2.0f * halfThickness * i) / (numPasses - 1));
+        float t = -halfThickness + (2.0f * halfThickness * i) / (numPasses - 1);
         SDL_RenderDrawLineF(renderer, p0.x + nx * t, p0.y + ny * t, p1.x + nx * t, p1.y + ny * t);
     }
 }
@@ -683,24 +716,44 @@ static void drawGoalNetLayer(const GoalNetMesh& mesh, uint8_t layer, float xOffs
         drawThickSegment(renderer, stR0, stR1, stanchionThick, stanchionColor);
         drawThickSegment(renderer, stR1, stR2, stanchionThick, stanchionColor);
 
-        // Rigid white front goalposts and crossbar with dark outline
+        // Rigid white front goalposts and crossbar drawn as solid pixel-aligned rectangles (never fuzzy or striped!)
         SDL_FPoint postLB = mapper.project(kGoalLeftX, frontY, 0.0f);
         SDL_FPoint postLT = mapper.project(kGoalLeftX, frontY, kFrontHeightZ);
         SDL_FPoint postRB = mapper.project(kGoalRightX, frontY, 0.0f);
         SDL_FPoint postRT = mapper.project(kGoalRightX, frontY, kFrontHeightZ);
 
-        float outerThick = std::max(1.5f, 1.35f * pixelScale);
-        float innerThick = std::max(1.0f, 0.90f * pixelScale);
-        SDL_Color outlineColor{ 25, 25, 25, 240 };
-        SDL_Color postWhite{ 248, 248, 248, 255 };
+        float postHalfW = std::max(1.0f, 0.90f * pixelScale);
+        float borderPx = std::max(1.0f, 0.38f * pixelScale);
+        SDL_Color outlineColor{ 22, 22, 22, 245 };
+        SDL_Color postWhite{ 246, 248, 246, 255 };
+        SDL_Color postShade{ 195, 200, 205, 255 };
 
-        drawThickSegment(renderer, postLB, postLT, outerThick, outlineColor);
-        drawThickSegment(renderer, postRB, postRT, outerThick, outlineColor);
-        drawThickSegment(renderer, postLT, postRT, outerThick, outlineColor);
+        // Left & right vertical goalposts (outer black border + solid white post + inner shaded edge)
+        drawSolidBarRect(renderer,
+            postLB.x - postHalfW, postLT.y - postHalfW,
+            postLB.x + postHalfW, postLB.y,
+            postWhite, outlineColor, borderPx);
+        drawSolidBarRect(renderer,
+            postRB.x - postHalfW, postRT.y - postHalfW,
+            postRB.x + postHalfW, postRB.y,
+            postWhite, outlineColor, borderPx);
 
-        drawThickSegment(renderer, postLB, postLT, innerThick, postWhite);
-        drawThickSegment(renderer, postRB, postRT, innerThick, postWhite);
-        drawThickSegment(renderer, postLT, postRT, innerThick, postWhite);
+        // Horizontal crossbar spanning across both posts
+        drawSolidBarRect(renderer,
+            postLT.x - postHalfW, postLT.y - postHalfW,
+            postRT.x + postHalfW, postRT.y + postHalfW,
+            postWhite, outlineColor, borderPx);
+
+        // Subtle inner shadow along the underside of the crossbar and inside edges of the posts (classic SWOS 3D cylinder look)
+        float shadeH = std::max(1.0f, 0.45f * pixelScale);
+        SDL_SetRenderDrawColor(renderer, postShade.r, postShade.g, postShade.b, postShade.a);
+        SDL_FRect crossbarUnderShade{
+            std::floor(postLT.x + postHalfW),
+            std::ceil(postLT.y + postHalfW) - shadeH,
+            std::max(1.0f, std::ceil(postRT.x - postHalfW) - std::floor(postLT.x + postHalfW)),
+            shadeH
+        };
+        SDL_RenderFillRectF(renderer, &crossbarUnderShade);
     }
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
@@ -742,6 +795,18 @@ void notifyGoalNetBallImpact(int goalIndex, float hitX, float hitY, float hitZ,
     for (auto& node : mesh.nodes) {
         interactNodeWithSphere(node, hitX, hitY, hitZ, velX, velY, velZ, kImpactRadius, 1.35f);
     }
+}
+
+void setGoalNetRenderCamera(FixedPoint cameraX, FixedPoint cameraY)
+{
+    m_hasCustomRenderCamera = true;
+    m_customCameraX = cameraX.asFloat();
+    m_customCameraY = cameraY.asFloat();
+}
+
+void clearGoalNetRenderCamera()
+{
+    m_hasCustomRenderCamera = false;
 }
 
 void drawTopGoalBackNet(float xOffset, float yOffset)

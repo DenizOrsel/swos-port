@@ -1,9 +1,14 @@
 #pragma once
 
+#include "FixedPoint.h"
+
 void initGoalNets();
 void updateGoalNets();
 void notifyGoalNetBallImpact(int goalIndex, float hitX, float hitY, float hitZ,
     float velX, float velY, float velZ);
+
+void setGoalNetRenderCamera(FixedPoint cameraX, FixedPoint cameraY);
+void clearGoalNetRenderCamera();
 
 void drawTopGoalBackNet(float xOffset, float yOffset);
 void drawTopGoalOverlayNet(float xOffset, float yOffset);

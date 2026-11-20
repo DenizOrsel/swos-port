@@ -446,6 +446,7 @@ static bool fetchAndRenderFrame(bool isReplay)
 
     float xOffset, yOffset;
     std::tie(xOffset, yOffset) = drawPitch(frameData.cameraX, frameData.cameraY);
+    setGoalNetRenderCamera(frameData.cameraX, frameData.cameraY);
     if (getPhysicsGoalNets()) {
         drawTopGoalBackNet(xOffset, yOffset);
         drawBottomGoalBackNet(xOffset, yOffset);
@@ -487,6 +488,8 @@ static bool fetchAndRenderFrame(bool isReplay)
             logWarn("Unknown replay object type %d", obj.type);
         }
     }
+
+    clearGoalNetRenderCamera();
 
     if (gotStats)
         drawStats(frameData.team1Goals, frameData.team2Goals, stats);
