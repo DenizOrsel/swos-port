@@ -362,21 +362,44 @@ static void drawPitch(float xOfs, float yOfs, int row, int column, int numPatter
         }
     };
 
-    std::array<RenderPattern, kPitchPatternWidth * kPitchPatternHeight> renderPatterns;
+    std::array<RenderPattern, kPitchPatternWidth * kPitchPatternHeight + 16> renderPatterns;
     int numPatterns = 0;
 
     const bool useCleanGoalTiles = getPhysicsGoalNets();
+    const int stride = (m_pitchNumber == 4) ? 6 : 4;
     for (int i = row; i < row + numPatternsY; i++) {
         for (int j = column; j < column + numPatternsX; j++) {
             auto patternIndex = useCleanGoalTiles ? getCleanPitchPatternIndex(m_pitchNumber, i, j) : indices[i][j];
             if (patternIndex != UINT16_MAX) {
-                const auto& pattern = kPatterns[m_res][start + patternIndex];
-                const auto texture = m_pitchTextures[m_res][pattern.texture];
+                if (useCleanGoalTiles && i == 45 && j >= 18 && j <= 23) {
+                    // Row 45 (cols 18..23) contains BOTH the 6-yard box horizontal white line near the top of the tile
+                    // AND the baked-in top edge of the static bottom goal crossbar in the bottom 3 logical pixels.
+                    // Render the top 13/16 of the original tile (keeping the 6-yard box line) and the bottom 3/16
+                    // from the clean grass tile shifted by stride (erasing the extra crossbar line cleanly!).
+                    int topH = (patternSize * 13) / 16;
+                    int botH = patternSize - topH;
+                    float topDestH = destPatternSize * (13.0f / 16.0f);
+                    float botDestH = destPatternSize - topDestH;
 
-                SDL_Rect srcRect{ pattern.x, pattern.y, patternSize, patternSize };
-                SDL_FRect dstRect{ currentXOfs, currentYOfs, destPatternSize, destPatternSize };
+                    const auto& topPat = kPatterns[m_res][start + indices[i][j]];
+                    SDL_Rect topSrc{ topPat.x, topPat.y, patternSize, topH };
+                    SDL_FRect topDst{ currentXOfs, currentYOfs, destPatternSize, topDestH };
+                    renderPatterns[numPatterns++] = { topSrc, topDst, m_pitchTextures[m_res][topPat.texture], topPat.texture };
 
-                renderPatterns[numPatterns++] = { srcRect, dstRect, texture, pattern.texture };
+                    int cleanCol = (j - stride >= 13 && j - stride != 17) ? (j - stride) : (j + stride);
+                    const auto& botPat = kPatterns[m_res][start + indices[i][cleanCol]];
+                    SDL_Rect botSrc{ botPat.x, botPat.y + topH, patternSize, botH };
+                    SDL_FRect botDst{ currentXOfs, currentYOfs + topDestH, destPatternSize, botDestH };
+                    renderPatterns[numPatterns++] = { botSrc, botDst, m_pitchTextures[m_res][botPat.texture], botPat.texture };
+                } else {
+                    const auto& pattern = kPatterns[m_res][start + patternIndex];
+                    const auto texture = m_pitchTextures[m_res][pattern.texture];
+
+                    SDL_Rect srcRect{ pattern.x, pattern.y, patternSize, patternSize };
+                    SDL_FRect dstRect{ currentXOfs, currentYOfs, destPatternSize, destPatternSize };
+
+                    renderPatterns[numPatterns++] = { srcRect, dstRect, texture, pattern.texture };
+                }
             }
 
             currentXOfs += destPatternSize;
