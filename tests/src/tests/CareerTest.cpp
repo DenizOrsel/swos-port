@@ -4838,6 +4838,82 @@ void CareerTest::testHotseatMultiCountryCareer()
     assertTrue(manUtdS2->teamControls == kPlayerCoach || manUtdS2->teamControls == kCoach);
     assertTrue(otherEngS2->teamControls == kPlayerCoach || otherEngS2->teamControls == kCoach);
 
+    // 6. 4-player Champions Cup Semi-Final (Man Utd 0x0b08, Juventus 0x0714, Rapid Vienna 0x0601, Fenerbahce 0x0926):
+    //    When the tournament sub-competition advances to Quarter-Finals ([sub + 49] == 8), Semi-Finals ([sub + 49] == 4),
+    //    and Final ([sub + 49] == 2), team ordinals remain in the 16-team tournament table (0..15).
+    //    Verify relinkCompetitionTeamPointers() relinks all 16 tournament team slots across player switches so
+    //    Juventus (whose tournament index is >= 4) and Manchester United (< 4) never both resolve to careerTeam
+    //    ("MANCHESTER UTD V MANCHESTER UTD").
+    {
+        uint32_t tourBase = CareerOffsets::kDsegDA0E2;
+        uint32_t subBase = tourBase + (CareerOffsets::kDiyCompetitionStart - CareerOffsets::kDiyFileBufferCopy);
+        constexpr int kOrdP0 = 3;
+        constexpr int kOrdP1 = 7;
+        auto stageSemiFinalBuffers = [&]() {
+            std::memset(&SwosVM::g_memByte[tourBase], 0, kEuroCupBufferSize);
+            *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[tourBase]) = 2; // Tournament
+            *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[tourBase + 49]) = 16; // 16 outer tournament teams
+            *reinterpret_cast<uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8CAA + 12]) = 1u;
+            *reinterpret_cast<uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kArrayOfPointers + 12]) = tourBase;
+
+            for (int k = 0; k < 16; ++k) {
+                uint16_t tid = (k == kOrdP0) ? static_cast<uint16_t>(kManUtd)
+                             : (k == kOrdP1) ? static_cast<uint16_t>(otherEngPremId)
+                             : static_cast<uint16_t>(0x0108 + k);
+                *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[tourBase + 153 + k * 2]) = tid;
+                *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[subBase + 589 + k * 2]) = tid;
+            }
+            *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[subBase]) = 1; // Cup stage (Semi-Final)
+            *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[subBase + 49]) = 4; // 4 teams remaining in Semi-Final
+            *reinterpret_cast<uint16_t *>(&SwosVM::g_memByte[subBase + 71]) = 1; // isTourSub
+            *reinterpret_cast<int16_t *>(&SwosVM::g_memByte[subBase + 77]) = 16;
+
+            std::memcpy(&SwosVM::g_memByte[CareerOffsets::kDiyFileBufferCopy], &SwosVM::g_memByte[tourBase], 785);
+            std::memcpy(&SwosVM::g_memByte[CareerOffsets::kDiyCompetitionStart], &SwosVM::g_memByte[subBase], 1500);
+        };
+
+        int32_t careerTeamDelta = static_cast<int32_t>(CareerOffsets::kCareerTeam) - static_cast<int32_t>(swos.selTeamsPtr);
+
+        // Simulate Semi-Final setup while P1 (ordinal 7 >= 4) is active in careerTeam
+        mgr.switchToPlayer(1, false);
+        stageSemiFinalBuffers();
+        mgr.relinkCompetitionTeamPointers();
+        int32_t p0DeltaOnP1Turn = *reinterpret_cast<const int32_t *>(&SwosVM::g_memByte[subBase + 835 + kOrdP0 * 4]);
+        int32_t p1DeltaOnP1Turn = *reinterpret_cast<const int32_t *>(&SwosVM::g_memByte[subBase + 835 + kOrdP1 * 4]);
+        assertEqual(p1DeltaOnP1Turn, careerTeamDelta);
+        assertTrue(p0DeltaOnP1Turn != careerTeamDelta);
+
+        // Now switch to P0 (Man Utd, ordinal 3 < 4) for the Semi-Final match without clearing subBase:
+        // Ordinal 7 (P1) MUST be relinked out of careerTeamDelta to its g_selectedTeams slot!
+        mgr.switchToPlayer(0, false);
+        *reinterpret_cast<uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD8CAA + 12]) = 1u;
+        *reinterpret_cast<uint32_t *>(&SwosVM::g_memByte[CareerOffsets::kArrayOfPointers + 12]) = tourBase;
+        // Restore the Semi-Final state with P1's stale careerTeamDelta still at ordinal 7 before relinking
+        stageSemiFinalBuffers();
+        *reinterpret_cast<int32_t *>(&SwosVM::g_memByte[subBase + 835 + kOrdP1 * 4]) = careerTeamDelta;
+        *reinterpret_cast<int32_t *>(&SwosVM::g_memByte[CareerOffsets::kDiyCompetitionStart + 835 + kOrdP1 * 4]) = careerTeamDelta;
+        mgr.relinkCompetitionTeamPointers();
+        int32_t p0DeltaOnP0Turn = *reinterpret_cast<const int32_t *>(&SwosVM::g_memByte[subBase + 835 + kOrdP0 * 4]);
+        int32_t p1DeltaOnP0Turn = *reinterpret_cast<const int32_t *>(&SwosVM::g_memByte[subBase + 835 + kOrdP1 * 4]);
+        assertEqual(p0DeltaOnP0Turn, careerTeamDelta);
+        assertTrue(p1DeltaOnP0Turn != careerTeamDelta);
+
+        uint16_t resolvedTeam0 = *reinterpret_cast<const uint16_t *>(
+            &SwosVM::g_memByte[static_cast<int32_t>(swos.selTeamsPtr) + p0DeltaOnP0Turn]);
+        uint16_t resolvedTeam1 = *reinterpret_cast<const uint16_t *>(
+            &SwosVM::g_memByte[static_cast<int32_t>(swos.selTeamsPtr) + p1DeltaOnP0Turn]);
+        assertEqual(resolvedTeam0, static_cast<uint16_t>(kManUtd));
+        assertEqual(resolvedTeam1, static_cast<uint16_t>(otherEngPremId));
+        assertTrue(resolvedTeam0 != resolvedTeam1);
+
+        int32_t diyP0Delta = *reinterpret_cast<const int32_t *>(
+            &SwosVM::g_memByte[CareerOffsets::kDiyCompetitionStart + 835 + kOrdP0 * 4]);
+        int32_t diyP1Delta = *reinterpret_cast<const int32_t *>(
+            &SwosVM::g_memByte[CareerOffsets::kDiyCompetitionStart + 835 + kOrdP1 * 4]);
+        assertEqual(diyP0Delta, careerTeamDelta);
+        assertTrue(diyP1Delta != careerTeamDelta);
+    }
+
     mgr.reset();
     SWOS_UnitTest::setMenuCallback();
 }

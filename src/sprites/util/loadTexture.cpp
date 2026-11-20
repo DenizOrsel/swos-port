@@ -10,10 +10,20 @@ SDL_Texture *loadTexture(const char *path)
 
     auto resPath = joinPaths(getAssetDir(), path);
 
-    if (auto f = openFile(resPath.c_str()))
-        texture = IMG_LoadTexture_RW(getRenderer(), f, true);
-    else
-        errorExit("Failed to open texture file %s", path);
+    for (int attempt = 0; attempt < 25; ++attempt) {
+        if (auto f = openFile(resPath.c_str()))
+            texture = IMG_LoadTexture_RW(getRenderer(), f, true);
+        else
+            errorExit("Failed to open texture file %s", path);
+
+        if (texture)
+            break;
+
+        logWarn("Transient failure loading texture %s (attempt %d): %s", path, attempt + 1, IMG_GetError());
+        if (auto renderer = getRenderer())
+            SDL_RenderPresent(renderer);
+        SDL_Delay(50);
+    }
 
     if (!texture)
         errorExit("Failed to load texture %s: %s", path, IMG_GetError());

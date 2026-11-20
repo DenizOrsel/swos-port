@@ -98,6 +98,14 @@ static int handleSizeChanged(void *, SDL_Event *event)
     if (event->type == SDL_WINDOWEVENT) {
         switch (event->window.event) {
         case SDL_WINDOWEVENT_SIZE_CHANGED:
+            if (m_windowMode == kModeFullScreen) {
+                if (m_window && (SDL_GetWindowFlags(m_window) & SDL_WINDOW_MINIMIZED) != 0)
+                    break;
+                if (m_displayWidth > 0 && m_displayHeight > 0 &&
+                    (event->window.data1 != m_displayWidth || event->window.data2 != m_displayHeight)) {
+                    break;
+                }
+            }
             updateWindowDimensions(event->window.data1, event->window.data2);
             break;
         case SDL_WINDOWEVENT_MAXIMIZED:

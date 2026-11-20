@@ -80,16 +80,23 @@ static void loadMenuBackground(const std::string& name)
         unloadMenuBackground();
     if (!name.empty()) {
         auto path = getPathInAssetDir(name.c_str());
-        if (auto f = openImageFile(path)) {
-            m_background = IMG_LoadTexture_RW(getRenderer(), f, true);
-            if (m_background) {
-                m_backgroundName = name;
-                logInfo("Menu background set to \"%s\"", name.c_str());
+        for (int attempt = 0; attempt < 10; ++attempt) {
+            if (auto f = openImageFile(path)) {
+                m_background = IMG_LoadTexture_RW(getRenderer(), f, true);
+                if (m_background) {
+                    m_backgroundName = name;
+                    logInfo("Menu background set to \"%s\"", name.c_str());
+                    break;
+                } else {
+                    logWarn("Failed to load background image \"%s\" (attempt %d), error: %s", name.c_str(), attempt + 1, IMG_GetError());
+                    if (auto renderer = getRenderer())
+                        SDL_RenderPresent(renderer);
+                    SDL_Delay(50);
+                }
             } else {
-                logWarn("Failed to load background image \"%s\", error: %s", name.c_str(), IMG_GetError());
+                logWarn("Failed to open background image file \"%s\"", name.c_str());
+                break;
             }
-        } else {
-            logWarn("Failed to open background image file \"%s\"", name.c_str());
         }
     }
 }

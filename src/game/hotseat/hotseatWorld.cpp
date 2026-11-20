@@ -599,12 +599,13 @@ void HotseatCareerManager::ensureCupTeamsInSelectedTeams()
         uint16_t compType = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[compOffset]);
         uint32_t base = compOffset;
         uint16_t blockType = compType;
+        int16_t outerTourTeams = 0;
         if (compType == 2) {
-            int16_t tourTeams = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[compOffset + 49]);
+            outerTourTeams = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[compOffset + 49]);
             uint32_t tourTableOfs = compOffset + 153;
-            if (tourTeams > 0 && tourTeams <= 64 &&
-                tourTableOfs + static_cast<uint32_t>(tourTeams) * 2 <= sizeof(SwosVM::g_memByte)) {
-                for (int k = 0; k < tourTeams; ++k) {
+            if (outerTourTeams > 0 && outerTourTeams <= 64 &&
+                tourTableOfs + static_cast<uint32_t>(outerTourTeams) * 2 <= sizeof(SwosVM::g_memByte)) {
+                for (int k = 0; k < outerTourTeams; ++k) {
                     uint16_t tid = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[tourTableOfs + k * 2]);
                     addTeamIfMissing(tid);
                 }
@@ -618,6 +619,22 @@ void HotseatCareerManager::ensureCupTeamsInSelectedTeams()
             return;
 
         int16_t numTeams = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[base + 49]);
+        if (outerTourTeams > numTeams && outerTourTeams <= 64) {
+            numTeams = outerTourTeams;
+        }
+        uint16_t isTourSub = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[base + 71]);
+        if (isTourSub != 0) {
+            int16_t subTotalTeams = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[base + 77]);
+            if (subTotalTeams > numTeams && subTotalTeams <= 64) {
+                numTeams = subTotalTeams;
+            }
+            if (base == static_cast<uint32_t>(CareerOffsets::kDiyCompetitionStart)) {
+                int16_t diyCopyTeams = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kDiyFileBufferCopy + 49]);
+                if (diyCopyTeams > numTeams && diyCopyTeams <= 64) {
+                    numTeams = diyCopyTeams;
+                }
+            }
+        }
         if (numTeams <= 0 || numTeams > 64)
             return;
 
@@ -894,11 +911,27 @@ static void relinkSingleCompetitionBuffer(HotseatCareerManager& mgr, uint32_t co
         return;
 
     uint16_t compType = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[compOffset]);
-    auto relinkBlock = [&](uint32_t base, uint16_t blockType) {
+    auto relinkBlock = [&](uint32_t base, uint16_t blockType, int16_t outerTourTeams) {
         if (base + 840 >= sizeof(SwosVM::g_memByte))
             return;
 
         int16_t numTeams = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[base + 49]);
+        if (outerTourTeams > numTeams && outerTourTeams <= 64) {
+            numTeams = outerTourTeams;
+        }
+        uint16_t isTourSub = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[base + 71]);
+        if (isTourSub != 0) {
+            int16_t subTotalTeams = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[base + 77]);
+            if (subTotalTeams > numTeams && subTotalTeams <= 64) {
+                numTeams = subTotalTeams;
+            }
+            if (base == static_cast<uint32_t>(CareerOffsets::kDiyCompetitionStart)) {
+                int16_t diyCopyTeams = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kDiyFileBufferCopy + 49]);
+                if (diyCopyTeams > numTeams && diyCopyTeams <= 64) {
+                    numTeams = diyCopyTeams;
+                }
+            }
+        }
         if (numTeams <= 0 || numTeams > 64)
             return;
 
@@ -928,13 +961,14 @@ static void relinkSingleCompetitionBuffer(HotseatCareerManager& mgr, uint32_t co
     };
 
     if (compType == 0 || compType == 1) {
-        relinkBlock(compOffset, compType);
+        relinkBlock(compOffset, compType, 0);
     } else if (compType == 2) {
+        int16_t outerTourTeams = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[compOffset + 49]);
         uint32_t sub = compOffset + static_cast<uint32_t>(kTourSubCompOffset);
         if (sub + 52 < sizeof(SwosVM::g_memByte)) {
             uint16_t subType = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[sub]);
             if (subType <= 2) {
-                relinkBlock(sub, subType);
+                relinkBlock(sub, subType, outerTourTeams);
             }
         }
     }
