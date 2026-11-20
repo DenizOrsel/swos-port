@@ -24,12 +24,13 @@ constexpr float kGoalRightX = 368.5f;
 constexpr float kGoalWidth = kGoalRightX - kGoalLeftX;
 
 constexpr float kTopGoalFrontY = 129.0f;
-constexpr float kTopGoalBackY = 113.0f;
+constexpr float kTopGoalBackY = 117.0f;
 constexpr float kBottomGoalFrontY = 769.0f;
-constexpr float kBottomGoalBackY = 785.0f;
+constexpr float kBottomGoalBackY = 783.0f;
 
 constexpr float kFrontHeightZ = 15.0f;
-constexpr float kBackHeightZ = 11.0f;
+constexpr float kTopBackHeightZ = 13.0f;
+constexpr float kBottomBackHeightZ = 11.0f;
 
 struct NetNode
 {
@@ -121,6 +122,8 @@ static void buildGoalNetMesh(GoalNetMesh& mesh, bool isTopGoal)
 
     const float frontY = isTopGoal ? kTopGoalFrontY : kBottomGoalFrontY;
     const float backY = isTopGoal ? kTopGoalBackY : kBottomGoalBackY;
+    const float backHeightZ = isTopGoal ? kTopBackHeightZ : kBottomBackHeightZ;
+    const float botBackY = isTopGoal ? (backY + 1.5f) : (backY + 2.0f);
 
     // 1. Main roof + rear sheet (kRows x kCols)
     mesh.mainGridOffset = 0;
@@ -137,14 +140,12 @@ static void buildGoalNetMesh(GoalNetMesh& mesh, bool isTopGoal)
                 y = frontY + t * (backY - frontY);
                 // Slight natural catenary sag in the roof mesh
                 float sag = 0.85f * std::sin(t * 3.14159265f) * std::sin(u * 3.14159265f);
-                z = kFrontHeightZ + t * (kBackHeightZ - kFrontHeightZ) - sag;
+                z = kFrontHeightZ + t * (backHeightZ - kFrontHeightZ) - sag;
                 layer = 1;
             } else {
                 float t = static_cast<float>(r - kRoofBackRow) / static_cast<float>(kRows - 1 - kRoofBackRow);
-                // Rear net slopes slightly outward toward the base stanchions
-                float backSlope = isTopGoal ? (-1.5f * t) : (1.5f * t);
-                y = backY + backSlope;
-                z = kBackHeightZ * (1.0f - t);
+                y = backY + t * (botBackY - backY);
+                z = backHeightZ * (1.0f - t);
                 // For the bottom goal (camera looking from south/above), the rear wall leans over the inside of the goal
                 layer = isTopGoal ? 0 : 1;
             }
@@ -218,11 +219,10 @@ static void buildGoalNetMesh(GoalNetMesh& mesh, bool isTopGoal)
             for (int c = 0; c < kSideCols; ++c) {
                 float u = static_cast<float>(c) / static_cast<float>(kSideCols - 1);
                 float topY = frontY + u * (backY - frontY);
-                float botBackY = backY + (isTopGoal ? -1.5f : 1.5f);
                 float botY = frontY + u * (botBackY - frontY);
                 float y = topY + v * (botY - topY);
 
-                float topZ = kFrontHeightZ + u * (kBackHeightZ - kFrontHeightZ);
+                float topZ = kFrontHeightZ + u * (backHeightZ - kFrontHeightZ);
                 float z = topZ * (1.0f - v);
 
                 NetNode node{};
@@ -512,71 +512,59 @@ static void drawThickSegment(SDL_Renderer *renderer, SDL_FPoint p0, SDL_FPoint p
     }
 }
 
-static void drawGroundBackdropMask(SDL_Renderer *renderer, const ScreenMapper& mapper, bool isTopGoal)
+static void drawDynamicGoalNetShadow(SDL_Renderer *renderer, const ScreenMapper& mapper,
+    const GoalNetMesh& mesh, float pixelScale)
 {
-    // Covers the baked-in static net pixels on the pitch tiles behind the goal line with matching turf + shadow
-    int pitchType = getPitchType();
-    SDL_Color turfColor{ 52, 118, 28, 255 };
-    SDL_Color stripeColor{ 46, 108, 24, 255 };
-    switch (pitchType) {
-    case 0: // Frozen
-        turfColor = { 132, 168, 152, 255 };
-        stripeColor = { 120, 156, 140, 255 };
-        break;
-    case 1: // Muddy
-        turfColor = { 96, 86, 44, 255 };
-        stripeColor = { 84, 74, 38, 255 };
-        break;
-    case 2: // Wet
-        turfColor = { 42, 106, 36, 255 };
-        stripeColor = { 36, 96, 30, 255 };
-        break;
-    case 3: // Soft
-        turfColor = { 50, 122, 32, 255 };
-        stripeColor = { 44, 110, 28, 255 };
-        break;
-    case 5: // Dry
-        turfColor = { 86, 128, 36, 255 };
-        stripeColor = { 78, 118, 32, 255 };
-        break;
-    case 6: // Hard
-        turfColor = { 98, 134, 48, 255 };
-        stripeColor = { 88, 122, 42, 255 };
-        break;
-    default: // Normal
-        turfColor = { 56, 124, 28, 255 };
-        stripeColor = { 48, 112, 24, 255 };
-        break;
-    }
+    // Projects the live 3D net and goalposts onto the grass (Z = 0) along SWOS's oblique sun vector
+    // (+0.65 * Z in X, +0.38 * Z in Y), so the shadow on the real pitch tiles ripples with the net!
+    constexpr float kSunDirX = 0.65f;
+    constexpr float kSunDirY = 0.38f;
 
-    float y0 = isTopGoal ? 97.5f : (kBottomGoalFrontY + 1.0f);
-    float y1 = isTopGoal ? (kTopGoalFrontY - 0.8f) : 792.0f;
-    SDL_FPoint tl = mapper.project(kGoalLeftX - 3.5f, y0, 0.0f);
-    SDL_FPoint br = mapper.project(kGoalRightX + 3.5f, y1, 0.0f);
+    static std::vector<SDL_FPoint> s_shadowProj;
+    s_shadowProj.resize(mesh.nodes.size());
+    for (size_t i = 0; i < mesh.nodes.size(); ++i) {
+        const auto& n = mesh.nodes[i];
+        s_shadowProj[i] = mapper.project(n.x + n.z * kSunDirX, n.y + n.z * kSunDirY, 0.0f);
+    }
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(renderer, turfColor.r, turfColor.g, turfColor.b, 255);
-    SDL_FRect maskRect{
-        std::min(tl.x, br.x),
-        std::min(tl.y, br.y),
-        std::abs(br.x - tl.x),
-        std::abs(br.y - tl.y)
-    };
-    SDL_RenderFillRectF(renderer, &maskRect);
 
-    // Subtle horizontal turf mowing texture bands + soft goal shadow on the grass inside the goal
-    SDL_SetRenderDrawColor(renderer, stripeColor.r, stripeColor.g, stripeColor.b, 255);
-    int numStripes = 6;
-    float bandH = maskRect.h / static_cast<float>(numStripes);
-    for (int i = 0; i < numStripes; i += 2) {
-        SDL_FRect stripe{ maskRect.x, maskRect.y + i * bandH, maskRect.w, bandH };
-        SDL_RenderFillRectF(renderer, &stripe);
+    // 1. Soft shadow mesh strands on the grass
+    SDL_SetRenderDrawColor(renderer, 10, 25, 5, 58);
+    for (const auto& sp : mesh.springs) {
+        if (!sp.draw)
+            continue;
+        SDL_RenderDrawLineF(renderer,
+            s_shadowProj[sp.a].x, s_shadowProj[sp.a].y,
+            s_shadowProj[sp.b].x, s_shadowProj[sp.b].y);
     }
 
-    // Re-draw crisp white goal line between the posts
-    SDL_FPoint gl0 = mapper.project(kGoalLeftX - 2.0f, isTopGoal ? kTopGoalFrontY : kBottomGoalFrontY, 0.0f);
-    SDL_FPoint gl1 = mapper.project(kGoalRightX + 2.0f, isTopGoal ? kTopGoalFrontY : kBottomGoalFrontY, 0.0f);
-    drawThickSegment(renderer, gl0, gl1, std::max(1.0f, 0.8f * mapper.scale * mapper.zoom), { 235, 238, 235, 255 });
+    // 2. Shadow knots on the grass (mimics the classic pixelated SWOS goal shadow pattern, now dynamic!)
+    float shadowDot = std::clamp(0.65f * pixelScale, 1.2f, 3.8f);
+    SDL_SetRenderDrawColor(renderer, 8, 22, 4, 72);
+    for (size_t i = 0; i < mesh.nodes.size(); ++i) {
+        if (mesh.nodes[i].z < 0.5f)
+            continue;
+        SDL_FRect dotRect{
+            s_shadowProj[i].x - shadowDot * 0.5f,
+            s_shadowProj[i].y - shadowDot * 0.5f,
+            shadowDot,
+            shadowDot
+        };
+        SDL_RenderFillRectF(renderer, &dotRect);
+    }
+
+    // 3. Goalpost & crossbar ground shadow
+    const float frontY = mesh.isTopGoal ? kTopGoalFrontY : kBottomGoalFrontY;
+    SDL_FPoint postLB = mapper.project(kGoalLeftX, frontY, 0.0f);
+    SDL_FPoint postLTShadow = mapper.project(kGoalLeftX + kFrontHeightZ * kSunDirX, frontY + kFrontHeightZ * kSunDirY, 0.0f);
+    SDL_FPoint postRB = mapper.project(kGoalRightX, frontY, 0.0f);
+    SDL_FPoint postRTShadow = mapper.project(kGoalRightX + kFrontHeightZ * kSunDirX, frontY + kFrontHeightZ * kSunDirY, 0.0f);
+    float postShadowThick = std::max(1.0f, 0.85f * pixelScale);
+    SDL_Color postShadowColor{ 8, 22, 4, 85 };
+    drawThickSegment(renderer, postLB, postLTShadow, postShadowThick, postShadowColor);
+    drawThickSegment(renderer, postRB, postRTShadow, postShadowThick, postShadowColor);
+    drawThickSegment(renderer, postLTShadow, postRTShadow, postShadowThick, postShadowColor);
 }
 
 static void drawGoalNetLayer(const GoalNetMesh& mesh, uint8_t layer, float xOffset, float yOffset)
@@ -595,10 +583,8 @@ static void drawGoalNetLayer(const GoalNetMesh& mesh, uint8_t layer, float xOffs
     ScreenMapper mapper = makeScreenMapper(xOffset, yOffset);
     float pixelScale = std::max(1.0f, mapper.scale * mapper.zoom);
 
-    if (layer == 0 && mesh.isTopGoal) {
-        drawGroundBackdropMask(renderer, mapper, true);
-    } else if (layer == 0 && !mesh.isTopGoal) {
-        drawGroundBackdropMask(renderer, mapper, false);
+    if (layer == 0) {
+        drawDynamicGoalNetShadow(renderer, mapper, mesh, pixelScale);
     }
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
@@ -679,14 +665,15 @@ static void drawGoalNetLayer(const GoalNetMesh& mesh, uint8_t layer, float xOffs
     if (layer == 1) {
         const float frontY = mesh.isTopGoal ? kTopGoalFrontY : kBottomGoalFrontY;
         const float backY = mesh.isTopGoal ? kTopGoalBackY : kBottomGoalBackY;
-        const float botBackY = backY + (mesh.isTopGoal ? -1.5f : 1.5f);
+        const float backHeightZ = mesh.isTopGoal ? kTopBackHeightZ : kBottomBackHeightZ;
+        const float botBackY = mesh.isTopGoal ? (backY + 1.5f) : (backY + 2.0f);
 
         // Dark rear stanchion support bars
         SDL_FPoint stL0 = mapper.project(kGoalLeftX, frontY, kFrontHeightZ);
-        SDL_FPoint stL1 = mapper.project(kGoalLeftX, backY, kBackHeightZ);
+        SDL_FPoint stL1 = mapper.project(kGoalLeftX, backY, backHeightZ);
         SDL_FPoint stL2 = mapper.project(kGoalLeftX, botBackY, 0.0f);
         SDL_FPoint stR0 = mapper.project(kGoalRightX, frontY, kFrontHeightZ);
-        SDL_FPoint stR1 = mapper.project(kGoalRightX, backY, kBackHeightZ);
+        SDL_FPoint stR1 = mapper.project(kGoalRightX, backY, backHeightZ);
         SDL_FPoint stR2 = mapper.project(kGoalRightX, botBackY, 0.0f);
 
         float stanchionThick = std::max(1.0f, 0.55f * pixelScale);

@@ -10,6 +10,7 @@
 #include "file.h"
 #include "util.h"
 #include "random.h"
+#include "goalNet.h"
 
 constexpr int kSwosPatternSize = 16;
 
@@ -91,6 +92,54 @@ void loadPitch()
             }
         }
     }
+}
+
+static uint16_t getCleanPitchPatternIndex(int pitchNumber, int row, int col)
+{
+    const auto& indices = kPitchIndices[pitchNumber];
+    const int stride = (pitchNumber == 4) ? 6 : 4; // pitch5 (index 4) has a 6-column diagonal mowing cycle; others use 4
+
+    auto mapCleanCol = [&](int c, int dirtyLo, int dirtyHi, std::initializer_list<int> extraDirty) {
+        const int deltas[4] = { -stride, stride, -2 * stride, 2 * stride };
+        for (int d : deltas) {
+            int cand = c + d;
+            if (cand < 6 || cand > 35 || (cand >= dirtyLo && cand <= dirtyHi))
+                continue;
+            bool inExtra = false;
+            for (int ex : extraDirty) {
+                if (cand == ex) {
+                    inExtra = true;
+                    break;
+                }
+            }
+            if (!inExtra)
+                return cand;
+        }
+        return c;
+    };
+
+    if ((row == 5 || row == 6) && col >= 18 && col <= 24) {
+        return indices[row][mapCleanCol(col, 18, 24, { 9, 32 })];
+    }
+    if (row == 7) {
+        if (col >= 18 && col <= 23)
+            return indices[row][mapCleanCol(col, 17, 24, { 9, 12, 29, 32 })];
+        if (col == 24)
+            return indices[row][(pitchNumber == 0 || pitchNumber == 5) ? 28 : 29];
+    }
+    if (row == 46 && col >= 18 && col <= 23) {
+        return indices[row][mapCleanCol(col, 17, 24, { 12, 29 })];
+    }
+    if (row == 47) {
+        if (col >= 18 && col <= 23)
+            return indices[row][mapCleanCol(col, 17, 24, { 9, 12, 29, 32 })];
+        if (col == 24)
+            return indices[row][(pitchNumber == 0 || pitchNumber == 5) ? 28 : 29];
+    }
+    if (row == 48 && col >= 19 && col <= 23) {
+        return indices[row][mapCleanCol(col, 19, 23, {})];
+    }
+    return indices[row][col];
 }
 
 // Renders pitch at cameraX and cameraY.
@@ -316,9 +365,10 @@ static void drawPitch(float xOfs, float yOfs, int row, int column, int numPatter
     std::array<RenderPattern, kPitchPatternWidth * kPitchPatternHeight> renderPatterns;
     int numPatterns = 0;
 
+    const bool useCleanGoalTiles = getPhysicsGoalNets();
     for (int i = row; i < row + numPatternsY; i++) {
         for (int j = column; j < column + numPatternsX; j++) {
-            auto patternIndex = indices[i][j];
+            auto patternIndex = useCleanGoalTiles ? getCleanPitchPatternIndex(m_pitchNumber, i, j) : indices[i][j];
             if (patternIndex != UINT16_MAX) {
                 const auto& pattern = kPatterns[m_res][start + patternIndex];
                 const auto texture = m_pitchTextures[m_res][pattern.texture];
