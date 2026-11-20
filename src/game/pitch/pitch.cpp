@@ -386,7 +386,7 @@ static void drawPitch(float xOfs, float yOfs, int row, int column, int numPatter
                     SDL_FRect topDst{ currentXOfs, currentYOfs, destPatternSize, topDestH };
                     renderPatterns[numPatterns++] = { topSrc, topDst, m_pitchTextures[m_res][topPat.texture], topPat.texture };
 
-                    int cleanCol = (j - stride >= 13 && j - stride != 17) ? (j - stride) : (j + stride);
+                    int cleanCol = (j - stride >= 13 && j >= 18 + stride) ? (j - stride) : (j + stride);
                     const auto& botPat = kPatterns[m_res][start + indices[i][cleanCol]];
                     SDL_Rect botSrc{ botPat.x, botPat.y + topH, patternSize, botH };
                     SDL_FRect botDst{ currentXOfs, currentYOfs + topDestH, destPatternSize, botDestH };
