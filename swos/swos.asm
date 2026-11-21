@@ -24456,6 +24456,9 @@ FriendlyMenuInit endp
 FriendlyMenuReinit proc near
                     ; CODE XREF: FriendlyMenuInit:@@just_started↑j
                     ; DATA XREF: dseg:001726C8↓o
+mov     ax, friendlyOk
+or      ax, ax
+jnz     short @@draw_num_subs
 cmp     g_pitchType, SEASONAL
 jz      @@draw_num_subs ; this jump will be taken at the beginning (g_pitchType is
                     ; initialized to SEASONAL by SetDefaultOptions) and
@@ -24463,6 +24466,8 @@ jz      @@draw_num_subs ; this jump will be taken at the beginning (g_pitchType 
 mov     pitchTypeOrSeason, 0 ; pitch type
 mov     ax, g_pitchType
 mov     friendlyPitchType, ax
+call    SetFriendlyPitchOrSeason
+jmp     short @@draw_num_subs
 push    D0
 mov     D0, 3       ; pitch type or season
 call    CalcMenuEntryAddress
