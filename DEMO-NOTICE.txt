@@ -1,3 +1,0 @@
-SWOS port is an unfinished development demo.
-Packaged graphics, audio, data, and other content are placeholders for testing.
-They do not represent the final game or a finished public release.
