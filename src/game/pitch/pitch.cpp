@@ -389,6 +389,24 @@ static void drawPitch(float xOfs, float yOfs, int row, int column, int numPatter
                     SDL_Rect botSrc{ botPat.x, botPat.y + topH, patternSize, botH };
                     SDL_FRect botDst{ currentXOfs, currentYOfs + topDestH, destPatternSize, botDestH };
                     renderPatterns[numPatterns++] = { botSrc, botDst, m_pitchTextures[m_res][botPat.texture], botPat.texture };
+                } else if (useCleanGoalTiles && (i == 7 || i == 47) && j == 24) {
+                    // Goal-line row, column 24: the clean replacement tile erases the baked goalpost/shadow,
+                    // but it also drops the 6-yard box's right vertical line, which sits in the rightmost
+                    // 5/16 of the original tile. Composite: left 11/16 from the clean tile, right 5/16 original.
+                    int leftW = (patternSize * 11) / 16;
+                    int rightW = patternSize - leftW;
+                    float leftDestW = destPatternSize * (11.0f / 16.0f);
+                    float rightDestW = destPatternSize - leftDestW;
+
+                    const auto& leftPat = kPatterns[m_res][start + patternIndex];
+                    SDL_Rect leftSrc{ leftPat.x, leftPat.y, leftW, patternSize };
+                    SDL_FRect leftDst{ currentXOfs, currentYOfs, leftDestW, destPatternSize };
+                    renderPatterns[numPatterns++] = { leftSrc, leftDst, m_pitchTextures[m_res][leftPat.texture], leftPat.texture };
+
+                    const auto& rightPat = kPatterns[m_res][start + indices[i][j]];
+                    SDL_Rect rightSrc{ rightPat.x + leftW, rightPat.y, rightW, patternSize };
+                    SDL_FRect rightDst{ currentXOfs + leftDestW, currentYOfs, rightDestW, destPatternSize };
+                    renderPatterns[numPatterns++] = { rightSrc, rightDst, m_pitchTextures[m_res][rightPat.texture], rightPat.texture };
                 } else {
                     const auto& pattern = kPatterns[m_res][start + patternIndex];
                     const auto texture = m_pitchTextures[m_res][pattern.texture];
