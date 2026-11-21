@@ -404,14 +404,16 @@ static void buildGoalNetMesh(GoalNetMesh& mesh, bool isTopGoal)
             if (r <= kRoofBackRow) {
                 float t = static_cast<float>(r) / static_cast<float>(kRoofBackRow);
                 y = frontY + t * (backY - frontY);
-                // Slight natural catenary sag in the roof mesh
-                float sag = 0.85f * std::sin(t * 3.14159265f) * std::sin(u * 3.14159265f);
+                // Natural catenary drapery sag in the roof mesh
+                float sag = 1.85f * std::sin(t * 3.14159265f) * std::sin(u * 3.14159265f);
                 z = kFrontHeightZ + t * (backHeightZ - kFrontHeightZ) - sag;
                 layer = 1;
             } else {
                 float t = static_cast<float>(r - kRoofBackRow) / static_cast<float>(kRows - 1 - kRoofBackRow);
-                y = backY + t * (botBackY - backY);
-                z = backHeightZ * (1.0f - t);
+                float drape = std::sin(t * 3.14159265f) * std::sin(u * 3.14159265f);
+                float outward = isTopGoal ? -0.9f : 0.9f;
+                y = backY + t * (botBackY - backY) + outward * drape;
+                z = std::max(0.0f, backHeightZ * (1.0f - t) - 0.85f * drape);
                 // For the bottom goal (camera looking from south/above), the rear wall leans over the inside of the goal
                 layer = isTopGoal ? 0 : 1;
             }
@@ -422,14 +424,14 @@ static void buildGoalNetMesh(GoalNetMesh& mesh, bool isTopGoal)
             node.z = node.prevZ = node.restZ = z;
             node.layer = layer;
 
-            // Pin the front crossbar (r == 0) and ground pegs (r == kRows - 1),
-            // and give the rear top stanchion corners a stiffer tether
+            // Pin the front crossbar (r == 0), ground pegs (r == kRows - 1),
+            // and the rear top stanchion corners
             if (r == 0) {
                 node.invMass = 0.0f; // Rigidly attached to front crossbar
             } else if (r == kRows - 1) {
                 node.invMass = (c == 0 || c == kCols - 1 || (c % 4 == 0)) ? 0.0f : 0.35f;
             } else if (r == kRoofBackRow && (c == 0 || c == kCols - 1)) {
-                node.invMass = 0.15f; // Stanchion corner support
+                node.invMass = 0.0f; // Anchored to rear stanchion corner tips
             } else {
                 node.invMass = 1.0f;
             }
@@ -490,7 +492,8 @@ static void buildGoalNetMesh(GoalNetMesh& mesh, bool isTopGoal)
                 float y = topY + v * (botY - topY);
 
                 float topZ = kFrontHeightZ + u * (backHeightZ - kFrontHeightZ);
-                float z = topZ * (1.0f - v);
+                float sideSag = 1.15f * std::sin(u * 3.14159265f) * std::sin(v * 3.14159265f);
+                float z = std::max(0.0f, topZ * (1.0f - v) - sideSag);
 
                 NetNode node{};
                 node.x = node.prevX = node.restX = sideX;
@@ -503,7 +506,7 @@ static void buildGoalNetMesh(GoalNetMesh& mesh, bool isTopGoal)
                 } else if (r == kSideRows - 1 && (c == kSideCols - 1 || c % 2 == 0)) {
                     node.invMass = 0.0f; // Ground peg along side netting
                 } else if (r == 0 && c == kSideCols - 1) {
-                    node.invMass = 0.15f; // Top rear stanchion corner
+                    node.invMass = 0.0f; // Anchored to top rear stanchion corner
                 } else {
                     node.invMass = 1.0f;
                 }
@@ -539,11 +542,11 @@ static void buildGoalNetMesh(GoalNetMesh& mesh, bool isTopGoal)
         // Stitch side curtain's top edge (r == 0, c = 0..kSideCols-1) to main roof edge (r = 0..kRoofBackRow)
         int mainEdgeCol = isLeft ? 0 : (kCols - 1);
         for (int c = 0; c < kSideCols && c <= kRoofBackRow; ++c) {
-            addSpring(mesh, sideIdx(0, c), mainNodeIndex(mesh, c, mainEdgeCol), 0.95f, false);
+            addSpring(mesh, sideIdx(0, c), mainNodeIndex(mesh, c, mainEdgeCol), 1.0f, false);
         }
         // Stitch side curtain's rear edge (c == kSideCols-1, r = 0..kSideRows-1) to main rear wall edge (r = kRoofBackRow..kRows-1)
         for (int r = 0; r < kSideRows && (kRoofBackRow + r) < kRows; ++r) {
-            addSpring(mesh, sideIdx(r, kSideCols - 1), mainNodeIndex(mesh, kRoofBackRow + r, mainEdgeCol), 0.95f, false);
+            addSpring(mesh, sideIdx(r, kSideCols - 1), mainNodeIndex(mesh, kRoofBackRow + r, mainEdgeCol), 1.0f, false);
         }
     };
 
@@ -574,9 +577,20 @@ static void interactNodeWithSphere(NetNode& node, float sx, float sy, float sz,
     float nz = dz / dist;
 
     float pen = (radius - dist) * 0.45f * node.invMass;
-    node.x += nx * pen + vx * pushStrength * falloffSq * node.invMass;
-    node.y += ny * pen + vy * pushStrength * falloffSq * node.invMass;
-    node.z += nz * pen + vz * pushStrength * falloffSq * node.invMass;
+    float moveX = nx * pen + vx * pushStrength * falloffSq * node.invMass;
+    float moveY = ny * pen + vy * pushStrength * falloffSq * node.invMass;
+    float moveZ = nz * pen + vz * pushStrength * falloffSq * node.invMass;
+    float moveLenSq = moveX * moveX + moveY * moveY + moveZ * moveZ;
+    constexpr float kMaxImpulseStep = 3.8f;
+    if (moveLenSq > kMaxImpulseStep * kMaxImpulseStep) {
+        float scale = kMaxImpulseStep / std::sqrt(moveLenSq);
+        moveX *= scale;
+        moveY *= scale;
+        moveZ *= scale;
+    }
+    node.x += moveX;
+    node.y += moveY;
+    node.z += moveZ;
     if (node.z < 0.0f)
         node.z = 0.0f;
 }
@@ -649,9 +663,9 @@ static void integrateAndSolveGoalNet(GoalNetMesh& mesh)
     const float frontY = mesh.isTopGoal ? kTopGoalFrontY : kBottomGoalFrontY;
     const float backY = mesh.isTopGoal ? kTopGoalBackY : kBottomGoalBackY;
 
-    constexpr float kDamping = 0.88f;
-    constexpr float kRestRestore = 0.045f;
-    constexpr float kGravityZ = -0.015f;
+    constexpr float kDamping = 0.90f;
+    constexpr float kRestRestore = 0.026f;
+    constexpr float kGravityZ = -0.012f;
 
     for (auto& node : mesh.nodes) {
         if (node.invMass <= 0.0f)
@@ -683,8 +697,8 @@ static void integrateAndSolveGoalNet(GoalNetMesh& mesh)
         (void)backY;
     }
 
-    // 4. Iterative Gauss-Seidel spring distance constraint solver (4 sub-iterations)
-    constexpr int kSolverIterations = 4;
+    // 4. Iterative Gauss-Seidel spring distance constraint solver (8 sub-iterations)
+    constexpr int kSolverIterations = 8;
     for (int iter = 0; iter < kSolverIterations; ++iter) {
         for (const auto& sp : mesh.springs) {
             auto& na = mesh.nodes[sp.a];
@@ -701,11 +715,19 @@ static void integrateAndSolveGoalNet(GoalNetMesh& mesh)
                 continue;
 
             float diff = (dist - sp.restLen) / dist;
-            // Allow net strands to compress slightly more easily than they stretch (fabric behavior)
-            float k = (dist >= sp.restLen) ? sp.stiffness : (sp.stiffness * 0.45f);
-            float corrX = dx * diff * k / wSum;
-            float corrY = dy * diff * k / wSum;
-            float corrZ = dz * diff * k / wSum;
+            // Allow net strands to compress slightly more easily than they stretch (drapery behavior)
+            float stretchFactor = (dist >= sp.restLen) ? sp.stiffness : (sp.stiffness * 0.45f);
+            float effDiff = diff * stretchFactor;
+            // Hard max-stretch limit on structural/seam springs so high-speed shots cannot rip seams apart
+            if (iter >= kSolverIterations - 2 && sp.stiffness >= 0.85f) {
+                float maxLen = sp.restLen * 1.32f;
+                if (dist * (1.0f - effDiff) > maxLen) {
+                    effDiff = (dist - maxLen) / dist;
+                }
+            }
+            float corrX = dx * effDiff / wSum;
+            float corrY = dy * effDiff / wSum;
+            float corrZ = dz * effDiff / wSum;
 
             if (na.invMass > 0.0f) {
                 na.x += corrX * na.invMass;
