@@ -23,7 +23,7 @@ static Uint32 m_showWarningTicks;
 
 static const std::vector<int> kPrevExitNextButtons = { prev, SelectGameControlEvents::exit, next };
 
-static_assert(kMaxGameEvent == 1'025, "New game event added, menu needs redressing!");
+static_assert(kMaxGameEvent == 2'049, "New game event added, menu needs redressing!");
 
 std::pair<bool, GameControlEvents> getNewGameControlEvents(const char *title)
 {
@@ -192,13 +192,13 @@ static void initInvertedButton()
 
         zoomOutStatusEntry.downEntry = invertedStatus;
         zoomOutToggleEntry.downEntry = invertedToggle;
-        benchStatusEntry.rightEntry = invertedToggle;
-        benchStatusEntry.downEntry = SelectGameControlEvents::exit;
+        freeKickCurlStatusEntry.rightEntry = invertedToggle;
+        freeKickCurlStatusEntry.downEntry = SelectGameControlEvents::exit;
 
         setInvertedEntry();
         shiftExitButtonsDown();
     } else if (!m_addNew) {
-        benchStatusEntry.downEntry = SelectGameControlEvents::exit;
+        freeKickCurlStatusEntry.downEntry = SelectGameControlEvents::exit;
     }
 }
 

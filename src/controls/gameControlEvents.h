@@ -16,6 +16,7 @@ enum GameControlEvents : int32_t
     kGameEventSaveHighlight = 256,
     kGameEventZoomIn = 512,
     kGameEventZoomOut = 1'024,
+    kGameEventFreeKickCurl = 2'048,
     kMaxGameEvent,
 };
 

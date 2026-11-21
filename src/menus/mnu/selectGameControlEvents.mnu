@@ -108,7 +108,7 @@ Menu selectGameControlEvents {
     Entry benchToggle {
         rightEntry: benchStatus
         upEntry: <
-        downEntry: ok
+        downEntry: freeKickCurlToggle
 
         text: "BENCH"
     }
@@ -158,6 +158,16 @@ Menu selectGameControlEvents {
         downEntry: cancel
 
         text: "ZOOM OUT"
+    }
+
+    Entry freeKickCurlToggle {
+        x: kColumn1X
+        y: kToggleStartY + 6 * (kButtonHeight + kRowGap)
+        rightEntry: freeKickCurlStatus
+        upEntry: benchToggle
+        downEntry: ok
+
+        text: "FREE KICK CURL"
     }
 
     Entry invertedToggle {
@@ -223,7 +233,7 @@ Menu selectGameControlEvents {
         leftEntry: benchToggle
         rightEntry: zoomOutToggle
         upEntry: <
-        downEntry: ok
+        downEntry: freeKickCurlStatus
     }
 
     defaultX: kColumn2StatusX
@@ -256,6 +266,15 @@ Menu selectGameControlEvents {
         leftEntry: zoomOutToggle
         upEntry: <
         downEntry: cancel
+    }
+
+    Entry freeKickCurlStatus {
+        x: kColumn1StatusX
+        y: kToggleStartY + 6 * (kButtonHeight + kRowGap)
+        leftEntry: freeKickCurlToggle
+        rightEntry: zoomOutToggle
+        upEntry: benchStatus
+        downEntry: ok
     }
 
     Entry invertedStatus {

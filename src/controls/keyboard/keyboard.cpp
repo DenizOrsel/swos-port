@@ -12,11 +12,19 @@ static KeyConfig createDefaultKeyboard1Config()
 {
     KeyConfig config(kDefaultKeys1);
     config.addBinding(SDL_SCANCODE_LCTRL, kGameEventKick);
+    config.addBinding(SDL_SCANCODE_LALT, kGameEventFreeKickCurl);
+    return config;
+}
+
+static KeyConfig createDefaultKeyboard2Config()
+{
+    KeyConfig config(kDefaultKeys2);
+    config.addBinding(SDL_SCANCODE_SPACE, kGameEventFreeKickCurl);
     return config;
 }
 
 static KeyConfig m_config1(createDefaultKeyboard1Config());
-static KeyConfig m_config2(kDefaultKeys2);
+static KeyConfig m_config2(createDefaultKeyboard2Config());
 
 static const char kKeyboard1Section[] = "keyboard1";
 static const char kKeyboard2Section[] = "keyboard2";

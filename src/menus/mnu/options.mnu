@@ -84,7 +84,7 @@ Menu gameplayOptionsMenu
     defaultHeight: kOptionHeight
     initialEntry: gameLength
 
-    kGamePlayOptionsStartY = kOptionsStartY - 2 * kOptionHeight + 5
+    kGamePlayOptionsStartY = 34
 
     Entry header {
         x: kBaseX
@@ -118,6 +118,7 @@ Menu gameplayOptionsMenu
     Entry { text: "PHYSICS GOAL NETS" }
     Entry { text: "BALL & FRAME EFFECTS" }
     Entry { text: "PITCH & WEATHER FX" }
+    Entry { text: "FREE KICK AIMING" }
 
     // start of column 2, where the actual controls are
     defaultX: kOptionsColumn2X
@@ -201,6 +202,12 @@ Menu gameplayOptionsMenu
 
     Entry pitchWeatherEffects {
         boolOption: getPitchWeatherEffects, setPitchWeatherEffects, "pitch and weather effects"
+        upEntry: <
+        downEntry: >
+    }
+
+    Entry freeKickAiming {
+        boolOption: getFreeKickAiming, setFreeKickAiming, "free kick aiming"
         upEntry: <
         downEntry: >
     }

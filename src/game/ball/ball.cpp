@@ -12,6 +12,7 @@
 #include "direction.h"
 #include "updatePlayers.h"
 #include "goalNet.h"
+#include "freeKickAim.h"
 
 static constexpr int kControlledBallSpeedReduction = 13;
 static constexpr int kBallAirSpeedReduction = 4;
@@ -152,6 +153,7 @@ void updateBall()
     auto initialZ = swos.ballSprite.z;
 
     updateBallAnimation();
+    applyActiveFreeKickCurl();
     updateBallSpeedAndXYCoordinates();
     updateBallZCoordinate();
     bounceOffInvisibleWalls(initialX, initialY, initialZ);

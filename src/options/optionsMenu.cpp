@@ -2,6 +2,7 @@
 #include "options.h"
 #include "goalNet.h"
 #include "pitchEffects.h"
+#include "freeKickAim.h"
 #include "replays.h"
 #include "menus.h"
 #include "videoOptionsMenu.h"

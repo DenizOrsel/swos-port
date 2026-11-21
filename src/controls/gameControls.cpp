@@ -4,6 +4,7 @@
 #include "joypads.h"
 #include "bench.h"
 #include "pitch.h"
+#include "freeKickAim.h"
 #include "game.h"
 #include "gameLoop.h"
 #include "replays.h"
@@ -258,7 +259,7 @@ static GameControlEvents filterOverlappedEvents(PlayerNumber player, GameControl
 
 static void updateGameControls(PlayerNumber player, GameControlEvents events)
 {
-    static_assert(kMaxGameEvent == 1'025, "You missed a spot!");
+    static_assert(kMaxGameEvent == 2'049, "You missed a spot!");
 
     updatePlayerFire(player, events);
 
@@ -298,6 +299,10 @@ void updateTeamControls(TeamGeneralInfo *team, PlayerNumber player, GameControlE
     team->direction = direction;
     team->fireThisFrame = getFireStartedAndBumpFireCounter(fire, player);
     team->secondaryFire = (events & kGameEventBench) != 0;
+
+    if (isFreeKickAimingActiveForTeam(team)) {
+        updateFreeKickAimInput(team, events);
+    }
 
     if (team->firePressed = (fire ? -1 : 0))
         team->fireCounter++;

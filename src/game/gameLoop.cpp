@@ -23,6 +23,7 @@
 #include "pitchConstants.h"
 #include "goalNet.h"
 #include "pitchEffects.h"
+#include "freeKickAim.h"
 #include "referee.h"
 #include "menus.h"
 #include "menuBackground.h"
@@ -242,6 +243,7 @@ static void initGameLoop()
 
     resetGameControls();
     initPitchEffects();
+    initFreeKickAim();
 }
 
 static void drawFrame(bool recordingEnabled)
@@ -251,6 +253,7 @@ static void drawFrame(bool recordingEnabled)
     std::tie(xOffset, yOffset) = drawPitchAtCurrentCamera();
     startNewHighlightsFrame();
     drawSprites(xOffset, yOffset);
+    drawFreeKickAimTrajectory(xOffset, yOffset);
     drawBench(xOffset, yOffset);
     drawPitchEffectsAir(xOffset, yOffset);
     drawPlayerName();
@@ -302,10 +305,13 @@ static void coreGameUpdate()
     initGoalSprites();
     updateGameTimersAndCameraBreakMode();
     if (!updateFireBlocked()) {
+        bool wasFreeKickAiming = isFreeKickAimingActive();
         auto team = selectTeamForUpdate();
         updateTeamControls(team);
         updatePlayers(team);    // main game engine update
         postUpdateTeamControls(team);
+        if (wasFreeKickAiming && swos.gameStatePl == GameState::kInProgress)
+            onFreeKickLaunched();
     }
     updateBall();
     updateGoalNets();

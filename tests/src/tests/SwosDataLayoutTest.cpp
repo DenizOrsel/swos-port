@@ -2,6 +2,7 @@
 #include "unitTest.h"
 #include "goalNet.h"
 #include "pitchEffects.h"
+#include "freeKickAim.h"
 
 static SwosDataLayoutTest t;
 
@@ -178,6 +179,48 @@ void SwosDataLayoutTest::verifyPhysicsGoalNetSimulation()
     assertFalse(getPitchWeatherEffects());
     assertEqual(getPitchEffectsTestState().skidMarkCount, 0);
     setPitchWeatherEffects(prevPitchFx);
+
+    // Verify Striker-style free-kick trajectory aiming (elevation Up/Down, aim Left/Right, curl modifier, toggle)
+    bool prevFkAim = getFreeKickAiming();
+    assertTrue(prevFkAim);
+    initFreeKickAim();
+    auto prevGameState = swos.gameState;
+    auto prevGameStatePl = swos.gameStatePl;
+    auto prevLastTeam = swos.lastTeamPlayedBeforeBreak;
+    auto prevPlNum = swos.topTeamData.playerNumber;
+    swos.gameState = GameState::kFreeKickCenter;
+    swos.gameStatePl = GameState::kWaitingOnPlayer;
+    swos.lastTeamPlayedBeforeBreak = &swos.topTeamData;
+    swos.topTeamData.playerNumber = 1;
+
+    updateFreeKickAimInput(&swos.topTeamData, kNoGameEvents);
+    auto fkInit = getFreeKickAimTestState();
+    assertTrue(fkInit.active);
+
+    updateFreeKickAimInput(&swos.topTeamData, kGameEventUp);
+    auto fkLow = getFreeKickAimTestState();
+    assertTrue(fkLow.elevation < fkInit.elevation);
+
+    updateFreeKickAimInput(&swos.topTeamData, kGameEventDown);
+    updateFreeKickAimInput(&swos.topTeamData, kGameEventDown);
+    auto fkHigh = getFreeKickAimTestState();
+    assertTrue(fkHigh.elevation > fkInit.elevation);
+
+    updateFreeKickAimInput(&swos.topTeamData, kGameEventRight);
+    auto fkTurned = getFreeKickAimTestState();
+    assertTrue(fkTurned.aimAngle > fkInit.aimAngle);
+
+    updateFreeKickAimInput(&swos.topTeamData, kGameEventFreeKickCurl | kGameEventLeft);
+    auto fkCurled = getFreeKickAimTestState();
+    assertTrue(fkCurled.curl < 0.0f);
+
+    setFreeKickAiming(false);
+    assertFalse(getFreeKickAiming());
+    setFreeKickAiming(prevFkAim);
+    swos.gameState = prevGameState;
+    swos.gameStatePl = prevGameStatePl;
+    swos.lastTeamPlayedBeforeBreak = prevLastTeam;
+    swos.topTeamData.playerNumber = prevPlNum;
 
     // Verify toggle off pauses physics updates
     setPhysicsGoalNets(false);
