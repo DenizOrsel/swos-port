@@ -12,12 +12,15 @@
 #include <cctype>
 #include <cstdio>
 #include <sstream>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace {
 
 uint64_t s_postMatchRequestId = 0;
 bool s_postMatchTriggered = false;
 int s_weeklyTickCounter = 0;
+std::unordered_map<int16_t, std::vector<std::string>> s_squadSnapshots;
 
 const char *pitchConditionName(int pitchType)
 {
@@ -285,7 +288,95 @@ void onCareerMatchCompletedLlm(int topGoals, int botGoals)
 
     std::string reply;
     if (waitForLlmResponse(reqId, std::min(cfg.timeoutMs, 1200), reply)) {
-        showWrappedSwosPrompt("DRESSING ROOM", reply);
+        showWrappedSwosPrompt("DRESSING ROOM VOICE", reply);
+    }
+}
+
+void resetCareerLlmSnapshots()
+{
+    s_squadSnapshots.clear();
+}
+
+void checkCareerSquadTransfersLlm()
+{
+    if (swos.g_gameType != kGameTypeCareer || swos.g_trainingGame ||
+        HotseatCareerManager::get().isInitializingSeason())
+        return;
+
+    const auto& cfg = getLlmConfig();
+    if (!cfg.enabled || !cfg.features.transferNegotiations)
+        return;
+
+    uint16_t numPlayers = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]);
+    if (numPlayers == 0 || numPlayers > kMaxCareerSquadPlayers)
+        return;
+
+    const auto *hdr = reinterpret_cast<const TeamFileHeader *>(&SwosVM::g_memByte[CareerOffsets::kCareerTeam]);
+    int16_t teamId = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kSelTeamNumber]);
+    std::string clubName = hdr->teamName[0] ? std::string(hdr->teamName) : std::string("THE CLUB");
+
+    std::vector<std::string> currentNames;
+    currentNames.reserve(numPlayers);
+    for (uint16_t i = 0; i < numPlayers; ++i) {
+        size_t ofs = CareerOffsets::kCareerTeam +
+                     HotseatInternal::kTeamFileHeaderSize +
+                     static_cast<size_t>(i) * HotseatInternal::kPlayerFileSize;
+        const auto *pf = reinterpret_cast<const PlayerFile *>(&SwosVM::g_memByte[ofs]);
+        if (pf->playerName[0] != '\0')
+            currentNames.emplace_back(pf->playerName);
+    }
+    if (currentNames.empty())
+        return;
+
+    auto it = s_squadSnapshots.find(teamId);
+    if (it == s_squadSnapshots.end()) {
+        s_squadSnapshots[teamId] = std::move(currentNames);
+        return;
+    }
+
+    const auto& prevNames = it->second;
+    std::unordered_set<std::string> prevSet(prevNames.begin(), prevNames.end());
+    std::unordered_set<std::string> currSet(currentNames.begin(), currentNames.end());
+
+    std::vector<std::string> added;
+    std::vector<std::string> removed;
+    for (const auto& name : currentNames) {
+        if (prevSet.find(name) == prevSet.end())
+            added.push_back(name);
+    }
+    for (const auto& name : prevNames) {
+        if (currSet.find(name) == currSet.end())
+            removed.push_back(name);
+    }
+
+    s_squadSnapshots[teamId] = std::move(currentNames);
+
+    // Ignore bulk resets / season-init squad rebuilds
+    if (added.empty() && removed.empty())
+        return;
+    if (added.size() > 2 || removed.size() > 2)
+        return;
+
+    std::string prompt;
+    if (!added.empty()) {
+        prompt = clubName + " just signed " + added.front() + ".";
+        if (!removed.empty())
+            prompt += " " + removed.front() + " departed.";
+        prompt += " Give a punchy 1-2 sentence 1995 transfer desk reaction from the player or rival manager (max 115 chars).";
+    } else {
+        prompt = removed.front() + " just left " + clubName + ". "
+                 "Give a punchy 1-2 sentence 1995 transfer desk reaction from the manager or dressing room (max 115 chars).";
+    }
+
+    uint64_t reqId = enqueueLlmRequest(
+        "You are a 1995 football transfer reporter and dressing room insider. Plain ASCII, max 115 chars, no markdown.",
+        prompt);
+    if (reqId == 0)
+        return;
+
+    std::string reply;
+    if (waitForLlmResponse(reqId, std::min(cfg.timeoutMs, 1500), reply)) {
+        showWrappedSwosPrompt("TRANSFER DESK", reply);
     }
 }
 

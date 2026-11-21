@@ -82,7 +82,7 @@ static const std::array<OptionVariable<int16_t>, 5> kStandardOptions = {
     "autoReplays",  &swos.g_autoReplays, 0, 1, 0,
     "autoSaveHighlights",  &swos.g_autoSaveHighlights, 0, 1, 1,
     "allPlayerTeamsEqual", &swos.g_allPlayerTeamsEqual, 0, 1, 0,
-    "pitchType", &swos.g_pitchType, -2, 6, 4,
+    "pitchType", &swos.g_pitchType, -2, 6, -2,
 };
 
 static const std::array<OptionAccessor<bool>, 17> kBoolOptions = {

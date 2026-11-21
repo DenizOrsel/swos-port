@@ -13,6 +13,8 @@ std::string fetchTransferNegotiationVoice(const char *buyerClub, const char *sel
     const char *playerName, const char *offerTerms, bool isCounterOffer);
 void onCareerMatchCompletedLlm(int topGoals, int botGoals);
 void onCareerWeeklyTickLlm();
+void checkCareerSquadTransfersLlm();
+void resetCareerLlmSnapshots();
 
 // Text wrapping helper for SWOS modal prompts (max 6 lines)
 std::vector<std::string> wrapTextForSwosPrompt(const std::string& text, size_t maxLineLen = 40, size_t maxLines = 6);

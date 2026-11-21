@@ -23,6 +23,7 @@ void activateEuroCupForVmSelectedTeam()
 
 void InitCareerVariables_OnEnter()
 {
+    resetCareerLlmSnapshots();
     auto& mgr = HotseatCareerManager::get();
     if (!mgr.isInitializingSeason()) {
         mgr.reset();
@@ -31,6 +32,7 @@ void InitCareerVariables_OnEnter()
 
 void CareerInitVars_OnEnter()
 {
+    resetCareerLlmSnapshots();
     auto& mgr = HotseatCareerManager::get();
     if (mgr.isActive() && !mgr.isInitializingSeason()) {
         mgr.reset();
@@ -79,6 +81,7 @@ void cseg_8B8B8_OnEnter()
 void cseg_94DB1_OnEnter()
 {
     HotseatCareerManager::get().onWeeklyTickForAllPlayers();
+    checkCareerSquadTransfersLlm();
     onCareerWeeklyTickLlm();
 }
 
@@ -89,6 +92,7 @@ void cseg_3C07C_OnEnter()
 
 void Hotseat_OnNewSeasonInitialized()
 {
+    resetCareerLlmSnapshots();
     auto& mgr = HotseatCareerManager::get();
     mgr.restoreCalendarEntryFirstSlots();
     mgr.onNewSeasonInitialized();
@@ -357,6 +361,7 @@ void Hotseat_OnAfterEnsureCareerPlayers()
 void ShowPlayMatchMenu_OnEnter()
 {
     HotseatCareerManager::get().onBeforeShowPlayMatchMenu();
+    checkCareerSquadTransfersLlm();
 }
 
 void PlayMatchMenu_OnEnter()
