@@ -4,23 +4,27 @@ This document catalogs modern visual, physics, and atmospheric effects designed 
 
 ---
 
-## 1. Pitch Surface & Contact Particles (Pitch-Type Reactive)
+## 1. Pitch Surface & Contact Particles (Pitch-Type Reactive) *(Implemented)*
 
-SWOS features 7 distinct pitch conditions (`Frozen`, `Muddy`, `Wet`, `Soft`, `Normal`, `Dry`, `Hard`) in `src/game/pitch/pitch.cpp`:
+Controlled via **OPTIONS -> GAMEPLAY -> PITCH & WEATHER FX** (`ON` by default, persisted in `swos.ini` under `[gameplay] pitchWeatherEffects`), `src/game/pitch/pitchEffects.cpp` + `src/game/pitch/pitch.cpp`:
 
+- **Weather-Reactive Pitch Color Grading & Wear Zones**
+  - Subtle `SDL_SetTextureColorMod` grass tinting based on `getPitchType()` (`Frozen` icy frost tint, `Muddy` earthy damp olive-brown, `Wet` darker rain-soaked green, `Soft` lush green, `Normal` classic SWOS green, `Dry`/`Hard` warm sun-dried grass), plus worn mud/frost patches in goalmouths and the centre circle.
 - **Slide-Tackle & Diving Goalkeeper Sprays**
-  - **Wet / Muddy pitches:** Water spray droplets and mud splashes kicking up behind sliding tackles, diving goalkeepers, and hard ball bounces.
-  - **Normal / Soft pitches:** Tiny grass blades and turf divots kicked up on heavy slide tackles and power shots.
-  - **Frozen / Dry / Hard pitches:** Frost/ice crystal spray (`Frozen`) or chalk/dust puffs (`Dry` / `Hard`) on slides and bounces.
+  - **Wet / Muddy pitches:** Water spray droplets and mud splashes kicking up behind sliding tackles and diving goalkeepers.
+  - **Normal / Soft pitches:** Tiny grass blades and turf divots kicked up on slide tackles and dives.
+  - **Frozen / Dry / Hard pitches:** Frost/ice crystal spray (`Frozen`) or chalk/dust puffs (`Dry` / `Hard`).
 - **Persistent Slide-Tackle Skid Marks**
-  - Darkened mud/turf streak marks left on the grass where a slide tackle occurred, persisting across the half.
+  - Darkened mud/turf/frost streak marks left on the grass where a slide tackle or keeper dive occurred, persisting across the match (and tracked in replays).
 
 ---
 
-## 2. Live Weather & Stadium Lighting
+## 2. Live Weather & Stadium Lighting *(Implemented)*
+
+Controlled via **OPTIONS -> GAMEPLAY -> PITCH & WEATHER FX** (`ON` by default):
 
 - **Dynamic Rain & Snowfall Overlay**
-  - Slanted falling rain streaks with tiny animated ground puddle ripples during `Wet` or `Muddy` matches.
+  - Slanted falling rain streaks with animated ground puddle ripples during `Wet` or `Muddy` matches.
   - Drifting snowflakes and cold player breath puffs on `Frozen` pitches.
 - **4-Corner Stadium Floodlight Shadows**
   - Soft, multi-directional translucent shadows under players and the ball (simulating 4 corner stadium floodlight towers) whose angles and lengths shift subtly based on pitch position.

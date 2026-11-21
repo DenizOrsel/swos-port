@@ -7,6 +7,7 @@
 #include "camera.h"
 #include "ball.h"
 #include "goalNet.h"
+#include "pitchEffects.h"
 #ifdef SWOS_TEST
 # include "render.h"
 #endif
@@ -206,6 +207,9 @@ void drawSprites(float xOffset, float yOffset)
     }
     if (getBallAndGoalframeEffects()) {
         drawBallGroundEffects(xOffset, yOffset);
+    }
+    if (getPitchWeatherEffects()) {
+        drawPitchEffectsGround(xOffset, yOffset);
     }
 
     for (int i = 0; i < m_numSpritesToRender; i++) {

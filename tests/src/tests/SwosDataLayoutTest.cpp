@@ -1,6 +1,7 @@
 #include "SwosDataLayoutTest.h"
 #include "unitTest.h"
 #include "goalNet.h"
+#include "pitchEffects.h"
 
 static SwosDataLayoutTest t;
 
@@ -159,6 +160,24 @@ void SwosDataLayoutTest::verifyPhysicsGoalNetSimulation()
     setBallAndGoalframeEffects(false);
     assertFalse(getBallAndGoalframeEffects());
     setBallAndGoalframeEffects(prevBallFx);
+
+    // Verify pitch & weather effects toggle, slide/dive skid marks, surface particles, and replay tracking
+    bool prevPitchFx = getPitchWeatherEffects();
+    assertTrue(prevPitchFx);
+    resetPitchEffects();
+    ReplayWeatherActor slidingPlayer{ 310.0f, 400.0f, 0.0f, true };
+    updatePitchEffectsFromReplay(false, 0.0f, 0.0f, 0.0f, &slidingPlayer, 1);
+    slidingPlayer.x = 316.0f;
+    slidingPlayer.y = 403.0f;
+    updatePitchEffectsFromReplay(false, 0.0f, 0.0f, 0.0f, &slidingPlayer, 1);
+    auto fxState = getPitchEffectsTestState();
+    assertTrue(fxState.skidMarkCount >= 1);
+    assertTrue(fxState.particleCount >= 1);
+
+    setPitchWeatherEffects(false);
+    assertFalse(getPitchWeatherEffects());
+    assertEqual(getPitchEffectsTestState().skidMarkCount, 0);
+    setPitchWeatherEffects(prevPitchFx);
 
     // Verify toggle off pauses physics updates
     setPhysicsGoalNets(false);

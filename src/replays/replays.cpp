@@ -11,6 +11,7 @@
 #include "sfx.h"
 #include "pitch.h"
 #include "goalNet.h"
+#include "pitchEffects.h"
 #include "controls.h"
 #include "gameControls.h"
 #include "keyBuffer.h"
@@ -334,6 +335,7 @@ static Status replayScene(bool inGame, bool isReplay, bool userRequested /* = fa
 
     m_paused = false;
     resetGoalNets();
+    resetPitchEffects();
 
     do {
         status = checkReplayControlKeys(inGame, userRequested);
@@ -390,8 +392,10 @@ static Status checkReplayControlKeys(bool inGame, bool userRequested)
                     frameOffset = -frameOffset;
 
                 m_replayData.skipFrames(frameOffset);
-                if (frameOffset < 0 || frameOffset > 1)
+                if (frameOffset < 0 || frameOffset > 1) {
                     resetGoalNets();
+                    resetPitchEffects();
+                }
             }
             return Status::kNormal;
 
@@ -449,13 +453,16 @@ static bool fetchAndRenderFrame(bool isReplay, bool advancePhysics)
 
     static std::vector<ReplayDataStorage::Object> frameObjects;
     static std::vector<ReplayNetActor> replayPlayers;
+    static std::vector<ReplayWeatherActor> replayWeatherPlayers;
     frameObjects.clear();
     replayPlayers.clear();
+    replayWeatherPlayers.clear();
 
     const float camX = frameData.cameraX.asFloat();
     const float camY = frameData.cameraY.asFloat();
     const bool physicsNets = getPhysicsGoalNets();
     const bool ballFrameEffects = getBallAndGoalframeEffects();
+    const bool pitchWeatherEffects = getPitchWeatherEffects();
 
     bool hasBall = false;
     bool hasBallShadow = false;
@@ -463,6 +470,22 @@ static bool fetchAndRenderFrame(bool isReplay, bool advancePhysics)
     float ballScreenY = 0.0f;
     float shadowScreenX = 0.0f;
     float shadowScreenY = 0.0f;
+
+    auto isSlidingOrDivingSprite = [](int idx) {
+        if (idx >= kTeam1WhitePlayerSpriteStart && idx <= kTeam1BlackPlayerSpriteEnd) {
+            int rel = (idx - kTeam1WhitePlayerSpriteStart) % 101;
+            return rel >= 54 && rel <= 69; // TacklingTop..TackledTopRight
+        }
+        if (idx >= kTeam2WhitePlayerSpriteStart && idx <= kTeam2BlackPlayerSpriteEnd) {
+            int rel = (idx - kTeam2WhitePlayerSpriteStart) % 101;
+            return rel >= 54 && rel <= 69;
+        }
+        if (idx >= kTeam1MainGoalkeeperSpriteStart && idx <= kTeam2ReserveGoalkeeperSpriteEnd) {
+            int rel = (idx - kTeam1MainGoalkeeperSpriteStart) % 58;
+            return rel >= 24 && rel <= 55; // Diving frames
+        }
+        return false;
+    };
 
     ReplayDataStorage::Object obj;
     while (m_replayData.fetchObject(obj)) {
@@ -472,7 +495,7 @@ static bool fetchAndRenderFrame(bool isReplay, bool advancePhysics)
                 obj.x += sprite.centerXF + sprite.xOffsetF;
                 obj.y += sprite.centerYF + sprite.yOffsetF;
             }
-            if (advancePhysics && (physicsNets || ballFrameEffects)) {
+            if (advancePhysics && (physicsNets || ballFrameEffects || pitchWeatherEffects)) {
                 if (obj.imageIndex >= kBallSprite1 && obj.imageIndex <= kBallSprite4) {
                     hasBall = true;
                     ballScreenX = obj.x;
@@ -486,13 +509,15 @@ static bool fetchAndRenderFrame(bool isReplay, bool advancePhysics)
                     float py = obj.y + camY;
                     if (px >= 288.0f && px <= 380.0f && (py <= 140.0f || py >= 758.0f))
                         replayPlayers.push_back({ px, py, 6.0f });
+                    if (pitchWeatherEffects)
+                        replayWeatherPlayers.push_back({ px, py, 0.0f, isSlidingOrDivingSprite(obj.imageIndex) });
                 }
             }
         }
         frameObjects.push_back(obj);
     }
 
-    if (advancePhysics && (physicsNets || ballFrameEffects)) {
+    if (advancePhysics && (physicsNets || ballFrameEffects || pitchWeatherEffects)) {
         float ballWorldX = 0.0f;
         float ballWorldY = 0.0f;
         float ballWorldZ = 0.0f;
@@ -506,19 +531,29 @@ static bool fetchAndRenderFrame(bool isReplay, bool advancePhysics)
             ballWorldX = ballScreenX + camX;
             ballWorldY = ballScreenY + camY + ballWorldZ;
         }
-        updateGoalNetsFromReplay(hasBall, ballWorldX, ballWorldY, ballWorldZ,
-            replayPlayers.data(), static_cast<int>(replayPlayers.size()));
+        if (physicsNets || ballFrameEffects) {
+            updateGoalNetsFromReplay(hasBall, ballWorldX, ballWorldY, ballWorldZ,
+                replayPlayers.data(), static_cast<int>(replayPlayers.size()));
+        }
+        if (pitchWeatherEffects) {
+            updatePitchEffectsFromReplay(hasBall, ballWorldX, ballWorldY, ballWorldZ,
+                replayWeatherPlayers.data(), static_cast<int>(replayWeatherPlayers.size()));
+        }
     }
 
     float xOffset, yOffset;
     std::tie(xOffset, yOffset) = drawPitch(frameData.cameraX, frameData.cameraY);
     setGoalNetRenderCamera(frameData.cameraX, frameData.cameraY);
+    setPitchEffectsRenderCamera(frameData.cameraX, frameData.cameraY);
     if (physicsNets) {
         drawTopGoalBackNet(xOffset, yOffset);
         drawBottomGoalBackNet(xOffset, yOffset);
     }
     if (ballFrameEffects) {
         drawBallGroundEffects(xOffset, yOffset);
+    }
+    if (pitchWeatherEffects) {
+        drawPitchEffectsGround(xOffset, yOffset);
     }
 
     GameStats stats;
@@ -558,6 +593,10 @@ static bool fetchAndRenderFrame(bool isReplay, bool advancePhysics)
         }
     }
 
+    if (pitchWeatherEffects) {
+        drawPitchEffectsAir(xOffset, yOffset);
+    }
+    clearPitchEffectsRenderCamera();
     clearGoalNetRenderCamera();
 
     if (gotStats)

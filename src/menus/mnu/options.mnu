@@ -117,6 +117,7 @@ Menu gameplayOptionsMenu
     Entry { text: "GAME STYLE" }
     Entry { text: "PHYSICS GOAL NETS" }
     Entry { text: "BALL & FRAME EFFECTS" }
+    Entry { text: "PITCH & WEATHER FX" }
 
     // start of column 2, where the actual controls are
     defaultX: kOptionsColumn2X
@@ -194,6 +195,12 @@ Menu gameplayOptionsMenu
 
     Entry ballAndGoalframeEffects {
         boolOption: getBallAndGoalframeEffects, setBallAndGoalframeEffects, "ball and goalframe effects"
+        upEntry: <
+        downEntry: >
+    }
+
+    Entry pitchWeatherEffects {
+        boolOption: getPitchWeatherEffects, setPitchWeatherEffects, "pitch and weather effects"
         upEntry: <
         downEntry: >
     }

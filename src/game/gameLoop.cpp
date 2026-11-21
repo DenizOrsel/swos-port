@@ -22,6 +22,7 @@
 #include "pitch.h"
 #include "pitchConstants.h"
 #include "goalNet.h"
+#include "pitchEffects.h"
 #include "referee.h"
 #include "menus.h"
 #include "menuBackground.h"
@@ -240,6 +241,7 @@ static void initGameLoop()
     initFrameTicks();
 
     resetGameControls();
+    initPitchEffects();
 }
 
 static void drawFrame(bool recordingEnabled)
@@ -250,6 +252,7 @@ static void drawFrame(bool recordingEnabled)
     startNewHighlightsFrame();
     drawSprites(xOffset, yOffset);
     drawBench(xOffset, yOffset);
+    drawPitchEffectsAir(xOffset, yOffset);
     drawPlayerName();
     drawGameTime();
     drawStatsIfNeeded();
@@ -307,6 +310,7 @@ static void coreGameUpdate()
     updateBall();
     updateGoalNets();
     movePlayers();
+    updatePitchEffects();
     updateReferee();
     updateCornerFlags();
     updateSpinningLogo();

@@ -11,6 +11,7 @@
 #include "util.h"
 #include "random.h"
 #include "goalNet.h"
+#include "pitchEffects.h"
 
 constexpr int kSwosPatternSize = 16;
 
@@ -431,8 +432,29 @@ static void drawPitch(float xOfs, float yOfs, int row, int column, int numPatter
     auto renderer = getRenderer();
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
 
+    // Subtle weather color grading on pitch textures when Pitch & Weather FX is enabled
+    uint8_t modR = 255;
+    uint8_t modG = 255;
+    uint8_t modB = 255;
+    if (getPitchWeatherEffects()) {
+        switch (m_pitchType) {
+        case kFrozen: modR = 216; modG = 234; modB = 255; break; // Crisp icy frost tint
+        case kMuddy:  modR = 212; modG = 194; modB = 160; break; // Earthy damp mud-olive
+        case kWet:    modR = 212; modG = 232; modB = 218; break; // Darker rain-soaked grass
+        case kSoft:   modR = 240; modG = 248; modB = 234; break; // Lush soft turf
+        case kDry:    modR = 255; modG = 244; modB = 204; break; // Warm sun-dried grass
+        case kHard:   modR = 252; modG = 232; modB = 186; break; // Sun-baked firm turf
+        default: break;
+        }
+    }
+
+    int8_t prevTexIdx = -1;
     for (int i = 0; i < numPatterns; i++) {
         const auto& renderPattern = renderPatterns[i];
+        if (renderPattern.textureIndex != prevTexIdx) {
+            SDL_SetTextureColorMod(renderPattern.texture, modR, modG, modB);
+            prevTexIdx = renderPattern.textureIndex;
+        }
         SDL_RenderCopyF(renderer, renderPattern.texture, &renderPattern.src, &renderPattern.dst);
     }
 }
