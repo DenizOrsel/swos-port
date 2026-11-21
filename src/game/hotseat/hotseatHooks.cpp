@@ -372,6 +372,7 @@ void PlayMatchMenu_OnEnter()
 void Hotseat_OnAfterShowPlayMatchMenu()
 {
     HotseatCareerManager::get().onAfterShowPlayMatchMenu();
+    checkCareerSquadTransfersLlm();
 }
 
 void CareerOverInit_OnEnter()

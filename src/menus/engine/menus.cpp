@@ -12,6 +12,7 @@
 #include "hotseatCareer.h"
 #include "drawMenu.h"
 #include "continueAbortMenu.h"
+#include "llmFeatures.h"
 
 #ifdef SWOS_TEST
 # include "unitTest.h"
@@ -587,6 +588,7 @@ void SWOS::ShowMenu()
 {
     auto menu = A6.as<BaseMenu *>();
     showMenu(*menu);
+    checkCareerSquadTransfersLlm();
 }
 
 // ActivateMenu

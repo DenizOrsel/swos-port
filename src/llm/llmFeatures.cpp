@@ -2,9 +2,12 @@
 #include "llmClient.h"
 #include "continueAbortMenu.h"
 #include "darkRectangle.h"
+#include "drawMenu.h"
 #include "gameFieldMapping.h"
 #include "hotseatCareer.h"
 #include "hotseat/hotseatInternal.h"
+#include "menuBackground.h"
+#include "menus.h"
 #include "pitch.h"
 #include "render.h"
 #include "result.h"
@@ -237,8 +240,7 @@ void showPostMatchNewspaperIfReady()
         return;
 
     std::string reply;
-    int waitBudget = std::min(cfg.timeoutMs, 1500);
-    if (waitForLlmResponse(s_postMatchRequestId, waitBudget, reply)) {
+    if (waitForLlmResponse(s_postMatchRequestId, cfg.timeoutMs, reply)) {
         showWrappedSwosPrompt("DAILY SOCCER ECHO", reply);
     }
     s_postMatchRequestId = 0;
@@ -263,7 +265,7 @@ std::string fetchTransferNegotiationVoice(const char *buyerClub, const char *sel
         return {};
 
     std::string reply;
-    if (!waitForLlmResponse(reqId, std::min(cfg.timeoutMs, 1200), reply))
+    if (!waitForLlmResponse(reqId, cfg.timeoutMs, reply))
         return {};
 
     std::string clean = sanitizeAsciiUpper(reply);
@@ -296,7 +298,7 @@ void onCareerMatchCompletedLlm(int topGoals, int botGoals)
         return;
 
     std::string reply;
-    if (waitForLlmResponse(reqId, std::min(cfg.timeoutMs, 1200), reply)) {
+    if (waitForLlmResponse(reqId, cfg.timeoutMs, reply)) {
         showWrappedSwosPrompt("DRESSING ROOM VOICE", reply);
     }
 }
@@ -308,9 +310,19 @@ void resetCareerLlmSnapshots()
 
 void checkCareerSquadTransfersLlm()
 {
+    static bool s_inTransferCheck = false;
+    if (s_inTransferCheck)
+        return;
+
     if (swos.g_gameType != kGameTypeCareer || swos.g_trainingGame ||
         HotseatCareerManager::get().isInitializingSeason())
         return;
+
+    struct Guard {
+        bool& flag;
+        explicit Guard(bool& f) : flag(f) { flag = true; }
+        ~Guard() { flag = false; }
+    } guard(s_inTransferCheck);
 
     const auto& cfg = getLlmConfig();
     if (!cfg.enabled || !cfg.features.transferNegotiations)
@@ -384,7 +396,7 @@ void checkCareerSquadTransfersLlm()
         return;
 
     std::string reply;
-    if (waitForLlmResponse(reqId, std::min(cfg.timeoutMs, 1500), reply)) {
+    if (waitForLlmResponse(reqId, cfg.timeoutMs, reply)) {
         showWrappedSwosPrompt("TRANSFER DESK", reply);
     }
 }
@@ -440,8 +452,11 @@ void showPreMatchScoutingIfReady()
         return;
 
     std::string reply;
-    if (waitForLlmResponse(s_preMatchRequestId, std::min(cfg.timeoutMs, 1200), reply)) {
+    if (waitForLlmResponse(s_preMatchRequestId, cfg.timeoutMs, reply)) {
+        setStandardMenuBackgroundImage();
+        menuFadeIn();
         showWrappedSwosPrompt("ASSISTANT MANAGER", reply);
+        menuFadeOut();
     }
     s_preMatchRequestId = 0;
 }
@@ -550,7 +565,7 @@ void onCareerWeeklyTickLlm()
         return;
 
     std::string reply;
-    if (waitForLlmResponse(reqId, std::min(cfg.timeoutMs, 1000), reply)) {
+    if (waitForLlmResponse(reqId, cfg.timeoutMs, reply)) {
         showWrappedSwosPrompt(isMarket ? "TRANSFER WHISPER" : "DRESSING ROOM", reply);
     }
 }
