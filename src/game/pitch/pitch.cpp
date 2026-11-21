@@ -213,13 +213,8 @@ static SDL_Texture *buildCrowdAtlasForTeam(const TeamGame& team)
 
     uint8_t pal[256][3];
     memcpy(pal, kCrowdPalette, sizeof(pal));
-    // Weather-grade any grass border pixels in the crowd tiles (before applying team kit colors)
-    if (getPitchWeatherEffects()) {
-        for (int i = 0; i < 256; ++i) {
-            if (i != 10 && i != 11)
-                remapWeatherGrassPixel(pal[i][0], pal[i][1], pal[i][2], m_pitchType);
-        }
-    }
+    // Darken palette index 0 for top-stand shadows so no neon green specks appear
+    pal[0][0] = 16; pal[0][1] = 22; pal[0][2] = 10;
     // Palette indices 10 & 11 are SWOS's dynamic fan kit color slots
     pal[10][0] = secondary.r; pal[10][1] = secondary.g; pal[10][2] = secondary.b;
     pal[11][0] = primary.r;   pal[11][1] = primary.g;   pal[11][2] = primary.b;
@@ -236,7 +231,11 @@ static SDL_Texture *buildCrowdAtlasForTeam(const TeamGame& team)
             for (int cx = 0; cx < kCellStride; ++cx) {
                 int sx = std::clamp(cx - kPad, 0, kTileSize - 1);
                 uint8_t c = pat[sy * kTileSize + sx];
-                row[baseX + cx] = SDL_MapRGBA(surf->format, pal[c][0], pal[c][1], pal[c][2], 255);
+                // On lower stand tiles (t >= 12), make the top grass border pixels (0, 9, and 7 in rows 0..4)
+                // transparent so the actual underlying pitch tile & weather color shows right behind the crowd!
+                bool transparent = (t >= 12) && (c == 0 || c == 9 || (c == 7 && sy <= 4));
+                uint8_t alpha = transparent ? 0 : 255;
+                row[baseX + cx] = SDL_MapRGBA(surf->format, pal[c][0], pal[c][1], pal[c][2], alpha);
             }
         }
     }
@@ -245,7 +244,7 @@ static SDL_Texture *buildCrowdAtlasForTeam(const TeamGame& team)
     SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, surf);
     SDL_FreeSurface(surf);
     if (tex) {
-        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_NONE);
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
         SDL_SetTextureScaleMode(tex, SDL_ScaleModeNearest);
     }
     return tex;
@@ -575,7 +574,7 @@ static void drawPitch(float xOfs, float yOfs, int row, int column, int numPatter
         }
     };
 
-    std::array<RenderPattern, kPitchPatternWidth * kPitchPatternHeight + 16> renderPatterns;
+    std::array<RenderPattern, kPitchPatternWidth * kPitchPatternHeight + 256> renderPatterns;
     int numPatterns = 0;
 
     auto getCrowdMapRow = [](int r) -> int {
@@ -607,8 +606,6 @@ static void drawPitch(float xOfs, float yOfs, int row, int column, int numPatter
                 SDL_Rect srcRect{ tileIdx * 20 + 2, 2, 16, 16 };
                 SDL_FRect dstRect{ currentXOfs, currentYOfs, destPatternSize, destPatternSize };
                 renderPatterns[numPatterns++] = { srcRect, dstRect, m_crowdTextures[standIdx], static_cast<int8_t>(16 + standIdx) };
-                currentXOfs += destPatternSize;
-                continue;
             }
             auto patternIndex = useCleanGoalTiles ? getCleanPitchPatternIndex(m_pitchNumber, i, j) : indices[i][j];
             if (patternIndex != UINT16_MAX) {
