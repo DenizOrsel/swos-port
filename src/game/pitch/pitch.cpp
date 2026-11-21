@@ -12,6 +12,8 @@
 #include "random.h"
 #include "goalNet.h"
 #include "pitchEffects.h"
+#include "crowdData.h"
+#include "color.h"
 
 constexpr int kSwosPatternSize = 16;
 
@@ -42,6 +44,9 @@ static float m_zoom;
 static Uint32 m_lastZoomChangeTicks;
 static bool m_loadedWithWeatherGrading = false;
 static int m_loadedPitchType = -1;
+static std::array<SDL_Texture *, 2> m_crowdTextures = { nullptr, nullptr };
+static int m_crowdCheerLevel[2] = { 0, 0 }; // 0=idle, 1=medium, 2=wild cheering
+static uint32_t m_crowdAnimTick = 0;
 
 static void setPitchType();
 static void setPitchNumber();
@@ -172,6 +177,73 @@ static SDL_Texture *loadWeatherGradedPitchTexture(const char *filename, int pitc
     return tex;
 }
 
+static void destroyCrowdTextures()
+{
+    for (auto& tex : m_crowdTextures) {
+        if (tex) {
+            SDL_DestroyTexture(tex);
+            tex = nullptr;
+        }
+    }
+}
+
+static SDL_Texture *buildCrowdAtlasForTeam(const TeamGame& team)
+{
+    auto renderer = getRenderer();
+    if (!renderer)
+        return nullptr;
+
+    constexpr int kTileSize = 16;
+    constexpr int kNumTiles = 24;
+    SDL_Surface *surf = SDL_CreateRGBSurfaceWithFormat(0, kNumTiles * kTileSize, kTileSize, 32, SDL_PIXELFORMAT_RGBA32);
+    if (!surf)
+        return nullptr;
+
+    const Color& primary = kGamePalette[team.prShirtCol & 0x0f];
+    const Color& secondary = kGamePalette[team.prShortsCol & 0x0f];
+
+    uint8_t pal[256][3];
+    memcpy(pal, kCrowdPalette, sizeof(pal));
+    // Palette indices 10 & 11 are SWOS's dynamic fan kit color slots
+    pal[10][0] = secondary.r; pal[10][1] = secondary.g; pal[10][2] = secondary.b;
+    pal[11][0] = primary.r;   pal[11][1] = primary.g;   pal[11][2] = primary.b;
+
+    SDL_LockSurface(surf);
+    const int pitchBytes = surf->pitch;
+    auto *pixels = static_cast<uint8_t *>(surf->pixels);
+    for (int t = 0; t < kNumTiles; ++t) {
+        const auto *pat = kCrowdPatterns[t];
+        for (int y = 0; y < kTileSize; ++y) {
+            auto *row = reinterpret_cast<uint32_t *>(pixels + y * pitchBytes);
+            for (int x = 0; x < kTileSize; ++x) {
+                uint8_t c = pat[y * kTileSize + x];
+                row[t * kTileSize + x] = SDL_MapRGBA(surf->format, pal[c][0], pal[c][1], pal[c][2], 255);
+            }
+        }
+    }
+    SDL_UnlockSurface(surf);
+
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, surf);
+    SDL_FreeSurface(surf);
+    if (tex)
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_NONE);
+    return tex;
+}
+
+static void loadCrowdTextures()
+{
+    destroyCrowdTextures();
+    m_crowdCheerLevel[0] = 0;
+    m_crowdCheerLevel[1] = 0;
+    m_crowdAnimTick = 0;
+
+    if (swos.g_trainingGame)
+        return;
+
+    m_crowdTextures[0] = buildCrowdAtlasForTeam(swos.topTeamInGame);
+    m_crowdTextures[1] = buildCrowdAtlasForTeam(swos.bottomTeamInGame);
+}
+
 void loadPitch()
 {
     const bool applyGrading = getPitchWeatherEffects();
@@ -204,6 +276,8 @@ void loadPitch()
             }
         }
     }
+
+    loadCrowdTextures();
 }
 
 void reloadPitchTexturesIfNeeded()
@@ -483,9 +557,38 @@ static void drawPitch(float xOfs, float yOfs, int row, int column, int numPatter
     std::array<RenderPattern, kPitchPatternWidth * kPitchPatternHeight + 16> renderPatterns;
     int numPatterns = 0;
 
+    auto getCrowdMapRow = [](int r) -> int {
+        if (r >= 0 && r <= 2)
+            return r;
+        if (r >= 50 && r <= 52)
+            return r - 47;
+        return -1;
+    };
+
+    const bool drawCrowd = !swos.g_trainingGame && m_crowdTextures[0] && m_crowdTextures[1];
     const bool useCleanGoalTiles = getPhysicsGoalNets();
     for (int i = row; i < row + numPatternsY; i++) {
+        int crowdMapRow = drawCrowd ? getCrowdMapRow(i) : -1;
         for (int j = column; j < column + numPatternsX; j++) {
+            int8_t crowdBase = (crowdMapRow >= 0 && j >= 0 && j < kPitchPatternWidth) ? kCrowdRowMap[crowdMapRow][j] : -1;
+            if (crowdBase >= 0) {
+                int standIdx = (i <= 2) ? 0 : 1;
+                int cheer = m_crowdCheerLevel[standIdx];
+                bool wave = false;
+                if (cheer == 2) {
+                    wave = (((m_crowdAnimTick / 6) + static_cast<uint32_t>(i * 3 + j)) & 1) != 0;
+                } else if (cheer == 1) {
+                    wave = (((m_crowdAnimTick / 10) + static_cast<uint32_t>(i * 5 + j * 7)) % 3) == 0;
+                } else {
+                    wave = (((m_crowdAnimTick / 18) + static_cast<uint32_t>(i * 11 + j * 13)) % 11) == 0;
+                }
+                int tileIdx = crowdBase + (wave ? 1 : 0);
+                SDL_Rect srcRect{ tileIdx * 16, 0, 16, 16 };
+                SDL_FRect dstRect{ currentXOfs, currentYOfs, destPatternSize, destPatternSize };
+                renderPatterns[numPatterns++] = { srcRect, dstRect, m_crowdTextures[standIdx], static_cast<int8_t>(16 + standIdx) };
+                currentXOfs += destPatternSize;
+                continue;
+            }
             auto patternIndex = useCleanGoalTiles ? getCleanPitchPatternIndex(m_pitchNumber, i, j) : indices[i][j];
             if (patternIndex != UINT16_MAX) {
                 if (useCleanGoalTiles && i == 45 && j >= 18 && j <= 23) {
@@ -557,10 +660,38 @@ static void drawPitch(float xOfs, float yOfs, int row, int column, int numPatter
 
 void SWOS::DrawAnimatedPatterns()
 {
+    ++m_crowdAnimTick;
+
     // must decrease this so the camera would start moving at the start of the game
     if (!replayingNow() && !swos.g_trainingGame && swos.showFansCounter)
         swos.showFansCounter--;
-    //...
+
+    if (swos.g_trainingGame) {
+        m_crowdCheerLevel[0] = 0;
+        m_crowdCheerLevel[1] = 0;
+        return;
+    }
+
+    if (swos.patternsGoalCounter) {
+        if (++swos.patternsGoalCounter >= 300)
+            swos.patternsGoalCounter = 0;
+    } else if (swos.goalCounter) {
+        swos.patternsGoalCounter = 1;
+    }
+
+    if (swos.showFansCounter > 0) {
+        m_crowdCheerLevel[0] = 1;
+        m_crowdCheerLevel[1] = 1;
+    } else if (swos.patternsGoalCounter > 0 && swos.patternsGoalCounter < 225) {
+        bool topScored = (swos.teamScoredDataPtr && swos.teamScoredDataPtr->inGameTeamPtr.asPtr() == &swos.topTeamInGame);
+        int scoringStand = topScored ? 0 : 1;
+        int cheer = (swos.patternsGoalCounter < 60) ? 2 : 1;
+        m_crowdCheerLevel[scoringStand] = cheer;
+        m_crowdCheerLevel[1 - scoringStand] = 0;
+    } else {
+        m_crowdCheerLevel[0] = 0;
+        m_crowdCheerLevel[1] = 0;
+    }
 }
 
 static void reloadPitch(AssetResolution oldResolution, AssetResolution newResolution)
