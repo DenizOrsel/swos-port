@@ -2,8 +2,18 @@
 
 #include "FixedPoint.h"
 
+struct ReplayNetActor
+{
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+};
+
 void initGoalNets();
+void resetGoalNets();
 void updateGoalNets();
+void updateGoalNetsFromReplay(bool hasBall, float ballX, float ballY, float ballZ,
+    const ReplayNetActor *players, int numPlayers);
 void notifyGoalNetBallImpact(int goalIndex, float hitX, float hitY, float hitZ,
     float velX, float velY, float velZ);
 

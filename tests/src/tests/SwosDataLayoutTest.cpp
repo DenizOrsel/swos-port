@@ -128,6 +128,18 @@ void SwosDataLayoutTest::verifyPhysicsGoalNetSimulation()
     assertTrue(topSettled.maxDisplacement < topHit.maxDisplacement);
     assertTrue(topSettled.totalKineticEnergy < topHit.totalKineticEnergy * 0.25f);
 
+    // Verify action replay goal net simulation when a replay shot enters the bottom goal and hits the net
+    resetGoalNets();
+    auto botAfterReset = getGoalNetTestState(1);
+    assertTrue(botAfterReset.maxDisplacement < 0.001f);
+
+    updateGoalNetsFromReplay(true, 334.0f, 768.0f, 7.0f, nullptr, 0);
+    updateGoalNetsFromReplay(true, 334.0f, 773.5f, 8.0f, nullptr, 0);
+    updateGoalNetsFromReplay(true, 334.0f, 773.5f, 8.0f, nullptr, 0); // Clamped impact frame in replay
+    auto botReplayHit = getGoalNetTestState(1);
+    assertTrue(botReplayHit.maxDisplacement > 1.0f);
+    assertTrue(botReplayHit.totalKineticEnergy > 0.05f);
+
     // Verify toggle off pauses physics updates
     setPhysicsGoalNets(false);
     assertFalse(getPhysicsGoalNets());

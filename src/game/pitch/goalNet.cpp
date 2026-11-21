@@ -77,7 +77,11 @@ struct GoalNetMesh
     float prevBallX = 0.0f;
     float prevBallY = 0.0f;
     float prevBallZ = 0.0f;
+    float prevBallVX = 0.0f;
+    float prevBallVY = 0.0f;
+    float prevBallVZ = 0.0f;
     bool prevBallValid = false;
+    std::vector<ReplayNetActor> prevReplayPlayers;
 };
 
 static bool m_physicsGoalNetsEnabled = true;
@@ -320,9 +324,6 @@ static void interactNodeWithSphere(NetNode& node, float sx, float sy, float sz,
 
 static void stepGoalNetPhysics(GoalNetMesh& mesh)
 {
-    const float frontY = mesh.isTopGoal ? kTopGoalFrontY : kBottomGoalFrontY;
-    const float backY = mesh.isTopGoal ? kTopGoalBackY : kBottomGoalBackY;
-
     // 1. Continuous proximity interaction with the moving ball when inside/near the goal volume
     const auto& ball = swos.ballSprite;
     float bx = ball.x.asFloat();
@@ -382,6 +383,13 @@ static void stepGoalNetPhysics(GoalNetMesh& mesh)
     }
 
     // 3. Verlet Integration + soft tether toward rest shape (keeps the net taut and prevents collapse)
+}
+
+static void integrateAndSolveGoalNet(GoalNetMesh& mesh)
+{
+    const float frontY = mesh.isTopGoal ? kTopGoalFrontY : kBottomGoalFrontY;
+    const float backY = mesh.isTopGoal ? kTopGoalBackY : kBottomGoalBackY;
+
     constexpr float kDamping = 0.88f;
     constexpr float kRestRestore = 0.045f;
     constexpr float kGravityZ = -0.015f;
@@ -452,6 +460,122 @@ static void stepGoalNetPhysics(GoalNetMesh& mesh)
             }
         }
     }
+}
+
+static void stepGoalNetReplayPhysics(GoalNetMesh& mesh, bool hasBall, float bx, float by, float bz,
+    const ReplayNetActor *players, int numPlayers)
+{
+    if (hasBall) {
+        float bvx = 0.0f;
+        float bvy = 0.0f;
+        float bvz = 0.0f;
+        if (mesh.prevBallValid) {
+            bvx = bx - mesh.prevBallX;
+            bvy = by - mesh.prevBallY;
+            bvz = bz - mesh.prevBallZ;
+            if (std::abs(bvx) > 45.0f || std::abs(bvy) > 45.0f) {
+                bvx = bvy = bvz = 0.0f;
+                mesh.prevBallVX = mesh.prevBallVY = mesh.prevBallVZ = 0.0f;
+            }
+        }
+
+        bool ballNearGoalY = mesh.isTopGoal
+            ? (by >= kTopGoalBackY - 12.0f && by <= kTopGoalFrontY + 8.0f)
+            : (by >= kBottomGoalFrontY - 8.0f && by <= kBottomGoalBackY + 12.0f);
+        bool ballNearGoalX = (bx >= kGoalLeftX - 10.0f && bx <= kGoalRightX + 10.0f);
+
+        if (ballNearGoalX && ballNearGoalY && bz <= kFrontHeightZ + 8.0f) {
+            float curSpeed = std::sqrt(bvx * bvx + bvy * bvy + bvz * bvz);
+            float prevSpeed = std::sqrt(
+                mesh.prevBallVX * mesh.prevBallVX +
+                mesh.prevBallVY * mesh.prevBallVY +
+                mesh.prevBallVZ * mesh.prevBallVZ);
+
+            // In SWOS, handleGoalFrameCollisions() restores ballSprite.x/y to previousX/Y on the collision tick
+            // before replay coordinates are recorded. Detect that sudden stop/rebound inside the goal volume
+            // and apply the full un-clamped impact impulse into the rear wall, side curtains, or roof.
+            bool insideGoalMouthY = mesh.isTopGoal
+                ? (by >= kTopGoalBackY - 6.0f && by <= kTopGoalFrontY + 2.0f)
+                : (by >= kBottomGoalFrontY - 2.0f && by <= kBottomGoalBackY + 6.0f);
+            bool movingIntoGoal = mesh.isTopGoal
+                ? (mesh.prevBallVY < -0.25f || std::abs(mesh.prevBallVX) > 0.35f)
+                : (mesh.prevBallVY > 0.25f || std::abs(mesh.prevBallVX) > 0.35f);
+            float dotPrevCur = bvx * mesh.prevBallVX + bvy * mesh.prevBallVY;
+
+            if (insideGoalMouthY && prevSpeed > 0.55f && movingIntoGoal &&
+                (curSpeed < prevSpeed * 0.55f || dotPrevCur <= 0.0f)) {
+                float hitX = bx + mesh.prevBallVX * 1.35f;
+                float hitY = by + mesh.prevBallVY * 1.35f;
+                float hitZ = std::max(0.0f, bz + mesh.prevBallVZ);
+                constexpr float kImpactRadius = 19.5f;
+                for (auto& node : mesh.nodes) {
+                    interactNodeWithSphere(node, hitX, hitY, hitZ,
+                        mesh.prevBallVX * 1.4f, mesh.prevBallVY * 1.4f, mesh.prevBallVZ * 1.1f,
+                        kImpactRadius, 1.35f);
+                }
+                mesh.prevBallVX = 0.0f;
+                mesh.prevBallVY = 0.0f;
+                mesh.prevBallVZ = 0.0f;
+            } else if (curSpeed > 0.05f) {
+                float leadX = bx + bvx * 0.85f;
+                float leadY = by + bvy * 0.85f;
+                float leadZ = std::max(0.0f, bz + bvz * 0.5f);
+                for (auto& node : mesh.nodes) {
+                    interactNodeWithSphere(node, bx, by, bz, bvx, bvy, bvz, 11.0f, 0.45f);
+                    interactNodeWithSphere(node, leadX, leadY, leadZ, bvx, bvy, bvz, 15.5f, 0.65f);
+                }
+                mesh.prevBallVX = bvx;
+                mesh.prevBallVY = bvy;
+                mesh.prevBallVZ = bvz;
+            }
+        } else {
+            mesh.prevBallVX = bvx;
+            mesh.prevBallVY = bvy;
+            mesh.prevBallVZ = bvz;
+        }
+
+        mesh.prevBallX = bx;
+        mesh.prevBallY = by;
+        mesh.prevBallZ = bz;
+        mesh.prevBallValid = true;
+    }
+
+    // 2. Also let players running inside the goal mouth brush the net during replays
+    std::vector<ReplayNetActor> currentNearbyPlayers;
+    if (players && numPlayers > 0) {
+        for (int i = 0; i < numPlayers; ++i) {
+            float px = players[i].x;
+            float py = players[i].y;
+            float pz = players[i].z;
+            bool plNearY = mesh.isTopGoal
+                ? (py >= kTopGoalBackY - 8.0f && py <= kTopGoalFrontY + 5.0f)
+                : (py >= kBottomGoalFrontY - 5.0f && py <= kBottomGoalBackY + 8.0f);
+            if (plNearY && px >= kGoalLeftX - 8.0f && px <= kGoalRightX + 8.0f) {
+                currentNearbyPlayers.push_back({ px, py, pz });
+                float bestDistSq = 100.0f;
+                float pvx = 0.0f;
+                float pvy = 0.0f;
+                for (const auto& prevPl : mesh.prevReplayPlayers) {
+                    float dx = px - prevPl.x;
+                    float dy = py - prevPl.y;
+                    float d2 = dx * dx + dy * dy;
+                    if (d2 < bestDistSq) {
+                        bestDistSq = d2;
+                        pvx = dx;
+                        pvy = dy;
+                    }
+                }
+                if (std::abs(pvx) > 0.05f || std::abs(pvy) > 0.05f) {
+                    for (auto& node : mesh.nodes) {
+                        interactNodeWithSphere(node, px, py, pz, pvx, pvy, 0.0f, 8.5f, 0.30f);
+                    }
+                }
+            }
+        }
+    }
+    mesh.prevReplayPlayers = std::move(currentNearbyPlayers);
+
+    integrateAndSolveGoalNet(mesh);
 }
 
 struct ScreenMapper
@@ -804,6 +928,26 @@ void initGoalNets()
     m_initialized = true;
 }
 
+void resetGoalNets()
+{
+    if (!m_initialized) {
+        initGoalNets();
+        return;
+    }
+    for (auto& mesh : m_goalNets) {
+        mesh.prevBallValid = false;
+        mesh.prevBallVX = 0.0f;
+        mesh.prevBallVY = 0.0f;
+        mesh.prevBallVZ = 0.0f;
+        mesh.prevReplayPlayers.clear();
+        for (auto& node : mesh.nodes) {
+            node.x = node.prevX = node.restX;
+            node.y = node.prevY = node.restY;
+            node.z = node.prevZ = node.restZ;
+        }
+    }
+}
+
 void updateGoalNets()
 {
     if (!m_initialized)
@@ -813,7 +957,22 @@ void updateGoalNets()
         return;
 
     stepGoalNetPhysics(m_goalNets[0]);
+    integrateAndSolveGoalNet(m_goalNets[0]);
     stepGoalNetPhysics(m_goalNets[1]);
+    integrateAndSolveGoalNet(m_goalNets[1]);
+}
+
+void updateGoalNetsFromReplay(bool hasBall, float ballX, float ballY, float ballZ,
+    const ReplayNetActor *players, int numPlayers)
+{
+    if (!m_initialized)
+        initGoalNets();
+
+    if (!m_physicsGoalNetsEnabled)
+        return;
+
+    stepGoalNetReplayPhysics(m_goalNets[0], hasBall, ballX, ballY, ballZ, players, numPlayers);
+    stepGoalNetReplayPhysics(m_goalNets[1], hasBall, ballX, ballY, ballZ, players, numPlayers);
 }
 
 void notifyGoalNetBallImpact(int goalIndex, float hitX, float hitY, float hitZ,

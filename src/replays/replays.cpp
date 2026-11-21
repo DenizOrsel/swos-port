@@ -68,7 +68,7 @@ static void runReplay(bool inGame, bool isReplay);
 static Status replayScene(bool inGame, bool isReplay, bool userRequested = false);
 static Status checkReplayControlKeys(bool inGame, bool userRequested);
 static void showIntroMenus();
-static bool fetchAndRenderFrame(bool isReplay);
+static bool fetchAndRenderFrame(bool isReplay, bool advancePhysics = true);
 static void drawResultAndTime(const ReplayDataStorage::FrameData& frameData, bool replay);
 static void drawResult(int leftTeamGoals, int rightTeamGoals, bool showTime);
 static void drawOverlay(const ReplayDataStorage::FrameData& frameData, bool isReplay);
@@ -333,6 +333,7 @@ static Status replayScene(bool inGame, bool isReplay, bool userRequested /* = fa
     auto status = Status::kNormal;
 
     m_paused = false;
+    resetGoalNets();
 
     do {
         status = checkReplayControlKeys(inGame, userRequested);
@@ -349,7 +350,7 @@ static Status replayScene(bool inGame, bool isReplay, bool userRequested /* = fa
 
         markFrameStartTime();
 
-        if (!fetchAndRenderFrame(isReplay))
+        if (!fetchAndRenderFrame(isReplay, !m_paused))
             break;
 
         updateScreen(isReplay, doFadeIn, aborted);
@@ -389,6 +390,8 @@ static Status checkReplayControlKeys(bool inGame, bool userRequested)
                     frameOffset = -frameOffset;
 
                 m_replayData.skipFrames(frameOffset);
+                if (frameOffset < 0 || frameOffset > 1)
+                    resetGoalNets();
             }
             return Status::kNormal;
 
@@ -438,54 +441,110 @@ static void showIntroMenus()
     restoreMenu(currentMenu, currentEntry);
 }
 
-static bool fetchAndRenderFrame(bool isReplay)
+static bool fetchAndRenderFrame(bool isReplay, bool advancePhysics)
 {
     ReplayDataStorage::FrameData frameData;
     if (!m_replayData.fetchFrameData(frameData))
         return false;
 
+    static std::vector<ReplayDataStorage::Object> frameObjects;
+    static std::vector<ReplayNetActor> replayPlayers;
+    frameObjects.clear();
+    replayPlayers.clear();
+
+    const float camX = frameData.cameraX.asFloat();
+    const float camY = frameData.cameraY.asFloat();
+    const bool physicsNets = getPhysicsGoalNets();
+
+    bool hasBall = false;
+    bool hasBallShadow = false;
+    float ballScreenX = 0.0f;
+    float ballScreenY = 0.0f;
+    float shadowScreenX = 0.0f;
+    float shadowScreenY = 0.0f;
+
+    ReplayDataStorage::Object obj;
+    while (m_replayData.fetchObject(obj)) {
+        if (obj.type == ReplayDataStorage::ObjectType::kSprite) {
+            if (m_replayData.isLegacyFormat()) {
+                const auto& sprite = getSprite(obj.imageIndex);
+                obj.x += sprite.centerXF + sprite.xOffsetF;
+                obj.y += sprite.centerYF + sprite.yOffsetF;
+            }
+            if (advancePhysics && physicsNets) {
+                if (obj.imageIndex >= kBallSprite1 && obj.imageIndex <= kBallSprite4) {
+                    hasBall = true;
+                    ballScreenX = obj.x;
+                    ballScreenY = obj.y;
+                } else if (obj.imageIndex == kBallShadowSprite) {
+                    hasBallShadow = true;
+                    shadowScreenX = obj.x;
+                    shadowScreenY = obj.y;
+                } else if (obj.imageIndex >= kTeam1WhitePlayerSpriteStart && obj.imageIndex <= kTeam2ReserveGoalkeeperSpriteEnd) {
+                    float px = obj.x + camX;
+                    float py = obj.y + camY;
+                    if (px >= 288.0f && px <= 380.0f && (py <= 140.0f || py >= 758.0f))
+                        replayPlayers.push_back({ px, py, 6.0f });
+                }
+            }
+        }
+        frameObjects.push_back(obj);
+    }
+
+    if (advancePhysics && physicsNets) {
+        float ballWorldX = 0.0f;
+        float ballWorldY = 0.0f;
+        float ballWorldZ = 0.0f;
+        if (hasBall) {
+            if (hasBallShadow) {
+                // Reconstruct ball 3D height Z from the oblique ground shadow vertical delta:
+                // shadowScreenY - ballScreenY = 1.25 * ballZ + 1
+                ballWorldZ = std::clamp(((shadowScreenY - ballScreenY) - 1.0f) * 0.8f, 0.0f, 40.0f);
+                (void)shadowScreenX;
+            }
+            ballWorldX = ballScreenX + camX;
+            ballWorldY = ballScreenY + camY + ballWorldZ;
+        }
+        updateGoalNetsFromReplay(hasBall, ballWorldX, ballWorldY, ballWorldZ,
+            replayPlayers.data(), static_cast<int>(replayPlayers.size()));
+    }
+
     float xOffset, yOffset;
     std::tie(xOffset, yOffset) = drawPitch(frameData.cameraX, frameData.cameraY);
     setGoalNetRenderCamera(frameData.cameraX, frameData.cameraY);
-    if (getPhysicsGoalNets()) {
+    if (physicsNets) {
         drawTopGoalBackNet(xOffset, yOffset);
         drawBottomGoalBackNet(xOffset, yOffset);
     }
 
     GameStats stats;
     bool gotStats = false;
-    ReplayDataStorage::Object obj;
 
-    while (m_replayData.fetchObject(obj)) {
-        switch (obj.type) {
+    for (const auto& item : frameObjects) {
+        switch (item.type) {
         case ReplayDataStorage::ObjectType::kSprite:
-            if (m_replayData.isLegacyFormat()) {
-                const auto& sprite = getSprite(obj.imageIndex);
-                obj.x += sprite.centerXF + sprite.xOffsetF;
-                obj.y += sprite.centerYF + sprite.yOffsetF;
-            }
-            if (getPhysicsGoalNets() && (obj.imageIndex == kTopGoalSprite || obj.imageIndex == kBottomGoalSprite)) {
-                if (obj.imageIndex == kTopGoalSprite)
+            if (physicsNets && (item.imageIndex == kTopGoalSprite || item.imageIndex == kBottomGoalSprite)) {
+                if (item.imageIndex == kTopGoalSprite)
                     drawTopGoalOverlayNet(xOffset, yOffset);
                 else
                     drawBottomGoalOverlayNet(xOffset, yOffset);
             } else {
-                drawSprite(obj.imageIndex, obj.x, obj.y, true, xOffset, yOffset);
+                drawSprite(item.imageIndex, item.x, item.y, true, xOffset, yOffset);
             }
             break;
 
         case ReplayDataStorage::ObjectType::kStats:
-            stats = obj.stats;
+            stats = item.stats;
             gotStats = true;
             break;
 
         case ReplayDataStorage::ObjectType::kSfx:
             if (!m_instantReplay)
-                playSfx(obj.sampleIndex, obj.volume);
+                playSfx(item.sampleIndex, item.volume);
             break;
 
         default:
-            logWarn("Unknown replay object type %d", obj.type);
+            logWarn("Unknown replay object type %d", item.type);
         }
     }
 
@@ -592,7 +651,7 @@ static void updateScreen(bool isReplay, bool& doFadeIn, bool aborted)
 
     auto showCurrentFrame = [&]() {
         m_replayData.skipFrames(0);
-        fetchAndRenderFrame(isReplay);
+        fetchAndRenderFrame(isReplay, false);
     };
 
     if (doFadeIn) {
