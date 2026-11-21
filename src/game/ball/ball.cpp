@@ -1036,6 +1036,9 @@ static void handlePostAndCrossbarCollisions(FixedPoint& previousX, FixedPoint& p
         kDeflectionRandomCenter;
     bool shallowVerticalMovement = swos.ballSprite.deltaY >= -0.3125_fp && swos.ballSprite.deltaY <= 0.3125_fp;
     bool collisionHandled = false;
+    float inVelX = swos.ballSprite.deltaX.asFloat();
+    float inVelY = swos.ballSprite.deltaY.asFloat();
+    float inVelZ = swos.ballSprite.deltaZ.asFloat();
 
     if (hitCrossbar && shallowVerticalMovement) {
         swos.ballSprite.deltaZ = -swos.ballSprite.deltaZ;
@@ -1059,6 +1062,14 @@ static void handlePostAndCrossbarCollisions(FixedPoint& previousX, FixedPoint& p
     }
 
     if (collisionHandled) {
+        int goalIndex = (ballY <= kPitchCenterY) ? 0 : 1;
+        notifyGoalFrameImpact(goalIndex,
+            swos.ballSprite.x.asFloat(),
+            swos.ballSprite.y.asFloat(),
+            std::max(0.0f, swos.ballSprite.z.asFloat()),
+            inVelX, inVelY, inVelZ,
+            hitCrossbar);
+
         if ((SWOS::rand() & 1) && !hitPost)
             playBarHitComment();
         else

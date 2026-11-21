@@ -204,6 +204,9 @@ void drawSprites(float xOffset, float yOffset)
         drawTopGoalBackNet(xOffset, yOffset);
         drawBottomGoalBackNet(xOffset, yOffset);
     }
+    if (getBallAndGoalframeEffects()) {
+        drawBallGroundEffects(xOffset, yOffset);
+    }
 
     for (int i = 0; i < m_numSpritesToRender; i++) {
         auto sprite = m_sortedSprites[i];
@@ -217,6 +220,9 @@ void drawSprites(float xOffset, float yOffset)
         auto y = sprite->y - cameraY - sprite->z;
 
         auto zoom = shouldZoomSprite(sprite->imageIndex);
+        if (sprite == &getBallSprite() && getBallAndGoalframeEffects()) {
+            drawBallAirEffects(xOffset, yOffset);
+        }
         if (getPhysicsGoalNets() && (sprite == &swos.goal1TopSprite || sprite == &swos.goal2BottomSprite)) {
             if (sprite == &swos.goal1TopSprite)
                 drawTopGoalOverlayNet(xOffset, yOffset);
@@ -224,6 +230,9 @@ void drawSprites(float xOffset, float yOffset)
                 drawBottomGoalOverlayNet(xOffset, yOffset);
         } else {
             sprite->onScreen = drawSprite(sprite->imageIndex, x.asFloat(), y.asFloat(), zoom, xOffset, yOffset);
+            if (getBallAndGoalframeEffects() && (sprite == &swos.goal1TopSprite || sprite == &swos.goal2BottomSprite)) {
+                drawGoalFrameImpactOverlay(sprite == &swos.goal1TopSprite ? 0 : 1, xOffset, yOffset);
+            }
         }
 
 #ifdef SWOS_TEST

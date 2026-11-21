@@ -82,14 +82,208 @@ struct GoalNetMesh
     float prevBallVZ = 0.0f;
     bool prevBallValid = false;
     std::vector<ReplayNetActor> prevReplayPlayers;
+
+    // Goalframe vibration & impact flash state
+    float frameVibTimer = 0.0f;
+    float frameVibMaxTimer = 24.0f;
+    float frameVibAmpX = 0.0f;
+    float frameVibAmpY = 0.0f;
+    float frameVibAmpZ = 0.0f;
+    int frameVibPart = 0; // 0 = crossbar, -1 = left post, +1 = right post
+    float impactFlashTimer = 0.0f;
+    float impactX = 0.0f;
+    float impactY = 0.0f;
+    float impactZ = 0.0f;
+};
+
+struct BallTrailSample
+{
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+    float vx = 0.0f;
+    float vy = 0.0f;
+    float vz = 0.0f;
+    float speed = 0.0f;
+    float spinCurl = 0.0f;
+    float life = 1.0f;
+};
+
+struct FeedbackParticle
+{
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+    float vx = 0.0f;
+    float vy = 0.0f;
+    float vz = 0.0f;
+    uint8_t r = 255;
+    uint8_t g = 255;
+    uint8_t b = 255;
+    uint8_t a = 200;
+    float size = 1.0f;
+    float life = 1.0f;
+    float decay = 0.1f;
 };
 
 static bool m_physicsGoalNetsEnabled = true;
+static bool m_ballAndGoalframeEffectsEnabled = true;
 static GoalNetMesh m_goalNets[2];
 static bool m_initialized = false;
 static bool m_hasCustomRenderCamera = false;
 static float m_customCameraX = 0.0f;
 static float m_customCameraY = 0.0f;
+
+static std::vector<BallTrailSample> m_ballTrail;
+static std::vector<FeedbackParticle> m_particles;
+static float m_prevFeedbackX = 0.0f;
+static float m_prevFeedbackY = 0.0f;
+static float m_prevFeedbackZ = 0.0f;
+static float m_prevFeedbackVX = 0.0f;
+static float m_prevFeedbackVY = 0.0f;
+static float m_prevFeedbackVZ = 0.0f;
+static bool m_prevFeedbackValid = false;
+static uint32_t m_fxRngState = 0x57052026u;
+
+static float nextFxRandSigned()
+{
+    m_fxRngState = m_fxRngState * 1664525u + 1013904223u;
+    float u = static_cast<float>((m_fxRngState >> 8) & 0xFFFF) / 32767.5f;
+    return u - 1.0f;
+}
+
+static void spawnWoodworkImpactParticles(float hitX, float hitY, float hitZ, float outDirX, float outDirY)
+{
+    if (m_particles.size() > 160)
+        return;
+
+    int pitchType = getPitchType();
+    for (int i = 0; i < 14; ++i) {
+        FeedbackParticle p{};
+        p.x = hitX + nextFxRandSigned() * 1.2f;
+        p.y = hitY + nextFxRandSigned() * 0.8f;
+        p.z = std::max(0.5f, hitZ + nextFxRandSigned() * 1.2f);
+        p.vx = outDirX * (0.45f + 0.35f * std::abs(nextFxRandSigned())) + nextFxRandSigned() * 1.1f;
+        p.vy = outDirY * (0.45f + 0.35f * std::abs(nextFxRandSigned())) + nextFxRandSigned() * 0.9f;
+        p.vz = 0.35f + std::abs(nextFxRandSigned()) * 1.15f;
+        if (pitchType == 2 && (i & 1)) { // Wet pitch moisture spray off post
+            p.r = 200; p.g = 232; p.b = 255; p.a = 210;
+        } else { // White/silver post paint & specular flecks
+            p.r = 248; p.g = 252; p.b = 255; p.a = 235;
+        }
+        p.size = (i % 3 == 0) ? 1.35f : 0.95f;
+        p.life = 1.0f;
+        p.decay = 0.075f + std::abs(nextFxRandSigned()) * 0.035f;
+        m_particles.push_back(p);
+    }
+}
+
+static void stepBallFeedback(float bx, float by, float bz, float bvx, float bvy, float bvz, float activeSpinSign)
+{
+    for (auto& s : m_ballTrail)
+        s.life -= 0.085f;
+    m_ballTrail.erase(
+        std::remove_if(m_ballTrail.begin(), m_ballTrail.end(), [](const BallTrailSample& s) { return s.life <= 0.0f; }),
+        m_ballTrail.end());
+
+    for (auto& p : m_particles) {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.z += p.vz;
+        p.vz -= 0.14f;
+        if (p.z < 0.0f) {
+            p.z = 0.0f;
+            p.vx *= 0.55f;
+            p.vy *= 0.55f;
+            p.vz = 0.0f;
+        }
+        p.life -= p.decay;
+    }
+    m_particles.erase(
+        std::remove_if(m_particles.begin(), m_particles.end(), [](const FeedbackParticle& p) { return p.life <= 0.0f; }),
+        m_particles.end());
+
+    if (!m_ballAndGoalframeEffectsEnabled)
+        return;
+
+    if (m_prevFeedbackValid && (std::abs(bx - m_prevFeedbackX) > 45.0f || std::abs(by - m_prevFeedbackY) > 45.0f)) {
+        m_ballTrail.clear();
+        m_prevFeedbackValid = false;
+    }
+
+    float planarSpeed = std::sqrt(bvx * bvx + bvy * bvy);
+    float speed3D = std::sqrt(bvx * bvx + bvy * bvy + bvz * bvz);
+    float prevPlanarSpeed = std::sqrt(m_prevFeedbackVX * m_prevFeedbackVX + m_prevFeedbackVY * m_prevFeedbackVY);
+
+    float spinCurl = activeSpinSign;
+    if (m_prevFeedbackValid && planarSpeed > 1.2f && prevPlanarSpeed > 1.2f) {
+        float cross = (m_prevFeedbackVX * bvy - m_prevFeedbackVY * bvx) / (planarSpeed * prevPlanarSpeed);
+        float measuredCurl = std::clamp(cross * 8.5f, -1.25f, 1.25f);
+        if (std::abs(measuredCurl) > std::abs(spinCurl))
+            spinCurl = measuredCurl;
+    }
+
+    if (speed3D > 0.35f) {
+        BallTrailSample s{};
+        s.x = bx;
+        s.y = by;
+        s.z = bz;
+        s.vx = bvx;
+        s.vy = bvy;
+        s.vz = bvz;
+        s.speed = speed3D;
+        s.spinCurl = spinCurl;
+        s.life = 1.0f;
+        m_ballTrail.push_back(s);
+        if (m_ballTrail.size() > 14)
+            m_ballTrail.erase(m_ballTrail.begin());
+    }
+
+    // Pitch-condition surface spray on fast ground skid, hard bounce, or power kick launch
+    int pitchType = getPitchType();
+    bool fastGroundSkid = (bz <= 1.1f && planarSpeed >= 2.15f);
+    bool groundBounce = (m_prevFeedbackValid && m_prevFeedbackZ > 1.2f && bz <= 0.85f && m_prevFeedbackVZ < -0.35f && speed3D >= 1.3f);
+    bool powerKickLaunch = (m_prevFeedbackValid && prevPlanarSpeed < 1.3f && speed3D >= 3.3f && bz <= 2.5f);
+
+    if ((fastGroundSkid || groundBounce || powerKickLaunch) && m_particles.size() < 150) {
+        int count = (groundBounce || powerKickLaunch) ? 5 : ((pitchType <= 2) ? 2 : 0);
+        for (int i = 0; i < count; ++i) {
+            FeedbackParticle p{};
+            p.x = bx - bvx * 0.35f + nextFxRandSigned() * 1.1f;
+            p.y = by - bvy * 0.35f + nextFxRandSigned() * 1.1f;
+            p.z = std::max(0.1f, bz * 0.5f);
+            p.vx = -bvx * (0.18f + 0.12f * std::abs(nextFxRandSigned())) + nextFxRandSigned() * 0.65f;
+            p.vy = -bvy * (0.18f + 0.12f * std::abs(nextFxRandSigned())) + nextFxRandSigned() * 0.65f;
+            p.vz = (groundBounce || powerKickLaunch)
+                ? (0.55f + std::abs(nextFxRandSigned()) * 0.95f)
+                : (0.28f + std::abs(nextFxRandSigned()) * 0.55f);
+
+            if (pitchType == 2) { // Wet: water spray droplets
+                p.r = 190; p.g = 226; p.b = 248; p.a = 175;
+            } else if (pitchType == 1) { // Muddy: mud splash droplets
+                p.r = 76; p.g = 52; p.b = 26; p.a = 190;
+            } else if (pitchType == 0) { // Frozen: frost/ice crystals
+                p.r = 225; p.g = 242; p.b = 255; p.a = 180;
+            } else if (pitchType == 5 || pitchType == 6) { // Dry / Hard: dust puff
+                p.r = 205; p.g = 194; p.b = 162; p.a = 150;
+            } else { // Soft / Normal: grass & turf blades
+                p.r = 62; p.g = 128; p.b = 28; p.a = 180;
+            }
+            p.size = (groundBounce || powerKickLaunch) ? 1.15f : 0.9f;
+            p.life = 1.0f;
+            p.decay = 0.09f + std::abs(nextFxRandSigned()) * 0.04f;
+            m_particles.push_back(p);
+        }
+    }
+
+    m_prevFeedbackX = bx;
+    m_prevFeedbackY = by;
+    m_prevFeedbackZ = bz;
+    m_prevFeedbackVX = bvx;
+    m_prevFeedbackVY = bvy;
+    m_prevFeedbackVZ = bvz;
+    m_prevFeedbackValid = true;
+}
 
 static int mainNodeIndex(const GoalNetMesh& mesh, int r, int c)
 {
@@ -104,6 +298,71 @@ static int leftSideNodeIndex(const GoalNetMesh& mesh, int r, int c)
 static int rightSideNodeIndex(const GoalNetMesh& mesh, int r, int c)
 {
     return mesh.rightSideOffset + r * kSideCols + c;
+}
+
+static void stepGoalFrameVibration(GoalNetMesh& mesh)
+{
+    if (mesh.impactFlashTimer > 0.0f)
+        mesh.impactFlashTimer = std::max(0.0f, mesh.impactFlashTimer - 1.0f);
+
+    if (mesh.frameVibTimer <= 0.0f)
+        return;
+
+    mesh.frameVibTimer = std::max(0.0f, mesh.frameVibTimer - 1.0f);
+    if (!m_ballAndGoalframeEffectsEnabled || !m_physicsGoalNetsEnabled)
+        return;
+
+    // While the struck post or crossbar is ringing (first 16 frames), transmit its harmonic vibration
+    // into the adjacent unpinned roof and side-curtain net nodes so the net shivers with the woodwork.
+    float elapsed = mesh.frameVibMaxTimer - mesh.frameVibTimer;
+    if (elapsed <= 16.0f) {
+        float decay = mesh.frameVibTimer / mesh.frameVibMaxTimer;
+        float oscVel = -decay * std::sin(elapsed * 1.95f) * 0.42f;
+        float vx = mesh.frameVibAmpX * oscVel;
+        float vy = mesh.frameVibAmpY * oscVel;
+        float vz = mesh.frameVibAmpZ * oscVel;
+
+        for (int r = 1; r <= 3 && r < kRows; ++r) {
+            float rowWeight = (4 - r) / 3.0f;
+            for (int c = 0; c < kCols; ++c) {
+                float u = static_cast<float>(c) / static_cast<float>(kCols - 1);
+                float colWeight = 0.0f;
+                if (mesh.frameVibPart == 0) {
+                    colWeight = 0.35f + 0.65f * std::sin(u * 3.14159265f);
+                } else if (mesh.frameVibPart < 0) {
+                    colWeight = std::max(0.0f, 1.0f - u * 2.2f);
+                } else {
+                    colWeight = std::max(0.0f, (u - 0.55f) * 2.2f);
+                }
+                if (colWeight > 0.01f) {
+                    auto& n = mesh.nodes[mainNodeIndex(mesh, r, c)];
+                    if (n.invMass > 0.0f) {
+                        float w = rowWeight * colWeight * n.invMass;
+                        n.x += vx * w;
+                        n.y += vy * w;
+                        n.z = std::max(0.0f, n.z + vz * w);
+                    }
+                }
+            }
+        }
+
+        if (mesh.frameVibPart != 0) {
+            for (int r = 0; r < kSideRows; ++r) {
+                for (int c = 1; c <= 3 && c < kSideCols; ++c) {
+                    int idx = (mesh.frameVibPart < 0)
+                        ? leftSideNodeIndex(mesh, r, c)
+                        : rightSideNodeIndex(mesh, r, c);
+                    auto& n = mesh.nodes[idx];
+                    if (n.invMass > 0.0f) {
+                        float w = ((4 - c) / 3.0f) * n.invMass;
+                        n.x += vx * w * 1.15f;
+                        n.y += vy * w * 0.85f;
+                        n.z = std::max(0.0f, n.z + vz * w * 0.65f);
+                    }
+                }
+            }
+        }
+    }
 }
 
 static void addSpring(GoalNetMesh& mesh, int a, int b, float stiffness, bool draw)
@@ -502,27 +761,50 @@ static void stepGoalNetReplayPhysics(GoalNetMesh& mesh, bool hasBall, float bx, 
                 : (mesh.prevBallVY > 0.25f || std::abs(mesh.prevBallVX) > 0.35f);
             float dotPrevCur = bvx * mesh.prevBallVX + bvy * mesh.prevBallVY;
 
-            if (insideGoalMouthY && prevSpeed > 0.55f && movingIntoGoal &&
+            // Check if the ball rebounded off the front goalpost or crossbar at the goal line during a replay
+            const float frontY = mesh.isTopGoal ? kTopGoalFrontY : kBottomGoalFrontY;
+            float projX = bx + mesh.prevBallVX;
+            float projY = by + mesh.prevBallVY;
+            float projZ = std::max(0.0f, bz + mesh.prevBallVZ);
+            bool nearFrontLine = std::abs(by - frontY) <= 5.5f || std::abs(projY - frontY) <= 4.5f;
+            bool hitLeftPost = std::abs(projX - kGoalLeftX) <= 4.5f && projZ <= kFrontHeightZ + 1.5f;
+            bool hitRightPost = std::abs(projX - kGoalRightX) <= 4.5f && projZ <= kFrontHeightZ + 1.5f;
+            bool hitBar = projX >= kGoalLeftX - 3.5f && projX <= kGoalRightX + 3.5f &&
+                projZ >= 10.5f && projZ <= kFrontHeightZ + 3.5f;
+
+            if (nearFrontLine && prevSpeed > 0.65f && movingIntoGoal &&
+                (hitLeftPost || hitRightPost || hitBar) &&
+                (curSpeed < prevSpeed * 0.75f || dotPrevCur <= 0.0f || (bvz * mesh.prevBallVZ) < 0.0f)) {
+                notifyGoalFrameImpact(mesh.isTopGoal ? 0 : 1, projX, frontY, projZ,
+                    mesh.prevBallVX, mesh.prevBallVY, mesh.prevBallVZ, hitBar && !hitLeftPost && !hitRightPost);
+                mesh.prevBallVX = 0.0f;
+                mesh.prevBallVY = 0.0f;
+                mesh.prevBallVZ = 0.0f;
+            } else if (insideGoalMouthY && prevSpeed > 0.55f && movingIntoGoal &&
                 (curSpeed < prevSpeed * 0.55f || dotPrevCur <= 0.0f)) {
-                float hitX = bx + mesh.prevBallVX * 1.35f;
-                float hitY = by + mesh.prevBallVY * 1.35f;
-                float hitZ = std::max(0.0f, bz + mesh.prevBallVZ);
-                constexpr float kImpactRadius = 19.5f;
-                for (auto& node : mesh.nodes) {
-                    interactNodeWithSphere(node, hitX, hitY, hitZ,
-                        mesh.prevBallVX * 1.4f, mesh.prevBallVY * 1.4f, mesh.prevBallVZ * 1.1f,
-                        kImpactRadius, 1.35f);
+                if (m_physicsGoalNetsEnabled) {
+                    float hitX = bx + mesh.prevBallVX * 1.35f;
+                    float hitY = by + mesh.prevBallVY * 1.35f;
+                    float hitZ = std::max(0.0f, bz + mesh.prevBallVZ);
+                    constexpr float kImpactRadius = 19.5f;
+                    for (auto& node : mesh.nodes) {
+                        interactNodeWithSphere(node, hitX, hitY, hitZ,
+                            mesh.prevBallVX * 1.4f, mesh.prevBallVY * 1.4f, mesh.prevBallVZ * 1.1f,
+                            kImpactRadius, 1.35f);
+                    }
                 }
                 mesh.prevBallVX = 0.0f;
                 mesh.prevBallVY = 0.0f;
                 mesh.prevBallVZ = 0.0f;
             } else if (curSpeed > 0.05f) {
-                float leadX = bx + bvx * 0.85f;
-                float leadY = by + bvy * 0.85f;
-                float leadZ = std::max(0.0f, bz + bvz * 0.5f);
-                for (auto& node : mesh.nodes) {
-                    interactNodeWithSphere(node, bx, by, bz, bvx, bvy, bvz, 11.0f, 0.45f);
-                    interactNodeWithSphere(node, leadX, leadY, leadZ, bvx, bvy, bvz, 15.5f, 0.65f);
+                if (m_physicsGoalNetsEnabled) {
+                    float leadX = bx + bvx * 0.85f;
+                    float leadY = by + bvy * 0.85f;
+                    float leadZ = std::max(0.0f, bz + bvz * 0.5f);
+                    for (auto& node : mesh.nodes) {
+                        interactNodeWithSphere(node, bx, by, bz, bvx, bvy, bvz, 11.0f, 0.45f);
+                        interactNodeWithSphere(node, leadX, leadY, leadZ, bvx, bvy, bvz, 15.5f, 0.65f);
+                    }
                 }
                 mesh.prevBallVX = bvx;
                 mesh.prevBallVY = bvy;
@@ -575,7 +857,9 @@ static void stepGoalNetReplayPhysics(GoalNetMesh& mesh, bool hasBall, float bx, 
     }
     mesh.prevReplayPlayers = std::move(currentNearbyPlayers);
 
-    integrateAndSolveGoalNet(mesh);
+    stepGoalFrameVibration(mesh);
+    if (m_physicsGoalNetsEnabled)
+        integrateAndSolveGoalNet(mesh);
 }
 
 struct ScreenMapper
@@ -757,12 +1041,31 @@ static void drawDynamicGoalNetShadow(SDL_Renderer *renderer, const ScreenMapper&
         }
     }
 
-    // 2. Soft multi-pass blurred goalpost & crossbar ground shadow
+    // 2. Soft multi-pass blurred goalpost & crossbar ground shadow (vibrates in sync when woodwork is struck!)
     const float frontY = mesh.isTopGoal ? kTopGoalFrontY : kBottomGoalFrontY;
+    float vibDX = 0.0f;
+    float vibDY = 0.0f;
+    float vibDZ = 0.0f;
+    if (m_ballAndGoalframeEffectsEnabled && mesh.frameVibTimer > 0.0f) {
+        float elapsed = mesh.frameVibMaxTimer - mesh.frameVibTimer;
+        float decay = mesh.frameVibTimer / mesh.frameVibMaxTimer;
+        float osc = decay * decay * std::cos(elapsed * 1.95f);
+        vibDX = mesh.frameVibAmpX * osc;
+        vibDY = mesh.frameVibAmpY * osc;
+        vibDZ = mesh.frameVibAmpZ * osc;
+    }
+
+    float lTopW = (mesh.frameVibPart < 0) ? 1.0f : ((mesh.frameVibPart == 0) ? 0.45f : 0.0f);
+    float rTopW = (mesh.frameVibPart > 0) ? 1.0f : ((mesh.frameVibPart == 0) ? 0.45f : 0.0f);
+
     SDL_FPoint postLB = mapper.project(kGoalLeftX, frontY, 0.0f);
-    SDL_FPoint postLTShadow = mapper.project(kGoalLeftX + kFrontHeightZ * kSunDirX, frontY + kFrontHeightZ * kSunDirY, 0.0f);
+    SDL_FPoint postLTShadow = mapper.project(
+        kGoalLeftX + vibDX * lTopW + (kFrontHeightZ + vibDZ * lTopW) * kSunDirX,
+        frontY + vibDY * lTopW + (kFrontHeightZ + vibDZ * lTopW) * kSunDirY, 0.0f);
     SDL_FPoint postRB = mapper.project(kGoalRightX, frontY, 0.0f);
-    SDL_FPoint postRTShadow = mapper.project(kGoalRightX + kFrontHeightZ * kSunDirX, frontY + kFrontHeightZ * kSunDirY, 0.0f);
+    SDL_FPoint postRTShadow = mapper.project(
+        kGoalRightX + vibDX * rTopW + (kFrontHeightZ + vibDZ * rTopW) * kSunDirX,
+        frontY + vibDY * rTopW + (kFrontHeightZ + vibDZ * rTopW) * kSunDirY, 0.0f);
 
     float outerShadowThick = std::max(1.2f, 0.95f * pixelScale);
     float innerShadowThick = std::max(0.7f, 0.48f * pixelScale);
@@ -851,18 +1154,34 @@ static void drawGoalNetLayer(const GoalNetMesh& mesh, uint8_t layer, float xOffs
         SDL_RenderDrawLineF(renderer, s_proj[sp.a].x, s_proj[sp.a].y, s_proj[sp.b].x, s_proj[sp.b].y);
     }
 
-    // 4. On the top overlay layer (layer == 1), draw the rigid 3D goalposts, crossbar, and rear stanchions
+    // 4. On the top overlay layer (layer == 1), draw the rigid/vibrating 3D goalposts, crossbar, and rear stanchions
     if (layer == 1) {
         const float frontY = mesh.isTopGoal ? kTopGoalFrontY : kBottomGoalFrontY;
         const float backY = mesh.isTopGoal ? kTopGoalBackY : kBottomGoalBackY;
         const float backHeightZ = mesh.isTopGoal ? kTopBackHeightZ : kBottomBackHeightZ;
         const float botBackY = mesh.isTopGoal ? (backY + 1.5f) : (backY + 2.0f);
 
+        float vibDX = 0.0f;
+        float vibDY = 0.0f;
+        float vibDZ = 0.0f;
+        bool vibrating = (m_ballAndGoalframeEffectsEnabled && mesh.frameVibTimer > 0.0f);
+        if (vibrating) {
+            float elapsed = mesh.frameVibMaxTimer - mesh.frameVibTimer;
+            float decay = mesh.frameVibTimer / mesh.frameVibMaxTimer;
+            float osc = decay * decay * std::cos(elapsed * 1.95f);
+            vibDX = mesh.frameVibAmpX * osc;
+            vibDY = mesh.frameVibAmpY * osc;
+            vibDZ = mesh.frameVibAmpZ * osc;
+        }
+
+        float lTopW = (mesh.frameVibPart < 0) ? 0.85f : ((mesh.frameVibPart == 0) ? 0.40f : 0.0f);
+        float rTopW = (mesh.frameVibPart > 0) ? 0.85f : ((mesh.frameVibPart == 0) ? 0.40f : 0.0f);
+
         // Dark rear stanchion support bars
-        SDL_FPoint stL0 = mapper.project(kGoalLeftX, frontY, kFrontHeightZ);
+        SDL_FPoint stL0 = mapper.project(kGoalLeftX + vibDX * lTopW, frontY + vibDY * lTopW, kFrontHeightZ + vibDZ * lTopW);
         SDL_FPoint stL1 = mapper.project(kGoalLeftX, backY, backHeightZ);
         SDL_FPoint stL2 = mapper.project(kGoalLeftX, botBackY, 0.0f);
-        SDL_FPoint stR0 = mapper.project(kGoalRightX, frontY, kFrontHeightZ);
+        SDL_FPoint stR0 = mapper.project(kGoalRightX + vibDX * rTopW, frontY + vibDY * rTopW, kFrontHeightZ + vibDZ * rTopW);
         SDL_FPoint stR1 = mapper.project(kGoalRightX, backY, backHeightZ);
         SDL_FPoint stR2 = mapper.project(kGoalRightX, botBackY, 0.0f);
 
@@ -873,29 +1192,73 @@ static void drawGoalNetLayer(const GoalNetMesh& mesh, uint8_t layer, float xOffs
         drawThickSegment(renderer, stR0, stR1, stanchionThick, stanchionColor);
         drawThickSegment(renderer, stR1, stR2, stanchionThick, stanchionColor);
 
-        // Slender cylindrical 3D-shaded front goalposts and crossbar (no dark border on inside section, seamless corner join)
+        // Slender cylindrical 3D-shaded front goalposts and crossbar (with dynamic flex vibration when struck)
         SDL_FPoint postLB = mapper.project(kGoalLeftX, frontY, 0.0f);
-        SDL_FPoint postLT = mapper.project(kGoalLeftX, frontY, kFrontHeightZ);
+        SDL_FPoint postLT = stL0;
         SDL_FPoint postRB = mapper.project(kGoalRightX, frontY, 0.0f);
-        SDL_FPoint postRT = mapper.project(kGoalRightX, frontY, kFrontHeightZ);
+        SDL_FPoint postRT = stR0;
 
         float postHalfW = std::max(1.1f, 0.56f * pixelScale);
 
-        // Left & right vertical cylindrical goalposts
-        drawCylindricalBar(renderer,
-            postLB.x - postHalfW, postLT.y,
-            postLB.x + postHalfW, postLB.y,
-            false, -1);
-        drawCylindricalBar(renderer,
-            postRB.x - postHalfW, postRT.y,
-            postRB.x + postHalfW, postRB.y,
-            false, +1);
+        // Left vertical cylindrical goalpost (segmented flex when vibrating)
+        if (vibrating && mesh.frameVibPart < 0) {
+            constexpr int kPostSegs = 4;
+            for (int s = 0; s < kPostSegs; ++s) {
+                float t0 = static_cast<float>(s) / kPostSegs;
+                float t1 = static_cast<float>(s + 1) / kPostSegs;
+                float bow0 = std::sin(t0 * 3.14159265f) * 1.15f + t0 * lTopW;
+                float bow1 = std::sin(t1 * 3.14159265f) * 1.15f + t1 * lTopW;
+                SDL_FPoint p0 = mapper.project(kGoalLeftX + vibDX * bow0, frontY + vibDY * bow0, kFrontHeightZ * t0);
+                SDL_FPoint p1 = mapper.project(kGoalLeftX + vibDX * bow1, frontY + vibDY * bow1, kFrontHeightZ * t1);
+                float midX = 0.5f * (p0.x + p1.x);
+                drawCylindricalBar(renderer, midX - postHalfW, std::min(p0.y, p1.y) - 0.5f, midX + postHalfW, std::max(p0.y, p1.y) + 0.5f, false, -1);
+            }
+        } else {
+            drawCylindricalBar(renderer,
+                postLB.x - postHalfW, postLT.y,
+                postLB.x + postHalfW, postLB.y,
+                false, -1);
+        }
 
-        // Horizontal cylindrical crossbar spanning across both posts
-        drawCylindricalBar(renderer,
-            postLT.x - postHalfW, postLT.y - postHalfW,
-            postRT.x + postHalfW, postRT.y + postHalfW,
-            true, 0);
+        // Right vertical cylindrical goalpost (segmented flex when vibrating)
+        if (vibrating && mesh.frameVibPart > 0) {
+            constexpr int kPostSegs = 4;
+            for (int s = 0; s < kPostSegs; ++s) {
+                float t0 = static_cast<float>(s) / kPostSegs;
+                float t1 = static_cast<float>(s + 1) / kPostSegs;
+                float bow0 = std::sin(t0 * 3.14159265f) * 1.15f + t0 * rTopW;
+                float bow1 = std::sin(t1 * 3.14159265f) * 1.15f + t1 * rTopW;
+                SDL_FPoint p0 = mapper.project(kGoalRightX + vibDX * bow0, frontY + vibDY * bow0, kFrontHeightZ * t0);
+                SDL_FPoint p1 = mapper.project(kGoalRightX + vibDX * bow1, frontY + vibDY * bow1, kFrontHeightZ * t1);
+                float midX = 0.5f * (p0.x + p1.x);
+                drawCylindricalBar(renderer, midX - postHalfW, std::min(p0.y, p1.y) - 0.5f, midX + postHalfW, std::max(p0.y, p1.y) + 0.5f, false, +1);
+            }
+        } else {
+            drawCylindricalBar(renderer,
+                postRB.x - postHalfW, postRT.y,
+                postRB.x + postHalfW, postRB.y,
+                false, +1);
+        }
+
+        // Horizontal cylindrical crossbar (segmented flex bow when vibrating)
+        if (vibrating && mesh.frameVibPart == 0) {
+            constexpr int kBarSegs = 6;
+            for (int s = 0; s < kBarSegs; ++s) {
+                float u0 = static_cast<float>(s) / kBarSegs;
+                float u1 = static_cast<float>(s + 1) / kBarSegs;
+                float bow0 = 0.40f + 0.95f * std::sin(u0 * 3.14159265f);
+                float bow1 = 0.40f + 0.95f * std::sin(u1 * 3.14159265f);
+                SDL_FPoint p0 = mapper.project(kGoalLeftX + u0 * kGoalWidth + vibDX * bow0, frontY + vibDY * bow0, kFrontHeightZ + vibDZ * bow0);
+                SDL_FPoint p1 = mapper.project(kGoalLeftX + u1 * kGoalWidth + vibDX * bow1, frontY + vibDY * bow1, kFrontHeightZ + vibDZ * bow1);
+                float midY = 0.5f * (p0.y + p1.y);
+                drawCylindricalBar(renderer, std::min(p0.x, p1.x) - 0.5f, midY - postHalfW, std::max(p0.x, p1.x) + 0.5f, midY + postHalfW, true, 0);
+            }
+        } else {
+            drawCylindricalBar(renderer,
+                postLT.x - postHalfW, postLT.y - postHalfW,
+                postRT.x + postHalfW, postRT.y + postHalfW,
+                true, 0);
+        }
 
         // Seamless mitered white corner joints where vertical posts meet the horizontal crossbar
         SDL_SetRenderDrawColor(renderer, 245, 248, 250, 255);
@@ -913,6 +1276,29 @@ static void drawGoalNetLayer(const GoalNetMesh& mesh, uint8_t layer, float xOffs
         };
         SDL_RenderFillRectF(renderer, &leftCornerJoin);
         SDL_RenderFillRectF(renderer, &rightCornerJoin);
+
+        // Specular impact ring at the exact point the ball struck the goalpost or crossbar
+        if (m_ballAndGoalframeEffectsEnabled && mesh.impactFlashTimer > 0.0f) {
+            float t = 1.0f - (mesh.impactFlashTimer / 10.0f);
+            SDL_FPoint hitPt = mapper.project(mesh.impactX, mesh.impactY, mesh.impactZ);
+            float radius = (2.2f + t * 7.5f) * pixelScale;
+            uint8_t ringAlpha = static_cast<uint8_t>(std::clamp((1.0f - t) * 235.0f, 0.0f, 235.0f));
+            SDL_SetRenderDrawColor(renderer, 255, 255, 255, ringAlpha);
+            constexpr int kRingSegs = 16;
+            for (int i = 0; i < kRingSegs; ++i) {
+                float a0 = (i * 2.0f * 3.14159265f) / kRingSegs;
+                float a1 = ((i + 1) * 2.0f * 3.14159265f) / kRingSegs;
+                SDL_RenderDrawLineF(renderer,
+                    hitPt.x + std::cos(a0) * radius, hitPt.y + std::sin(a0) * radius * 0.8f,
+                    hitPt.x + std::cos(a1) * radius, hitPt.y + std::sin(a1) * radius * 0.8f);
+            }
+            if (t < 0.45f) {
+                float coreR = (1.6f - t * 2.0f) * pixelScale;
+                SDL_SetRenderDrawColor(renderer, 255, 255, 255, static_cast<uint8_t>((1.0f - t * 2.0f) * 220.0f));
+                SDL_FRect coreRect{ hitPt.x - coreR, hitPt.y - coreR, coreR * 2.0f, coreR * 2.0f };
+                SDL_RenderFillRectF(renderer, &coreRect);
+            }
+        }
     }
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
@@ -940,18 +1326,42 @@ void resetGoalNets()
         mesh.prevBallVY = 0.0f;
         mesh.prevBallVZ = 0.0f;
         mesh.prevReplayPlayers.clear();
+        mesh.frameVibTimer = 0.0f;
+        mesh.impactFlashTimer = 0.0f;
         for (auto& node : mesh.nodes) {
             node.x = node.prevX = node.restX;
             node.y = node.prevY = node.restY;
             node.z = node.prevZ = node.restZ;
         }
     }
+    m_ballTrail.clear();
+    m_particles.clear();
+    m_prevFeedbackValid = false;
 }
 
 void updateGoalNets()
 {
     if (!m_initialized)
         initGoalNets();
+
+    if (m_ballAndGoalframeEffectsEnabled) {
+        const auto& ball = swos.ballSprite;
+        float bx = ball.x.asFloat();
+        float by = ball.y.asFloat();
+        float bz = std::max(0.0f, ball.z.asFloat());
+        float bvx = ball.deltaX.asFloat();
+        float bvy = ball.deltaY.asFloat();
+        float bvz = ball.deltaZ.asFloat();
+        float activeSpin = 0.0f;
+        if (swos.topTeamData.leftSpin || swos.bottomTeamData.leftSpin)
+            activeSpin = -0.85f;
+        else if (swos.topTeamData.rightSpin || swos.bottomTeamData.rightSpin)
+            activeSpin = 0.85f;
+        stepBallFeedback(bx, by, bz, bvx, bvy, bvz, activeSpin);
+    }
+
+    stepGoalFrameVibration(m_goalNets[0]);
+    stepGoalFrameVibration(m_goalNets[1]);
 
     if (!m_physicsGoalNetsEnabled)
         return;
@@ -968,7 +1378,16 @@ void updateGoalNetsFromReplay(bool hasBall, float ballX, float ballY, float ball
     if (!m_initialized)
         initGoalNets();
 
-    if (!m_physicsGoalNetsEnabled)
+    if (hasBall && m_ballAndGoalframeEffectsEnabled) {
+        float bvx = m_prevFeedbackValid ? (ballX - m_prevFeedbackX) : 0.0f;
+        float bvy = m_prevFeedbackValid ? (ballY - m_prevFeedbackY) : 0.0f;
+        float bvz = m_prevFeedbackValid ? (ballZ - m_prevFeedbackZ) : 0.0f;
+        if (std::abs(bvx) > 45.0f || std::abs(bvy) > 45.0f)
+            bvx = bvy = bvz = 0.0f;
+        stepBallFeedback(ballX, ballY, ballZ, bvx, bvy, bvz, 0.0f);
+    }
+
+    if (!m_physicsGoalNetsEnabled && !m_ballAndGoalframeEffectsEnabled)
         return;
 
     stepGoalNetReplayPhysics(m_goalNets[0], hasBall, ballX, ballY, ballZ, players, numPlayers);
@@ -988,6 +1407,54 @@ void notifyGoalNetBallImpact(int goalIndex, float hitX, float hitY, float hitZ,
     constexpr float kImpactRadius = 19.0f;
     for (auto& node : mesh.nodes) {
         interactNodeWithSphere(node, hitX, hitY, hitZ, velX, velY, velZ, kImpactRadius, 1.35f);
+    }
+}
+
+void notifyGoalFrameImpact(int goalIndex, float hitX, float hitY, float hitZ,
+    float velX, float velY, float velZ, bool hitCrossbar)
+{
+    if (!m_initialized)
+        initGoalNets();
+
+    if (goalIndex < 0 || goalIndex > 1 || !m_ballAndGoalframeEffectsEnabled)
+        return;
+
+    auto& mesh = m_goalNets[goalIndex];
+    int part = hitCrossbar ? 0 : ((hitX < 334.0f) ? -1 : 1);
+    float speed = std::sqrt(velX * velX + velY * velY + velZ * velZ);
+    float mag = std::clamp(0.85f + speed * 0.34f, 0.95f, 2.45f);
+
+    float dirX = (speed > 0.05f) ? (velX / speed) : 0.0f;
+    float dirY = (speed > 0.05f) ? (velY / speed) : (mesh.isTopGoal ? -1.0f : 1.0f);
+    float dirZ = (speed > 0.05f) ? (velZ / speed) : (hitCrossbar ? 0.65f : 0.0f);
+    if (part != 0 && std::abs(dirX) < 0.35f)
+        dirX = (part < 0) ? -0.65f : 0.65f;
+
+    mesh.frameVibMaxTimer = 24.0f;
+    mesh.frameVibTimer = 24.0f;
+    mesh.frameVibPart = part;
+    mesh.frameVibAmpX = dirX * mag;
+    mesh.frameVibAmpY = dirY * mag * 0.75f;
+    mesh.frameVibAmpZ = (hitCrossbar ? std::max(0.45f, std::abs(dirZ)) : dirZ * 0.4f) * mag;
+
+    const float frontY = mesh.isTopGoal ? kTopGoalFrontY : kBottomGoalFrontY;
+    mesh.impactX = (part < 0) ? kGoalLeftX : ((part > 0) ? kGoalRightX : std::clamp(hitX, kGoalLeftX, kGoalRightX));
+    mesh.impactY = frontY;
+    mesh.impactZ = hitCrossbar ? kFrontHeightZ : std::clamp(hitZ, 1.0f, kFrontHeightZ);
+    mesh.impactFlashTimer = 10.0f;
+
+    spawnWoodworkImpactParticles(mesh.impactX, mesh.impactY, mesh.impactZ, -dirX, -dirY);
+
+    // Transmit an immediate shockwave ripple from the struck goalpost/crossbar into the attached 3D net
+    if (m_physicsGoalNetsEnabled) {
+        float netPushY = (mesh.isTopGoal ? -1.0f : 1.0f) * std::max(1.8f, std::abs(velY) * 0.85f);
+        float netPushX = (part < 0) ? -std::max(1.2f, std::abs(velX)) : ((part > 0) ? std::max(1.2f, std::abs(velX)) : velX * 0.7f);
+        float netPushZ = hitCrossbar ? std::max(1.0f, std::abs(velZ)) : velZ * 0.5f;
+        constexpr float kFrameShockRadius = 26.0f;
+        for (auto& node : mesh.nodes) {
+            interactNodeWithSphere(node, mesh.impactX, mesh.impactY, mesh.impactZ,
+                netPushX, netPushY, netPushZ, kFrameShockRadius, 1.05f);
+        }
     }
 }
 
@@ -1039,6 +1506,180 @@ void drawBottomGoalOverlayNet(float xOffset, float yOffset)
     drawGoalNetLayer(m_goalNets[1], 1, xOffset, yOffset);
 }
 
+void drawBallGroundEffects(float xOffset, float yOffset)
+{
+#ifdef SWOS_TEST
+    (void)xOffset;
+    (void)yOffset;
+    return;
+#else
+    if (!m_ballAndGoalframeEffectsEnabled || m_ballTrail.size() < 2)
+        return;
+
+    auto renderer = getRenderer();
+    if (!renderer)
+        return;
+
+    int pitchType = getPitchType();
+    // Draw wet/muddy/frozen grass skid wake when the ball rolls/skids fast near the turf
+    if (pitchType > 2)
+        return;
+
+    ScreenMapper mapper = makeScreenMapper(xOffset, yOffset);
+    float pixelScale = std::max(1.0f, mapper.scale * mapper.zoom);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+    for (size_t i = 1; i < m_ballTrail.size(); ++i) {
+        const auto& p0 = m_ballTrail[i - 1];
+        const auto& p1 = m_ballTrail[i];
+        if (p0.z > 1.35f || p1.z > 1.35f || p1.speed < 1.85f)
+            continue;
+        if (std::abs(p1.x - p0.x) > 25.0f || std::abs(p1.y - p0.y) > 25.0f)
+            continue;
+
+        float frac = static_cast<float>(i) / static_cast<float>(m_ballTrail.size());
+        float alphaScale = frac * p1.life * std::clamp((p1.speed - 1.7f) / 2.8f, 0.15f, 1.0f);
+        SDL_FPoint s0 = mapper.project(p0.x, p0.y, 0.0f);
+        SDL_FPoint s1 = mapper.project(p1.x, p1.y, 0.0f);
+
+        SDL_Color wakeColor;
+        if (pitchType == 2) { // Wet pitch dark water wake
+            wakeColor = { 14, 46, 12, static_cast<uint8_t>(55.0f * alphaScale) };
+        } else if (pitchType == 1) { // Muddy pitch rut wake
+            wakeColor = { 56, 38, 18, static_cast<uint8_t>(68.0f * alphaScale) };
+        } else { // Frozen pitch frost wake
+            wakeColor = { 215, 236, 252, static_cast<uint8_t>(58.0f * alphaScale) };
+        }
+        float halfW = std::max(0.75f, (0.45f + 0.55f * frac) * pixelScale);
+        drawThickSegment(renderer, s0, s1, halfW, wakeColor);
+    }
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+#endif
+}
+
+void drawBallAirEffects(float xOffset, float yOffset)
+{
+#ifdef SWOS_TEST
+    (void)xOffset;
+    (void)yOffset;
+    return;
+#else
+    if (!m_ballAndGoalframeEffectsEnabled)
+        return;
+
+    auto renderer = getRenderer();
+    if (!renderer)
+        return;
+
+    ScreenMapper mapper = makeScreenMapper(xOffset, yOffset);
+    float pixelScale = std::max(1.0f, mapper.scale * mapper.zoom);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+    // 1. High-velocity shot & aftertouch spin vapor ribbon following the ball's 3D trajectory
+    if (m_ballTrail.size() >= 2) {
+        for (size_t i = 1; i < m_ballTrail.size(); ++i) {
+            const auto& p0 = m_ballTrail[i - 1];
+            const auto& p1 = m_ballTrail[i];
+            float spinMag = std::abs(p1.spinCurl);
+            if (p1.speed < 2.25f && spinMag < 0.15f)
+                continue;
+            if (std::abs(p1.x - p0.x) > 25.0f || std::abs(p1.y - p0.y) > 25.0f)
+                continue;
+
+            float frac = static_cast<float>(i) / static_cast<float>(m_ballTrail.size());
+            float speedFactor = std::clamp((p1.speed - 2.0f) / 3.2f, 0.0f, 1.0f);
+            float intensity = std::clamp(speedFactor + spinMag * 0.55f, 0.0f, 1.0f) * frac * p1.life;
+            if (intensity <= 0.03f)
+                continue;
+
+            SDL_FPoint s0 = mapper.project(p0.x, p0.y, p0.z + 1.8f);
+            SDL_FPoint s1 = mapper.project(p1.x, p1.y, p1.z + 1.8f);
+
+            float outerW = std::max(0.8f, (0.4f + 0.95f * frac) * pixelScale);
+            float coreW = std::max(0.45f, (0.2f + 0.45f * frac) * pixelScale);
+
+            uint8_t outerAlpha = static_cast<uint8_t>(std::clamp(intensity * 78.0f, 8.0f, 85.0f));
+            uint8_t coreAlpha = static_cast<uint8_t>(std::clamp(intensity * 135.0f, 12.0f, 145.0f));
+
+            drawThickSegment(renderer, s0, s1, outerW, SDL_Color{ 225, 240, 255, outerAlpha });
+            drawThickSegment(renderer, s0, s1, coreW, SDL_Color{ 252, 254, 255, coreAlpha });
+
+            // Curved aftertouch vortex edge filament when spin/swerve is active
+            if (spinMag >= 0.15f) {
+                float dx = s1.x - s0.x;
+                float dy = s1.y - s0.y;
+                float len = std::sqrt(dx * dx + dy * dy);
+                if (len > 0.5f) {
+                    float nx = (-dy / len) * (p1.spinCurl >= 0.0f ? 1.0f : -1.0f);
+                    float ny = (dx / len) * (p1.spinCurl >= 0.0f ? 1.0f : -1.0f);
+                    float curlOffset = (0.85f + 0.75f * std::sin(frac * 4.5f)) * pixelScale;
+                    uint8_t curlAlpha = static_cast<uint8_t>(std::clamp(intensity * spinMag * 125.0f, 15.0f, 130.0f));
+                    SDL_SetRenderDrawColor(renderer, 210, 238, 255, curlAlpha);
+                    SDL_RenderDrawLineF(renderer,
+                        s0.x + nx * curlOffset, s0.y + ny * curlOffset,
+                        s1.x + nx * curlOffset, s1.y + ny * curlOffset);
+                }
+            }
+        }
+    }
+
+    // 2. Render 3D surface spray & woodwork impact micro-particles
+    for (const auto& p : m_particles) {
+        if (p.life <= 0.0f)
+            continue;
+        SDL_FPoint sp = mapper.project(p.x, p.y, p.z);
+        float sz = std::max(1.0f, p.size * p.life * pixelScale * 0.75f);
+        uint8_t alpha = static_cast<uint8_t>(std::clamp(p.a * p.life, 0.0f, 255.0f));
+        SDL_SetRenderDrawColor(renderer, p.r, p.g, p.b, alpha);
+        SDL_FRect r{ sp.x - sz * 0.5f, sp.y - sz * 0.5f, sz, sz };
+        SDL_RenderFillRectF(renderer, &r);
+    }
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+#endif
+}
+
+void drawGoalFrameImpactOverlay(int goalIndex, float xOffset, float yOffset)
+{
+#ifdef SWOS_TEST
+    (void)goalIndex;
+    (void)xOffset;
+    (void)yOffset;
+    return;
+#else
+    if (!m_ballAndGoalframeEffectsEnabled || goalIndex < 0 || goalIndex > 1)
+        return;
+    const auto& mesh = m_goalNets[goalIndex];
+    if (mesh.impactFlashTimer <= 0.0f)
+        return;
+
+    auto renderer = getRenderer();
+    if (!renderer)
+        return;
+
+    ScreenMapper mapper = makeScreenMapper(xOffset, yOffset);
+    float pixelScale = std::max(1.0f, mapper.scale * mapper.zoom);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+    float t = 1.0f - (mesh.impactFlashTimer / 10.0f);
+    SDL_FPoint hitPt = mapper.project(mesh.impactX, mesh.impactY, mesh.impactZ);
+    float radius = (2.2f + t * 7.5f) * pixelScale;
+    uint8_t ringAlpha = static_cast<uint8_t>(std::clamp((1.0f - t) * 235.0f, 0.0f, 235.0f));
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, ringAlpha);
+    constexpr int kRingSegs = 16;
+    for (int i = 0; i < kRingSegs; ++i) {
+        float a0 = (i * 2.0f * 3.14159265f) / kRingSegs;
+        float a1 = ((i + 1) * 2.0f * 3.14159265f) / kRingSegs;
+        SDL_RenderDrawLineF(renderer,
+            hitPt.x + std::cos(a0) * radius, hitPt.y + std::sin(a0) * radius * 0.8f,
+            hitPt.x + std::cos(a1) * radius, hitPt.y + std::sin(a1) * radius * 0.8f);
+    }
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+#endif
+}
+
 bool getPhysicsGoalNets()
 {
     return m_physicsGoalNetsEnabled;
@@ -1047,6 +1688,24 @@ bool getPhysicsGoalNets()
 void setPhysicsGoalNets(bool enabled)
 {
     m_physicsGoalNetsEnabled = enabled;
+}
+
+bool getBallAndGoalframeEffects()
+{
+    return m_ballAndGoalframeEffectsEnabled;
+}
+
+void setBallAndGoalframeEffects(bool enabled)
+{
+    m_ballAndGoalframeEffectsEnabled = enabled;
+    if (!enabled) {
+        m_ballTrail.clear();
+        m_particles.clear();
+        for (auto& mesh : m_goalNets) {
+            mesh.frameVibTimer = 0.0f;
+            mesh.impactFlashTimer = 0.0f;
+        }
+    }
 }
 
 GoalNetTestState getGoalNetTestState(int goalIndex)
@@ -1060,6 +1719,7 @@ GoalNetTestState getGoalNetTestState(int goalIndex)
 
     const auto& mesh = m_goalNets[goalIndex];
     st.totalNodes = static_cast<int>(mesh.nodes.size());
+    st.frameVibrationTimer = mesh.frameVibTimer;
     for (const auto& n : mesh.nodes) {
         if (n.invMass <= 0.0f) {
             ++st.pinnedNodes;

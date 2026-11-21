@@ -71,6 +71,7 @@ static const char kShowReplayPercentageKey[] = "showReplayPercentage";
 static const char kGameStyleKey[] = "gameStyle";
 static const char kShowPreMatchMenusKey[] = "preMatchMenus";
 static const char kPhysicsGoalNetsKey[] = "physicsGoalNets";
+static const char kBallAndGoalframeEffectsKey[] = "ballAndGoalframeEffects";
 
 static const std::array<OptionVariable<int16_t>, 5> kStandardOptions = {
     "gameLength",  &swos.g_gameLength, 0, 3, 0,
@@ -80,7 +81,7 @@ static const std::array<OptionVariable<int16_t>, 5> kStandardOptions = {
     "pitchType", &swos.g_pitchType, -2, 6, 4,
 };
 
-static const std::array<OptionAccessor<bool>, 14> kBoolOptions = {
+static const std::array<OptionAccessor<bool>, 15> kBoolOptions = {
     soundEnabled, initSoundEnabled, kAudioSection, kSoundEnabledKey, true,
     musicEnabled, initMusicEnabled, kAudioSection, kMusicEnabledKey, true,
     commentaryEnabled, setCommentaryEnabled, kAudioSection, kCommentaryEnabledKey, true,
@@ -95,6 +96,7 @@ static const std::array<OptionAccessor<bool>, 14> kBoolOptions = {
     menuGradientFillEnabled, enableMenuGradientFill, kVideoSection, kMenuItemGradientBackground, true,
     showPreMatchMenus, setPreMatchMenus, kStandardSection, kShowPreMatchMenusKey, true,
     getPhysicsGoalNets, setPhysicsGoalNets, kGameplaySection, kPhysicsGoalNetsKey, true,
+    getBallAndGoalframeEffects, setBallAndGoalframeEffects, kGameplaySection, kBallAndGoalframeEffectsKey, true,
 };
 
 static const std::array<OptionAccessor<int>, 3> kIntOptions = {

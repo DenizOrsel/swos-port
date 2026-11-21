@@ -140,6 +140,26 @@ void SwosDataLayoutTest::verifyPhysicsGoalNetSimulation()
     assertTrue(botReplayHit.maxDisplacement > 1.0f);
     assertTrue(botReplayHit.totalKineticEnergy > 0.05f);
 
+    // Verify ball & goalframe feedback toggle (on by default) and post/crossbar impact vibration + net shockwave
+    bool prevBallFx = getBallAndGoalframeEffects();
+    assertTrue(prevBallFx);
+    resetGoalNets();
+    notifyGoalFrameImpact(0, 299.5f, 129.0f, 9.0f, -1.2f, -4.8f, 0.3f, false);
+    auto topPostHit = getGoalNetTestState(0);
+    assertTrue(topPostHit.frameVibrationTimer > 20.0f);
+    assertTrue(topPostHit.maxDisplacement > 0.2f);
+    assertTrue(topPostHit.totalKineticEnergy > 0.01f);
+
+    for (int f = 0; f < 30; ++f) {
+        updateGoalNets();
+    }
+    auto topPostSettled = getGoalNetTestState(0);
+    assertTrue(topPostSettled.frameVibrationTimer < 0.001f);
+
+    setBallAndGoalframeEffects(false);
+    assertFalse(getBallAndGoalframeEffects());
+    setBallAndGoalframeEffects(prevBallFx);
+
     // Verify toggle off pauses physics updates
     setPhysicsGoalNets(false);
     assertFalse(getPhysicsGoalNets());

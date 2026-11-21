@@ -84,7 +84,7 @@ Menu gameplayOptionsMenu
     defaultHeight: kOptionHeight
     initialEntry: gameLength
 
-    kGamePlayOptionsStartY = kOptionsStartY - kOptionHeight
+    kGamePlayOptionsStartY = kOptionsStartY - 2 * kOptionHeight + 5
 
     Entry header {
         x: kBaseX
@@ -116,6 +116,7 @@ Menu gameplayOptionsMenu
     Entry { text: "SHOW PRE-MATCH MENUS" }
     Entry { text: "GAME STYLE" }
     Entry { text: "PHYSICS GOAL NETS" }
+    Entry { text: "BALL & FRAME EFFECTS" }
 
     // start of column 2, where the actual controls are
     defaultX: kOptionsColumn2X
@@ -187,6 +188,12 @@ Menu gameplayOptionsMenu
 
     Entry physicsGoalNets {
         boolOption: getPhysicsGoalNets, setPhysicsGoalNets, "physics goal nets"
+        upEntry: <
+        downEntry: >
+    }
+
+    Entry ballAndGoalframeEffects {
+        boolOption: getBallAndGoalframeEffects, setBallAndGoalframeEffects, "ball and goalframe effects"
         upEntry: <
         downEntry: >
     }

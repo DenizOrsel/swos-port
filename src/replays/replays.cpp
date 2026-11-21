@@ -455,6 +455,7 @@ static bool fetchAndRenderFrame(bool isReplay, bool advancePhysics)
     const float camX = frameData.cameraX.asFloat();
     const float camY = frameData.cameraY.asFloat();
     const bool physicsNets = getPhysicsGoalNets();
+    const bool ballFrameEffects = getBallAndGoalframeEffects();
 
     bool hasBall = false;
     bool hasBallShadow = false;
@@ -471,7 +472,7 @@ static bool fetchAndRenderFrame(bool isReplay, bool advancePhysics)
                 obj.x += sprite.centerXF + sprite.xOffsetF;
                 obj.y += sprite.centerYF + sprite.yOffsetF;
             }
-            if (advancePhysics && physicsNets) {
+            if (advancePhysics && (physicsNets || ballFrameEffects)) {
                 if (obj.imageIndex >= kBallSprite1 && obj.imageIndex <= kBallSprite4) {
                     hasBall = true;
                     ballScreenX = obj.x;
@@ -491,7 +492,7 @@ static bool fetchAndRenderFrame(bool isReplay, bool advancePhysics)
         frameObjects.push_back(obj);
     }
 
-    if (advancePhysics && physicsNets) {
+    if (advancePhysics && (physicsNets || ballFrameEffects)) {
         float ballWorldX = 0.0f;
         float ballWorldY = 0.0f;
         float ballWorldZ = 0.0f;
@@ -516,6 +517,9 @@ static bool fetchAndRenderFrame(bool isReplay, bool advancePhysics)
         drawTopGoalBackNet(xOffset, yOffset);
         drawBottomGoalBackNet(xOffset, yOffset);
     }
+    if (ballFrameEffects) {
+        drawBallGroundEffects(xOffset, yOffset);
+    }
 
     GameStats stats;
     bool gotStats = false;
@@ -523,6 +527,9 @@ static bool fetchAndRenderFrame(bool isReplay, bool advancePhysics)
     for (const auto& item : frameObjects) {
         switch (item.type) {
         case ReplayDataStorage::ObjectType::kSprite:
+            if (ballFrameEffects && item.imageIndex >= kBallSprite1 && item.imageIndex <= kBallSprite4) {
+                drawBallAirEffects(xOffset, yOffset);
+            }
             if (physicsNets && (item.imageIndex == kTopGoalSprite || item.imageIndex == kBottomGoalSprite)) {
                 if (item.imageIndex == kTopGoalSprite)
                     drawTopGoalOverlayNet(xOffset, yOffset);
@@ -530,6 +537,9 @@ static bool fetchAndRenderFrame(bool isReplay, bool advancePhysics)
                     drawBottomGoalOverlayNet(xOffset, yOffset);
             } else {
                 drawSprite(item.imageIndex, item.x, item.y, true, xOffset, yOffset);
+                if (ballFrameEffects && (item.imageIndex == kTopGoalSprite || item.imageIndex == kBottomGoalSprite)) {
+                    drawGoalFrameImpactOverlay(item.imageIndex == kTopGoalSprite ? 0 : 1, xOffset, yOffset);
+                }
             }
             break;
 
