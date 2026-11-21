@@ -1,4 +1,5 @@
 #include "hotseatInternal.h"
+#include "llmFeatures.h"
 
 namespace SWOS {
 
@@ -78,6 +79,7 @@ void cseg_8B8B8_OnEnter()
 void cseg_94DB1_OnEnter()
 {
     HotseatCareerManager::get().onWeeklyTickForAllPlayers();
+    onCareerWeeklyTickLlm();
 }
 
 void cseg_3C07C_OnEnter()

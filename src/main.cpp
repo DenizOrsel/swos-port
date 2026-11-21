@@ -8,6 +8,7 @@
 #include "file.h"
 #include "crash.h"
 #include "joypads.h"
+#include "llmClient.h"
 
 static void turnOnDebugHeap()
 {
@@ -43,6 +44,7 @@ int main(int argc, char **argv)
 
     installCrashHandler();
     loadOptions();
+    initLlmClient();
     parseCommandLine(argc, argv);   // parse command line options again to override ini settings
     setSdlHints();
 
@@ -59,6 +61,7 @@ int main(int argc, char **argv)
 
     atexit(finishRendering);
     atexit(saveOptions);        // must be saved only after finishRendering
+    atexit(shutdownLlmClient);
     atexit(finishAudio);
     atexit(IMG_Quit);
 

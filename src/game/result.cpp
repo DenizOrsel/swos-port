@@ -519,3 +519,17 @@ static bool bumpTeamGoals(int teamNum)
 
     return true;
 }
+
+std::string getMatchScorersSummary(int teamNum)
+{
+    const auto& lines = (teamNum == 1) ? m_team1ScorerLines : m_team2ScorerLines;
+    std::string summary;
+    for (const auto& line : lines) {
+        if (line[0] == '\0')
+            continue;
+        if (!summary.empty())
+            summary += "; ";
+        summary += line.data();
+    }
+    return summary;
+}

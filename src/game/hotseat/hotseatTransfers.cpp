@@ -1,5 +1,6 @@
 #include "hotseatInternal.h"
 #include "continueAbortMenu.h"
+#include "llmFeatures.h"
 
 using namespace HotseatInternal;
 
@@ -701,6 +702,11 @@ bool HotseatCareerManager::processPendingOffersForActivePlayer()
             snprintf(targetStr, sizeof(targetStr), "%s", offer.playerName);
         }
 
+        std::string voiceQuote = fetchTransferNegotiationVoice(
+            m_players[offer.fromPlayerIndex].teamName.c_str(),
+            m_players[offer.toPlayerIndex].teamName.c_str(),
+            targetStr, termStr, offer.isCounterOffer);
+
         if (!offer.isCounterOffer) {
             snprintf(line1, sizeof(line1), "PLAYER %d (%s) BIDS",
                      offer.fromPlayerIndex + 1, m_players[offer.fromPlayerIndex].teamName.c_str());
@@ -708,7 +714,14 @@ bool HotseatCareerManager::processPendingOffersForActivePlayer()
             snprintf(line3, sizeof(line3), "OFFER: %s", termStr);
             snprintf(line4, sizeof(line4), "ACCEPT THIS OFFER?");
 
-            std::vector<const char*> lines = { line1, line2, line3, line4 };
+            std::vector<const char*> lines = { line1, line2, line3 };
+            std::vector<std::string> wrappedVoice;
+            if (!voiceQuote.empty()) {
+                wrappedVoice = wrapTextForSwosPrompt(voiceQuote, 40, 2);
+                for (const auto& qLine : wrappedVoice)
+                    lines.push_back(qLine.c_str());
+            }
+            lines.push_back(line4);
             bool accept = showContinueAbortPrompt("TRANSFER OFFER", "ACCEPT", "DECLINE / COUNTER", lines, false);
             if (accept) {
                 std::string reason;
@@ -751,7 +764,14 @@ bool HotseatCareerManager::processPendingOffersForActivePlayer()
             snprintf(line3, sizeof(line3), "NEW TERMS: %s", termStr);
             snprintf(line4, sizeof(line4), "ACCEPT COUNTER-OFFER?");
 
-            std::vector<const char*> lines = { line1, line2, line3, line4 };
+            std::vector<const char*> lines = { line1, line2, line3 };
+            std::vector<std::string> wrappedVoice;
+            if (!voiceQuote.empty()) {
+                wrappedVoice = wrapTextForSwosPrompt(voiceQuote, 40, 2);
+                for (const auto& qLine : wrappedVoice)
+                    lines.push_back(qLine.c_str());
+            }
+            lines.push_back(line4);
             bool accept = showContinueAbortPrompt("COUNTER-OFFER", "ACCEPT", "REJECT", lines, false);
             if (accept) {
                 std::string reason;

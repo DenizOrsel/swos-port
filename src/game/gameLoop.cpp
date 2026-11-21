@@ -39,6 +39,7 @@
 #include "replays.h"
 #include "stadiumMenu.h"
 #include "replayExitMenu.h"
+#include "llmFeatures.h"
 #include "util.h"
 #include "FixedPoint.h"
 
@@ -122,6 +123,9 @@ void gameLoop(TeamGame *topTeam, TeamGame *bottomTeam)
 
             handleHighlightsAndReplays();
 
+            if (swos.gameState == GameState::kResultAfterTheGame)
+                beginPostMatchNewspaperRequest();
+
             if (!swos.playGame) {
                 gameFadeOut();
                 break;
@@ -137,8 +141,12 @@ void gameLoop(TeamGame *topTeam, TeamGame *bottomTeam)
     } while (!gameEnded(topTeam, bottomTeam));
 
     m_playingMatch = false;
-    if (!swos.gameCanceled)
+    if (!swos.gameCanceled) {
         HotseatCareerManager::get().onMatchCompleted();
+        beginPostMatchNewspaperRequest();
+        showPostMatchNewspaperIfReady();
+        onCareerMatchCompletedLlm(swos.statsTeam1Goals, swos.statsTeam2Goals);
+    }
 }
 
 void showStadiumScreenAndFadeOutMusic(TeamGame *topTeam, TeamGame *bottomTeam, int maxSubstitutes)
@@ -210,6 +218,7 @@ static void initGameLoop()
 {
     m_playingMatch = true;
     m_doFadeIn = true;
+    resetPostMatchNewspaper();
 
     initGameAudio();
     playCrowdNoise();

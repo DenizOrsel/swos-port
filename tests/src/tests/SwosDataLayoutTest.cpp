@@ -3,6 +3,8 @@
 #include "goalNet.h"
 #include "pitchEffects.h"
 #include "freeKickAim.h"
+#include "llmClient.h"
+#include "llmFeatures.h"
 
 static SwosDataLayoutTest t;
 
@@ -31,6 +33,8 @@ auto SwosDataLayoutTest::getCases() -> CaseList
             bind(&SwosDataLayoutTest::verifyFrameTableArea) },
         { "physics goal net simulation and toggle", "physics-goal-net-simulation", {},
             bind(&SwosDataLayoutTest::verifyPhysicsGoalNetSimulation) },
+        { "llm client json, async queue, and prompt wrapping", "llm-client-and-features", {},
+            bind(&SwosDataLayoutTest::verifyLlmClientAndFeatures) },
     };
 }
 
@@ -226,4 +230,49 @@ void SwosDataLayoutTest::verifyPhysicsGoalNetSimulation()
     setPhysicsGoalNets(false);
     assertFalse(getPhysicsGoalNets());
     setPhysicsGoalNets(prevOpt);
+}
+
+void SwosDataLayoutTest::verifyLlmClientAndFeatures()
+{
+    // 1. JSON escaping & payload formatting for Ollama vs OpenAI-compatible
+    LlmConfig ollamaCfg;
+    ollamaCfg.enabled = true;
+    ollamaCfg.provider = LlmProvider::kOllama;
+    ollamaCfg.model = "gemma4:latest";
+    std::string ollamaPayload = buildLlmChatPayload(ollamaCfg, "Sys \"role\"", "Line1\nLine2");
+    assertTrue(ollamaPayload.find("\"stream\":false") != std::string::npos);
+    assertTrue(ollamaPayload.find("\"num_predict\":120") != std::string::npos);
+    assertTrue(ollamaPayload.find("Sys \\\"role\\\"") != std::string::npos);
+    assertTrue(ollamaPayload.find("Line1\\nLine2") != std::string::npos);
+
+    std::string ollamaResp = R"({"message":{"role":"assistant","content":"CLASSIC WIN!\nChairman: Delighted."}})";
+    assertEqual(extractLlmAssistantContent(LlmProvider::kOllama, ollamaResp), std::string("CLASSIC WIN!\nChairman: Delighted."));
+
+    std::string openaiResp = R"({"choices":[{"message":{"role":"assistant","content":"GREAT STRIKE!"}}]})";
+    assertEqual(extractLlmAssistantContent(LlmProvider::kOpenAi, openaiResp), std::string("GREAT STRIKE!"));
+
+    // 2. Prompt wrapping for SWOS modal dialogs (max 6 lines, <= 40 chars each)
+    auto wrapped = wrapTextForSwosPrompt(
+        "STUNNING VICTORY IN THE POURING RAIN!\nUnited crushed City 3-0 at home.\nCHAIRMAN: KEEP THIS UP!",
+        38, 6);
+    assertTrue(!wrapped.empty() && wrapped.size() <= 6);
+    for (const auto& line : wrapped)
+        assertTrue(line.size() <= 38);
+
+    // 3. Async worker queue with mock transport
+    auto prevCfg = getLlmConfig();
+    setLlmConfigForTest(ollamaCfg);
+    setLlmTransportForTest([](const LlmConfig&, const std::string&) -> LlmHttpResult {
+        return { true, 200, R"({"message":{"content":"WE WANT THREE POINTS NEXT WEEK!"}})" };
+    });
+
+    uint64_t reqId = enqueueLlmRequest("sys", "user");
+    assertTrue(reqId != 0);
+    std::string reply;
+    assertTrue(waitForLlmResponse(reqId, 2000, reply));
+    assertEqual(reply, std::string("WE WANT THREE POINTS NEXT WEEK!"));
+
+    setLlmTransportForTest(nullptr);
+    shutdownLlmClient();
+    setLlmConfigForTest(prevCfg);
 }

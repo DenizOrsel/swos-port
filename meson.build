@@ -73,6 +73,7 @@ commonLibraries = [
     cppCompiler.find_library(sdlMainName, dirs: sdlDir),
     cppCompiler.find_library('SDL2_image', dirs: sdlImageDir),
     cppCompiler.find_library('winmm'),
+    cppCompiler.find_library('winhttp'),
 ]
 projectLibraries = commonLibraries + [
     cppCompiler.find_library('SDL2_mixer', dirs: sdlMixerDir),

@@ -17,4 +17,5 @@ class SwosDataLayoutTest : public BaseTest
     void verifyFixedFileBuffers();
     void verifyFrameTableArea();
     void verifyPhysicsGoalNetSimulation();
+    void verifyLlmClientAndFeatures();
 };

@@ -18,3 +18,4 @@ void setClearResultInterval(int interval);
 void setClearResultHalftimeInterval(int interval);
 void registerScorer(const Sprite& scorer, int teamNum, GoalType goalType);
 void goalScored(int teamNum, Sprite& scorer);
+std::string getMatchScorersSummary(int teamNum);
