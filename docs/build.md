@@ -1,3 +1,44 @@
+# Quick Build (`build.ps1`, Windows)
+
+The fastest way to build, test, and package `swos-port` on Windows is with `build.ps1` in the repository root. It automatically locates Visual Studio / Build Tools (`vcvarsall.bat` for `x64`), installs missing Python/Meson/Ninja dependencies if needed, configures `tmp/meson-<BuildType>`, compiles with Ninja, and optionally runs tests or creates a standalone playable package.
+
+From PowerShell in the repository root:
+
+```powershell
+# Release build only -> tmp\meson-release\swos-port.exe
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
+
+# Release build + Python & C++ test suites
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -RunTests
+
+# Release build + standalone playable zip -> dist\swos-port-demo-windows-x64.zip
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -Package
+
+# Full build, tests, and package
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -RunTests -Package
+
+# Debug build / clean reconfigure
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -BuildType debug -Clean
+```
+
+## Running the Packaged Build
+
+Do **not** extract `dist\swos-port-demo-windows-x64.zip` directly into the repository root. The zip already contains a top-level `swos-port\` folder, so extracting it into `.\dist` gives a clean, runnable directory at `dist\swos-port\swos-port.exe` (both `dist\` and `tmp\` are gitignored):
+
+```powershell
+Expand-Archive -Path .\dist\swos-port-demo-windows-x64.zip -DestinationPath .\dist -Force
+.\dist\swos-port\swos-port.exe
+```
+
+## Build Script Flags
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `-BuildType <release\|debug>` | `release` | Meson build configuration (`tmp\meson-release` or `tmp\meson-debug`). |
+| `-RunTests` | off | Compiles `tests\tests.exe` and runs animation table tests, `mnu2h` unit tests, and C++ tests (`career`, `joypads`, `swos-data-layout`). |
+| `-Package` | off | Packages `dist\swos-port-demo-windows-x64.zip` via `tools\packageWindows.py` with SDL/VC++ runtime DLLs, compiled assets, and `assets\demo-data.zip`. |
+| `-Clean` | off | Deletes `tmp\meson-<BuildType>` and reconfigures Meson from scratch. |
+
 # Requirements
 
 Currently, the game only builds and runs on Windows and Android. To build you must have the following
