@@ -9,7 +9,7 @@ This document catalogs modern visual, physics, and atmospheric effects designed 
 Controlled via **OPTIONS -> GAMEPLAY -> PITCH & WEATHER FX** (`ON` by default, persisted in `swos.ini` under `[gameplay] pitchWeatherEffects`), `src/game/pitch/pitchEffects.cpp` + `src/game/pitch/pitch.cpp`:
 
 - **Weather-Reactive Pitch Color Grading & Wear Zones**
-  - Subtle `SDL_SetTextureColorMod` grass tinting based on `getPitchType()` (`Frozen` icy frost tint, `Muddy` earthy damp olive-brown, `Wet` darker rain-soaked green, `Soft` lush green, `Normal` classic SWOS green, `Dry`/`Hard` warm sun-dried grass), plus worn mud/frost patches in goalmouths and the centre circle.
+  - Per-pixel grass palette remapping on texture load based on `getPitchType()` (`Frozen` icy blue-white frost, `Muddy` earthy damp mud-brown, `Wet` darker rain-soaked emerald, `Soft` lush green, `Normal` classic SWOS green, `Dry`/`Hard` warm sun-dried grass) while keeping white pitch lines, stands, and adboards crisp and untouched, plus organic mud speckles in worn goalmouths on `Muddy` pitches.
 - **Slide-Tackle & Diving Goalkeeper Sprays**
   - **Wet / Muddy pitches:** Water spray droplets and mud splashes kicking up behind sliding tackles and diving goalkeepers.
   - **Normal / Soft pitches:** Tiny grass blades and turf divots kicked up on slide tackles and dives.

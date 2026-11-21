@@ -144,16 +144,16 @@ static void addSkidMark(float x0, float y0, float x1, float y1)
     m.y1 = y1;
     m.width = (pitchType == 1) ? 2.1f : 1.6f;
 
-    if (pitchType == 0) { // Frozen: pale scraped frost line
-        m.r = 200; m.g = 224; m.b = 242; m.a = 68;
+    if (pitchType == 0) { // Frozen: subtle scraped ice-white scuff
+        m.r = 228; m.g = 242; m.b = 255; m.a = 38;
     } else if (pitchType == 1) { // Muddy: dark mud rut
-        m.r = 58; m.g = 40; m.b = 16; m.a = 95;
+        m.r = 58; m.g = 40; m.b = 16; m.a = 68;
     } else if (pitchType == 2) { // Wet: dark wet turf streak
-        m.r = 28; m.g = 62; m.b = 14; m.a = 72;
+        m.r = 28; m.g = 62; m.b = 14; m.a = 48;
     } else if (pitchType == 5 || pitchType == 6) { // Dry / Hard: dusty scuff
-        m.r = 165; m.g = 152; m.b = 98; m.a = 52;
+        m.r = 165; m.g = 152; m.b = 98; m.a = 36;
     } else { // Soft / Normal: torn grass streak
-        m.r = 46; m.g = 78; m.b = 14; m.a = 68;
+        m.r = 46; m.g = 78; m.b = 14; m.a = 44;
     }
 
     if (static_cast<int>(m_skidMarks.size()) < kMaxSkidMarks) {
@@ -364,7 +364,7 @@ static void drawFloodlightCastForActor(SDL_Renderer *renderer, const PitchScreen
         float dirX = dx / len;
         float dirY = dy / len;
         float reach = std::clamp(2.2f + (len / 420.0f) * 3.8f, 2.2f, 6.0f);
-        uint8_t alpha = static_cast<uint8_t>(std::clamp(22.0f - (len / 750.0f) * 11.0f, 9.0f, 22.0f));
+        uint8_t alpha = static_cast<uint8_t>(std::clamp(14.0f - (len / 750.0f) * 7.0f, 6.0f, 14.0f));
 
         SDL_FPoint tip = mapper.project(worldX + dirX * reach, worldY + dirY * reach * 0.72f, 0.0f);
         float cx = 0.5f * (base.x + tip.x);
@@ -372,8 +372,10 @@ static void drawFloodlightCastForActor(SDL_Renderer *renderer, const PitchScreen
         float rw = radiusX * pixelScale;
         float rh = radiusY * pixelScale;
         SDL_SetRenderDrawColor(renderer, 6, 18, 4, alpha);
-        SDL_FRect r{ cx - rw, cy - rh, rw * 2.0f, rh * 2.0f };
-        SDL_RenderFillRectF(renderer, &r);
+        SDL_FRect r1{ cx - rw, cy - rh * 0.65f, rw * 2.0f, rh * 1.3f };
+        SDL_FRect r2{ cx - rw * 0.65f, cy - rh, rw * 1.3f, rh * 2.0f };
+        SDL_RenderFillRectF(renderer, &r1);
+        SDL_RenderFillRectF(renderer, &r2);
     }
 }
 
@@ -386,13 +388,18 @@ static void drawThickGroundSegment(SDL_Renderer *renderer, SDL_FPoint p0, SDL_FP
     if (len < 0.25f)
         return;
 
-    float nx = -dy / len;
-    float ny = dx / len;
-    int passes = std::clamp(static_cast<int>(std::ceil(halfW * 2.5f)) + 1, 2, 12);
+    // Render as soft, broken turf/cleat scuffs rather than a solid geometric line
+    int steps = std::clamp(static_cast<int>(std::ceil(len / std::max(1.2f, halfW * 1.2f))), 2, 10);
+    float sz = std::max(1.0f, halfW * 1.35f);
     SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
-    for (int i = 0; i < passes; ++i) {
-        float t = -halfW + (2.0f * halfW * i) / (passes - 1);
-        SDL_RenderDrawLineF(renderer, p0.x + nx * t, p0.y + ny * t, p1.x + nx * t, p1.y + ny * t);
+    for (int i = 0; i < steps; ++i) {
+        if ((i & 1) && steps > 3)
+            continue;
+        float t = static_cast<float>(i) / static_cast<float>(steps - 1);
+        float sx = p0.x + dx * t;
+        float sy = p0.y + dy * t;
+        SDL_FRect tuft{ sx - sz * 0.5f, sy - sz * 0.4f, sz, sz * 0.8f };
+        SDL_RenderFillRectF(renderer, &tuft);
     }
 }
 
@@ -559,27 +566,25 @@ void drawPitchEffectsGround(float xOffset, float yOffset)
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
-    // 1. Worn mud patches (Muddy = 1) or frost patches (Frozen = 0) in goalmouths & centre circle
-    if (pitchType == 1 || pitchType == 0) {
-        static constexpr float kWearZones[5][4] = {
-            { 334.0f, 139.0f, 26.0f, 10.0f }, // Top 6-yard goalmouth
-            { 334.0f, 759.0f, 26.0f, 10.0f }, // Bottom 6-yard goalmouth
-            { 334.0f, 449.0f, 20.0f, 14.0f }, // Centre spot
-            { 334.0f, 217.0f, 12.0f, 6.0f },  // Top penalty spot
-            { 334.0f, 681.0f, 12.0f, 6.0f },  // Bottom penalty spot
+    // 1. Organic scattered mud speckles in worn goalmouths & centre circle on Muddy pitches (no boxy rects)
+    if (pitchType == 1) {
+        static constexpr float kWearCenters[3][4] = {
+            { 334.0f, 138.0f, 24.0f, 8.0f },
+            { 334.0f, 760.0f, 24.0f, 8.0f },
+            { 334.0f, 449.0f, 18.0f, 11.0f },
         };
-        SDL_Color patchColor = (pitchType == 1)
-            ? SDL_Color{ 64, 42, 16, 46 }
-            : SDL_Color{ 212, 232, 248, 34 };
-        SDL_SetRenderDrawColor(renderer, patchColor.r, patchColor.g, patchColor.b, patchColor.a);
-        for (int z = 0; z < 5; ++z) {
-            SDL_FPoint c = mapper.project(kWearZones[z][0], kWearZones[z][1], 0.0f);
-            float rx = kWearZones[z][2] * pixelScale;
-            float ry = kWearZones[z][3] * pixelScale;
-            SDL_FRect outer{ c.x - rx, c.y - ry, rx * 2.0f, ry * 2.0f };
-            SDL_FRect inner{ c.x - rx * 0.65f, c.y - ry * 0.65f, rx * 1.3f, ry * 1.3f };
-            SDL_RenderFillRectF(renderer, &outer);
-            SDL_RenderFillRectF(renderer, &inner);
+        SDL_SetRenderDrawColor(renderer, 66, 44, 18, 52);
+        for (int z = 0; z < 3; ++z) {
+            for (int s = 0; s < 26; ++s) {
+                float ang = s * 2.39996f + z * 1.1f;
+                float rad = std::sqrt(static_cast<float>(s + 1) / 26.0f);
+                float wx = kWearCenters[z][0] + std::cos(ang) * rad * kWearCenters[z][2];
+                float wy = kWearCenters[z][1] + std::sin(ang) * rad * kWearCenters[z][3];
+                SDL_FPoint sp = mapper.project(wx, wy, 0.0f);
+                float sz = std::max(1.0f, (1.2f + (s % 3) * 0.45f) * pixelScale * 0.7f);
+                SDL_FRect speck{ sp.x - sz * 0.5f, sp.y - sz * 0.5f, sz, sz * 0.75f };
+                SDL_RenderFillRectF(renderer, &speck);
+            }
         }
     }
 
@@ -700,6 +705,7 @@ void setPitchWeatherEffects(bool enabled)
         m_particles.clear();
         m_puddleRipples.clear();
     }
+    reloadPitchTexturesIfNeeded();
 }
 
 PitchEffectsTestState getPitchEffectsTestState()

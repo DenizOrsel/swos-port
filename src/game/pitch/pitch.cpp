@@ -40,6 +40,8 @@ static int m_pitchNumber;
 static int m_res;
 static float m_zoom;
 static Uint32 m_lastZoomChangeTicks;
+static bool m_loadedWithWeatherGrading = false;
+static int m_loadedPitchType = -1;
 
 static void setPitchType();
 static void setPitchNumber();
@@ -73,9 +75,118 @@ int getPitchNumber()
     return m_pitchNumber;
 }
 
+static SDL_Texture *loadWeatherGradedPitchTexture(const char *filename, int pitchType, bool applyGrading)
+{
+    if (!applyGrading || pitchType == kNormal)
+        return loadTexture(filename);
+
+    auto resPath = joinPaths(getAssetDir(), filename);
+    SDL_Surface *surf = nullptr;
+    for (int attempt = 0; attempt < 25; ++attempt) {
+        if (auto f = openFile(resPath.c_str()))
+            surf = IMG_Load_RW(f, true);
+        else
+            errorExit("Failed to open texture file %s", filename);
+        if (surf)
+            break;
+        SDL_Delay(50);
+    }
+    if (!surf)
+        errorExit("Failed to load texture %s: %s", filename, IMG_GetError());
+
+    SDL_Surface *rgba = SDL_ConvertSurfaceFormat(surf, SDL_PIXELFORMAT_RGBA32, 0);
+    SDL_FreeSurface(surf);
+    if (!rgba)
+        return loadTexture(filename);
+
+    SDL_LockSurface(rgba);
+    const int w = rgba->w;
+    const int h = rgba->h;
+    const int pitchBytes = rgba->pitch;
+    auto *base = static_cast<uint8_t *>(rgba->pixels);
+
+    for (int y = 0; y < h; ++y) {
+        auto *row = reinterpret_cast<uint32_t *>(base + y * pitchBytes);
+        for (int x = 0; x < w; ++x) {
+            uint8_t r, g, b, a;
+            SDL_GetRGBA(row[x], rgba->format, &r, &g, &b, &a);
+            if (a == 0 || g < 55 || g < static_cast<int>(r * 0.78f))
+                continue;
+
+            float wt = std::clamp((static_cast<float>(std::min(r, g) - b) - 6.0f) / 28.0f, 0.0f, 1.0f);
+            if (wt <= 0.0f)
+                continue;
+
+            float lum = (0.299f * r + 0.587f * g + 0.114f * b) / 132.0f;
+            float tr = r;
+            float tg = g;
+            float tb = b;
+
+            switch (pitchType) {
+            case kFrozen: // Crisp icy blue-white winter pitch
+                tr = 146.0f * lum + 24.0f;
+                tg = 182.0f * lum + 24.0f;
+                tb = 214.0f * lum + 26.0f;
+                break;
+            case kMuddy: // Earthy damp mud-brown / dark olive
+                tr = 104.0f * lum + 8.0f;
+                tg = 86.0f * lum + 6.0f;
+                tb = 36.0f * lum + 4.0f;
+                break;
+            case kWet: // Deep rain-soaked emerald
+                tr = 78.0f * lum + 4.0f;
+                tg = 124.0f * lum + 6.0f;
+                tb = 44.0f * lum + 8.0f;
+                break;
+            case kSoft: // Lush soft green
+                tr = 106.0f * lum + 4.0f;
+                tg = 144.0f * lum + 6.0f;
+                tb = 22.0f * lum + 4.0f;
+                break;
+            case kDry: // Warm sun-dried yellow-green
+                tr = 146.0f * lum + 8.0f;
+                tg = 140.0f * lum + 6.0f;
+                tb = 22.0f * lum + 2.0f;
+                break;
+            case kHard: // Sun-baked firm golden-olive
+                tr = 156.0f * lum + 10.0f;
+                tg = 136.0f * lum + 6.0f;
+                tb = 30.0f * lum + 4.0f;
+                break;
+            default:
+                break;
+            }
+
+            uint8_t nr = static_cast<uint8_t>(std::clamp(r * (1.0f - wt) + tr * wt, 0.0f, 255.0f));
+            uint8_t ng = static_cast<uint8_t>(std::clamp(g * (1.0f - wt) + tg * wt, 0.0f, 255.0f));
+            uint8_t nb = static_cast<uint8_t>(std::clamp(b * (1.0f - wt) + tb * wt, 0.0f, 255.0f));
+            row[x] = SDL_MapRGBA(rgba->format, nr, ng, nb, a);
+        }
+    }
+    SDL_UnlockSurface(rgba);
+
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(getRenderer(), rgba);
+    SDL_FreeSurface(rgba);
+    if (!tex)
+        return loadTexture(filename);
+    return tex;
+}
+
 void loadPitch()
 {
+    const bool applyGrading = getPitchWeatherEffects();
     logInfo("Loading pitch %d (type: %d), asset resolution %d", m_pitchNumber, m_pitchType, m_res);
+
+    if (m_loadedWithWeatherGrading != applyGrading || m_loadedPitchType != m_pitchType) {
+        for (auto& tex : m_pitchTextures[m_res]) {
+            if (tex) {
+                SDL_DestroyTexture(tex);
+                tex = nullptr;
+            }
+        }
+        m_loadedWithWeatherGrading = applyGrading;
+        m_loadedPitchType = m_pitchType;
+    }
 
     auto pitchIndex = kPitchIndices[m_pitchNumber];
     auto start = kPitchPatternStartIndices[m_pitchNumber];
@@ -88,11 +199,17 @@ void loadPitch()
             auto& texture = m_pitchTextures[m_res][textureNo];
             if (!texture) {
                 auto filename = kTextureFilenames[textureNo];
-                texture = loadTexture(filename);
+                texture = loadWeatherGradedPitchTexture(filename, m_pitchType, applyGrading);
                 SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_NONE);
             }
         }
     }
+}
+
+void reloadPitchTexturesIfNeeded()
+{
+    if (isMatchRunning() && (m_loadedWithWeatherGrading != getPitchWeatherEffects() || m_loadedPitchType != m_pitchType))
+        loadPitch();
 }
 
 static uint16_t getCleanPitchPatternIndex(int pitchNumber, int row, int col)
@@ -432,29 +549,8 @@ static void drawPitch(float xOfs, float yOfs, int row, int column, int numPatter
     auto renderer = getRenderer();
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
 
-    // Subtle weather color grading on pitch textures when Pitch & Weather FX is enabled
-    uint8_t modR = 255;
-    uint8_t modG = 255;
-    uint8_t modB = 255;
-    if (getPitchWeatherEffects()) {
-        switch (m_pitchType) {
-        case kFrozen: modR = 216; modG = 234; modB = 255; break; // Crisp icy frost tint
-        case kMuddy:  modR = 212; modG = 194; modB = 160; break; // Earthy damp mud-olive
-        case kWet:    modR = 212; modG = 232; modB = 218; break; // Darker rain-soaked grass
-        case kSoft:   modR = 240; modG = 248; modB = 234; break; // Lush soft turf
-        case kDry:    modR = 255; modG = 244; modB = 204; break; // Warm sun-dried grass
-        case kHard:   modR = 252; modG = 232; modB = 186; break; // Sun-baked firm turf
-        default: break;
-        }
-    }
-
-    int8_t prevTexIdx = -1;
     for (int i = 0; i < numPatterns; i++) {
         const auto& renderPattern = renderPatterns[i];
-        if (renderPattern.textureIndex != prevTexIdx) {
-            SDL_SetTextureColorMod(renderPattern.texture, modR, modG, modB);
-            prevTexIdx = renderPattern.textureIndex;
-        }
         SDL_RenderCopyF(renderer, renderPattern.texture, &renderPattern.src, &renderPattern.dst);
     }
 }

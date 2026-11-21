@@ -8,6 +8,7 @@ void setPitchTypeAndNumber();
 int getPitchType();
 int getPitchNumber();
 void loadPitch();
+void reloadPitchTexturesIfNeeded();
 std::pair<float, float> drawPitch(FixedPoint cameraX, FixedPoint cameraY);
 std::pair<float, float> drawPitchAtCurrentCamera();
 bool zoomIn(float step = 0);
