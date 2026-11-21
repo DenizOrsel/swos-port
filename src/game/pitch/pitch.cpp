@@ -201,8 +201,10 @@ static SDL_Texture *buildCrowdAtlasForTeam(const TeamGame& team)
         return nullptr;
 
     constexpr int kTileSize = 16;
+    constexpr int kPad = 2;
+    constexpr int kCellStride = kTileSize + kPad * 2;
     constexpr int kNumTiles = 24;
-    SDL_Surface *surf = SDL_CreateRGBSurfaceWithFormat(0, kNumTiles * kTileSize, kTileSize, 32, SDL_PIXELFORMAT_RGBA32);
+    SDL_Surface *surf = SDL_CreateRGBSurfaceWithFormat(0, kNumTiles * kCellStride, kCellStride, 32, SDL_PIXELFORMAT_RGBA32);
     if (!surf)
         return nullptr;
 
@@ -227,11 +229,14 @@ static SDL_Texture *buildCrowdAtlasForTeam(const TeamGame& team)
     auto *pixels = static_cast<uint8_t *>(surf->pixels);
     for (int t = 0; t < kNumTiles; ++t) {
         const auto *pat = kCrowdPatterns[t];
-        for (int y = 0; y < kTileSize; ++y) {
-            auto *row = reinterpret_cast<uint32_t *>(pixels + y * pitchBytes);
-            for (int x = 0; x < kTileSize; ++x) {
-                uint8_t c = pat[y * kTileSize + x];
-                row[t * kTileSize + x] = SDL_MapRGBA(surf->format, pal[c][0], pal[c][1], pal[c][2], 255);
+        const int baseX = t * kCellStride;
+        for (int cy = 0; cy < kCellStride; ++cy) {
+            int sy = std::clamp(cy - kPad, 0, kTileSize - 1);
+            auto *row = reinterpret_cast<uint32_t *>(pixels + cy * pitchBytes);
+            for (int cx = 0; cx < kCellStride; ++cx) {
+                int sx = std::clamp(cx - kPad, 0, kTileSize - 1);
+                uint8_t c = pat[sy * kTileSize + sx];
+                row[baseX + cx] = SDL_MapRGBA(surf->format, pal[c][0], pal[c][1], pal[c][2], 255);
             }
         }
     }
@@ -239,8 +244,10 @@ static SDL_Texture *buildCrowdAtlasForTeam(const TeamGame& team)
 
     SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, surf);
     SDL_FreeSurface(surf);
-    if (tex)
+    if (tex) {
         SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_NONE);
+        SDL_SetTextureScaleMode(tex, SDL_ScaleModeNearest);
+    }
     return tex;
 }
 
@@ -597,7 +604,7 @@ static void drawPitch(float xOfs, float yOfs, int row, int column, int numPatter
                     wave = (((m_crowdAnimTick / 18) + static_cast<uint32_t>(i * 11 + j * 13)) % 11) == 0;
                 }
                 int tileIdx = crowdBase + (wave ? 1 : 0);
-                SDL_Rect srcRect{ tileIdx * 16, 0, 16, 16 };
+                SDL_Rect srcRect{ tileIdx * 20 + 2, 2, 16, 16 };
                 SDL_FRect dstRect{ currentXOfs, currentYOfs, destPatternSize, destPatternSize };
                 renderPatterns[numPatterns++] = { srcRect, dstRect, m_crowdTextures[standIdx], static_cast<int8_t>(16 + standIdx) };
                 currentXOfs += destPatternSize;
