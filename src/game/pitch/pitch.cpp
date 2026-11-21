@@ -80,6 +80,60 @@ int getPitchNumber()
     return m_pitchNumber;
 }
 
+static void remapWeatherGrassPixel(uint8_t& r, uint8_t& g, uint8_t& b, int pitchType)
+{
+    if (pitchType == kNormal || g < 55 || g < static_cast<int>(r * 0.78f))
+        return;
+
+    float wt = std::clamp((static_cast<float>(std::min(r, g) - b) - 6.0f) / 28.0f, 0.0f, 1.0f);
+    if (wt <= 0.0f)
+        return;
+
+    float lum = (0.299f * r + 0.587f * g + 0.114f * b) / 132.0f;
+    float tr = r;
+    float tg = g;
+    float tb = b;
+
+    switch (pitchType) {
+    case kFrozen: // Crisp icy blue-white winter pitch
+        tr = 146.0f * lum + 24.0f;
+        tg = 182.0f * lum + 24.0f;
+        tb = 214.0f * lum + 26.0f;
+        break;
+    case kMuddy: // Earthy damp mud-brown / dark olive
+        tr = 104.0f * lum + 8.0f;
+        tg = 86.0f * lum + 6.0f;
+        tb = 36.0f * lum + 4.0f;
+        break;
+    case kWet: // Deep rain-soaked emerald
+        tr = 78.0f * lum + 4.0f;
+        tg = 124.0f * lum + 6.0f;
+        tb = 44.0f * lum + 8.0f;
+        break;
+    case kSoft: // Lush soft green
+        tr = 106.0f * lum + 4.0f;
+        tg = 144.0f * lum + 6.0f;
+        tb = 22.0f * lum + 4.0f;
+        break;
+    case kDry: // Warm sun-dried yellow-green
+        tr = 146.0f * lum + 8.0f;
+        tg = 140.0f * lum + 6.0f;
+        tb = 22.0f * lum + 2.0f;
+        break;
+    case kHard: // Sun-baked firm golden-olive
+        tr = 156.0f * lum + 10.0f;
+        tg = 136.0f * lum + 6.0f;
+        tb = 30.0f * lum + 4.0f;
+        break;
+    default:
+        break;
+    }
+
+    r = static_cast<uint8_t>(std::clamp(r * (1.0f - wt) + tr * wt, 0.0f, 255.0f));
+    g = static_cast<uint8_t>(std::clamp(g * (1.0f - wt) + tg * wt, 0.0f, 255.0f));
+    b = static_cast<uint8_t>(std::clamp(b * (1.0f - wt) + tb * wt, 0.0f, 255.0f));
+}
+
 static SDL_Texture *loadWeatherGradedPitchTexture(const char *filename, int pitchType, bool applyGrading)
 {
     if (!applyGrading || pitchType == kNormal)
@@ -115,57 +169,10 @@ static SDL_Texture *loadWeatherGradedPitchTexture(const char *filename, int pitc
         for (int x = 0; x < w; ++x) {
             uint8_t r, g, b, a;
             SDL_GetRGBA(row[x], rgba->format, &r, &g, &b, &a);
-            if (a == 0 || g < 55 || g < static_cast<int>(r * 0.78f))
+            if (a == 0)
                 continue;
-
-            float wt = std::clamp((static_cast<float>(std::min(r, g) - b) - 6.0f) / 28.0f, 0.0f, 1.0f);
-            if (wt <= 0.0f)
-                continue;
-
-            float lum = (0.299f * r + 0.587f * g + 0.114f * b) / 132.0f;
-            float tr = r;
-            float tg = g;
-            float tb = b;
-
-            switch (pitchType) {
-            case kFrozen: // Crisp icy blue-white winter pitch
-                tr = 146.0f * lum + 24.0f;
-                tg = 182.0f * lum + 24.0f;
-                tb = 214.0f * lum + 26.0f;
-                break;
-            case kMuddy: // Earthy damp mud-brown / dark olive
-                tr = 104.0f * lum + 8.0f;
-                tg = 86.0f * lum + 6.0f;
-                tb = 36.0f * lum + 4.0f;
-                break;
-            case kWet: // Deep rain-soaked emerald
-                tr = 78.0f * lum + 4.0f;
-                tg = 124.0f * lum + 6.0f;
-                tb = 44.0f * lum + 8.0f;
-                break;
-            case kSoft: // Lush soft green
-                tr = 106.0f * lum + 4.0f;
-                tg = 144.0f * lum + 6.0f;
-                tb = 22.0f * lum + 4.0f;
-                break;
-            case kDry: // Warm sun-dried yellow-green
-                tr = 146.0f * lum + 8.0f;
-                tg = 140.0f * lum + 6.0f;
-                tb = 22.0f * lum + 2.0f;
-                break;
-            case kHard: // Sun-baked firm golden-olive
-                tr = 156.0f * lum + 10.0f;
-                tg = 136.0f * lum + 6.0f;
-                tb = 30.0f * lum + 4.0f;
-                break;
-            default:
-                break;
-            }
-
-            uint8_t nr = static_cast<uint8_t>(std::clamp(r * (1.0f - wt) + tr * wt, 0.0f, 255.0f));
-            uint8_t ng = static_cast<uint8_t>(std::clamp(g * (1.0f - wt) + tg * wt, 0.0f, 255.0f));
-            uint8_t nb = static_cast<uint8_t>(std::clamp(b * (1.0f - wt) + tb * wt, 0.0f, 255.0f));
-            row[x] = SDL_MapRGBA(rgba->format, nr, ng, nb, a);
+            remapWeatherGrassPixel(r, g, b, pitchType);
+            row[x] = SDL_MapRGBA(rgba->format, r, g, b, a);
         }
     }
     SDL_UnlockSurface(rgba);
@@ -204,6 +211,13 @@ static SDL_Texture *buildCrowdAtlasForTeam(const TeamGame& team)
 
     uint8_t pal[256][3];
     memcpy(pal, kCrowdPalette, sizeof(pal));
+    // Weather-grade any grass border pixels in the crowd tiles (before applying team kit colors)
+    if (getPitchWeatherEffects()) {
+        for (int i = 0; i < 256; ++i) {
+            if (i != 10 && i != 11)
+                remapWeatherGrassPixel(pal[i][0], pal[i][1], pal[i][2], m_pitchType);
+        }
+    }
     // Palette indices 10 & 11 are SWOS's dynamic fan kit color slots
     pal[10][0] = secondary.r; pal[10][1] = secondary.g; pal[10][2] = secondary.b;
     pal[11][0] = primary.r;   pal[11][1] = primary.g;   pal[11][2] = primary.b;
