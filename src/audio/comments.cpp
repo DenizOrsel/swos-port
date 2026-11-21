@@ -7,6 +7,7 @@
 #include "zip.h"
 #include "SampleTable.h"
 #include "SoundSample.h"
+#include "llmFeatures.h"
 
 constexpr int kEnqueuedSampleDelay = 70;
 constexpr int kEnqueuedLongerSampleDelay = 100;
@@ -340,6 +341,25 @@ static void playComment(Mix_Chunk *chunk, bool interrupt = true)
 
 static void playComment(CommentarySampleTableIndex tableIndex, bool interrupt /* = true */)
 {
+    if (!swos.g_trainingGame) {
+        switch (tableIndex) {
+        case kGoal: triggerLivePunditEvent("GOAL SCORED", true); break;
+        case kOwnGoal: triggerLivePunditEvent("OWN GOAL", true); break;
+        case kPenaltyGoal: triggerLivePunditEvent("PENALTY SCORED", true); break;
+        case kPenalty: triggerLivePunditEvent("PENALTY AWARDED", true); break;
+        case kPenaltySaved: triggerLivePunditEvent("PENALTY SAVED", true); break;
+        case kPenaltyMissed: triggerLivePunditEvent("PENALTY MISSED", true); break;
+        case kRedCard: triggerLivePunditEvent("RED CARD", true); break;
+        case kHitPost: triggerLivePunditEvent("HIT THE POST", false); break;
+        case kHitBar: triggerLivePunditEvent("HIT THE CROSSBAR", false); break;
+        case kYellowCard: triggerLivePunditEvent("YELLOW CARD", false); break;
+        case kKeeperSaved: triggerLivePunditEvent("GREAT SAVE BY KEEPER", false); break;
+        case kNearMiss: triggerLivePunditEvent("SHOT JUST WIDE", false); break;
+        case kDirtyTackle: triggerLivePunditEvent("HEAVY TACKLE", false); break;
+        default: break;
+        }
+    }
+
     if (!soundEnabled() || !commentaryEnabled() || m_muteCommentary || swos.g_trainingGame)
         return;
 

@@ -1,12 +1,16 @@
 #include "llmFeatures.h"
 #include "llmClient.h"
 #include "continueAbortMenu.h"
+#include "darkRectangle.h"
+#include "gameFieldMapping.h"
 #include "hotseatCareer.h"
 #include "hotseat/hotseatInternal.h"
 #include "pitch.h"
+#include "render.h"
 #include "result.h"
 #include "stats.h"
 #include "swos.h"
+#include "text.h"
 
 #include <algorithm>
 #include <cctype>
@@ -19,6 +23,11 @@ namespace {
 
 uint64_t s_postMatchRequestId = 0;
 bool s_postMatchTriggered = false;
+uint64_t s_preMatchRequestId = 0;
+uint64_t s_punditRequestId = 0;
+int s_punditCooldownFrames = 0;
+int s_punditDisplayFrames = 0;
+std::vector<std::string> s_punditLines;
 int s_weeklyTickCounter = 0;
 std::unordered_map<int16_t, std::vector<std::string>> s_squadSnapshots;
 
@@ -377,6 +386,137 @@ void checkCareerSquadTransfersLlm()
     std::string reply;
     if (waitForLlmResponse(reqId, std::min(cfg.timeoutMs, 1500), reply)) {
         showWrappedSwosPrompt("TRANSFER DESK", reply);
+    }
+}
+
+void beginPreMatchScoutingRequest(const TeamGame *topTeam, const TeamGame *bottomTeam)
+{
+    s_preMatchRequestId = 0;
+    if (!topTeam || !bottomTeam || swos.g_trainingGame)
+        return;
+
+    const auto& cfg = getLlmConfig();
+    if (!cfg.enabled || !cfg.features.preMatchScouting)
+        return;
+
+    auto collectNames = [](const TeamGame *team) {
+        std::string names;
+        for (int i = 0; i < 11; ++i) {
+            if (team->players[i].shortName[0] == '\0')
+                continue;
+            if (i == 0)
+                continue; // skip GK to highlight outfield threats
+            if (!names.empty())
+                names += ", ";
+            names += team->players[i].shortName;
+            if (names.size() > 48)
+                break;
+        }
+        return names;
+    };
+
+    const char *t1 = topTeam->teamName[0] ? topTeam->teamName : "HOME";
+    const char *t2 = bottomTeam->teamName[0] ? bottomTeam->teamName : "AWAY";
+    std::string prompt = "Pre-match: " + std::string(t1) + " vs " + t2 +
+        " (" + gameModeName() + ", Pitch: " + pitchConditionName(getPitchType()) + ").";
+    std::string p1 = collectNames(topTeam);
+    std::string p2 = collectNames(bottomTeam);
+    if (!p1.empty()) prompt += "\n" + std::string(t1) + " key men: " + p1;
+    if (!p2.empty()) prompt += "\n" + std::string(t2) + " key men: " + p2;
+    prompt += "\nGive a 2-sentence assistant manager scout & pitch briefing (max 150 chars total). Plain ASCII, no markdown.";
+
+    s_preMatchRequestId = enqueueLlmRequest(
+        "You are a 1995 football assistant manager giving a concise pre-match tactical & pitch briefing. Plain ASCII, no markdown.",
+        prompt);
+}
+
+void showPreMatchScoutingIfReady()
+{
+    if (s_preMatchRequestId == 0 || swos.g_trainingGame)
+        return;
+
+    const auto& cfg = getLlmConfig();
+    if (!cfg.enabled || !cfg.features.preMatchScouting)
+        return;
+
+    std::string reply;
+    if (waitForLlmResponse(s_preMatchRequestId, std::min(cfg.timeoutMs, 1200), reply)) {
+        showWrappedSwosPrompt("ASSISTANT MANAGER", reply);
+    }
+    s_preMatchRequestId = 0;
+}
+
+void resetLivePunditTicker()
+{
+    s_punditRequestId = 0;
+    s_punditCooldownFrames = 0;
+    s_punditDisplayFrames = 0;
+    s_punditLines.clear();
+}
+
+void triggerLivePunditEvent(const char *eventLabel, bool highPriority)
+{
+    if (!eventLabel || swos.g_trainingGame)
+        return;
+
+    const auto& cfg = getLlmConfig();
+    if (!cfg.enabled || !cfg.features.livePunditTicker)
+        return;
+
+    if (!highPriority && s_punditCooldownFrames > 0)
+        return;
+
+    const char *t1 = (swos.topTeamData.inGameTeamPtr && swos.topTeamData.inGameTeamPtr->teamName[0])
+        ? swos.topTeamData.inGameTeamPtr->teamName : "HOME";
+    const char *t2 = (swos.bottomTeamData.inGameTeamPtr && swos.bottomTeamData.inGameTeamPtr->teamName[0])
+        ? swos.bottomTeamData.inGameTeamPtr->teamName : "AWAY";
+
+    std::string prompt = "Live match: " + std::string(t1) + " " + std::to_string(swos.statsTeam1Goals) +
+        "-" + std::to_string(swos.statsTeam2Goals) + " " + t2 +
+        ". Event: " + eventLabel + ". Give ONE punchy 1995 TV pundit line (max 76 chars, plain ASCII, no quotes).";
+
+    s_punditRequestId = enqueueLlmRequest(
+        "You are a 1995 live football TV pundit. Reply with ONE short excited sentence, max 76 chars, plain ASCII.",
+        prompt);
+    s_punditCooldownFrames = 360; // ~6 seconds cooldown between non-goal events
+}
+
+void updateLivePunditTicker()
+{
+    if (s_punditCooldownFrames > 0)
+        --s_punditCooldownFrames;
+    if (s_punditDisplayFrames > 0)
+        --s_punditDisplayFrames;
+
+    if (s_punditRequestId == 0)
+        return;
+
+    std::string reply;
+    if (tryTakeLlmResponse(s_punditRequestId, reply)) {
+        s_punditRequestId = 0;
+        s_punditLines = wrapTextForSwosPrompt("PUNDIT: " + reply, 48, 2);
+        if (!s_punditLines.empty())
+            s_punditDisplayFrames = 270; // ~4.5 seconds on screen
+    }
+}
+
+void drawLivePunditTicker()
+{
+    if (s_punditDisplayFrames <= 0 || s_punditLines.empty())
+        return;
+    if (showingPostGameStats() || showingUserRequestedStats())
+        return;
+
+    constexpr int kLineH = 8;
+    int numLines = static_cast<int>(s_punditLines.size());
+    float barH = static_cast<float>(numLines * kLineH + 6);
+    float barY = static_cast<float>(kVgaHeight) - barH - 2.0f;
+    float barW = static_cast<float>(kVgaWidth + 2 * getGameScreenOffsetX());
+
+    drawDarkRectangle({ 0.0f, barY, barW, barH }, false);
+    for (int i = 0; i < numLines; ++i) {
+        int y = static_cast<int>(barY) + 3 + i * kLineH;
+        drawTextCentered(kVgaWidth / 2, y, s_punditLines[i].c_str(), kVgaWidth - 12, kWhiteText2, false);
     }
 }
 

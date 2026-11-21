@@ -152,9 +152,11 @@ void gameLoop(TeamGame *topTeam, TeamGame *bottomTeam)
 void showStadiumScreenAndFadeOutMusic(TeamGame *topTeam, TeamGame *bottomTeam, int maxSubstitutes)
 {
     if (showPreMatchMenus()) {
+        beginPreMatchScoutingRequest(topTeam, bottomTeam);
         showStadiumMenu(topTeam, bottomTeam, maxSubstitutes, [&]() {
             initMatch(topTeam, bottomTeam, true);
         });
+        showPreMatchScoutingIfReady();
     } else {
         initMatch(topTeam, bottomTeam, true);
     }
@@ -219,6 +221,7 @@ static void initGameLoop()
     m_playingMatch = true;
     m_doFadeIn = true;
     resetPostMatchNewspaper();
+    resetLivePunditTicker();
 
     initGameAudio();
     playCrowdNoise();
@@ -267,6 +270,7 @@ static void drawFrame(bool recordingEnabled)
     drawPitchEffectsAir(xOffset, yOffset);
     drawPlayerName();
     drawGameTime();
+    drawLivePunditTicker();
     drawStatsIfNeeded();
     drawResult();
     drawSpinningLogo();
@@ -339,6 +343,7 @@ static void coreGameUpdate()
     SWOS::DrawAnimatedPatterns(); // remove/re-implement
     updateBench();
     updateStatistics();
+    updateLivePunditTicker();
 }
 
 static void handleHighlightsAndReplays()

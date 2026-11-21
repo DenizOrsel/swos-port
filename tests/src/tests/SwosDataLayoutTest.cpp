@@ -272,6 +272,15 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
     assertTrue(waitForLlmResponse(reqId, 2000, reply));
     assertEqual(reply, std::string("WE WANT THREE POINTS NEXT WEEK!"));
 
+    // 4. Live pundit ticker non-blocking event -> update flow
+    resetLivePunditTicker();
+    triggerLivePunditEvent("GOAL SCORED", true);
+    for (int i = 0; i < 40; ++i) {
+        updateLivePunditTicker();
+        SDL_Delay(5);
+    }
+    resetLivePunditTicker();
+
     setLlmTransportForTest(nullptr);
     shutdownLlmClient();
     setLlmConfigForTest(prevCfg);
