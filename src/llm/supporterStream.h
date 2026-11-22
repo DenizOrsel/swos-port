@@ -7,6 +7,7 @@ enum class SupporterSide {
     kHome,
     kAway,
     kNeutral,
+    kPundit,
 };
 
 struct SupporterTweet {
@@ -19,6 +20,7 @@ struct SupporterTweet {
 
 void resetSupporterStream();
 void triggerSupporterStreamEvent(const char *eventLabel, bool highPriority = false);
+void pushPunditMessageToStream(const std::string& rawMessage);
 void updateSupporterStream();
 void drawSupporterStreamOverlay();
 void toggleSupporterStreamVisible();

@@ -304,19 +304,55 @@ void recordTelemetryMatchEvent(const char *eventType, bool isGoalEvent /* = fals
     const char *t1 = swos.topTeamInGame.teamName[0] ? swos.topTeamInGame.teamName : "HOME";
     const char *t2 = swos.bottomTeamInGame.teamName[0] ? swos.bottomTeamInGame.teamName : "AWAY";
 
-    const TeamGeneralInfo *actingPtr = isGoalEvent
-        ? static_cast<const TeamGeneralInfo *>(swos.lastTeamScored.asAligned())
-        : static_cast<const TeamGeneralInfo *>(swos.lastTeamPlayedBeforeBreak.asAligned());
+    auto teamNameForInfo = [&](const TeamGeneralInfo *info) -> std::string {
+        if (!info)
+            return {};
+        const TeamGame *tg = info->inGameTeamPtr.asAligned();
+        if (tg == &swos.topTeamInGame)
+            return t1;
+        if (tg == &swos.bottomTeamInGame)
+            return t2;
+        if (info == team1Info)
+            return t1;
+        if (info == team2Info)
+            return t2;
+        return {};
+    };
+
+    auto keeperNameForInfo = [&](const TeamGeneralInfo *info) -> std::string {
+        if (!info)
+            return {};
+        const TeamGame *tg = info->inGameTeamPtr.asAligned();
+        if (!tg)
+            tg = (info == team1Info) ? &swos.topTeamInGame : &swos.bottomTeamInGame;
+        return (tg->players[0].shortName[0] != '\0') ? std::string(tg->players[0].shortName) : std::string();
+    };
+
+    // Pitch Y geometry: topTeamData defends top goal (y <= kPitchCenterY) and attacks bottom goal (y > kPitchCenterY).
+    // bottomTeamData defends bottom goal (y > kPitchCenterY) and attacks top goal (y <= kPitchCenterY).
+    float ballY = swos.ballSprite.y.asFloat();
+    const TeamGeneralInfo *attackingInfo = (ballY > static_cast<float>(kPitchCenterY)) ? &swos.topTeamData : &swos.bottomTeamData;
+    const TeamGeneralInfo *defendingInfo = (ballY > static_cast<float>(kPitchCenterY)) ? &swos.bottomTeamData : &swos.topTeamData;
+
+    bool isKeeperSave = (std::strstr(eventType, "SAVE") != nullptr);
+    bool isAttackGoalMouth = (std::strstr(eventType, "POST") != nullptr ||
+                              std::strstr(eventType, "CROSSBAR") != nullptr ||
+                              std::strstr(eventType, "WIDE") != nullptr ||
+                              std::strstr(eventType, "PENALTY MISSED") != nullptr ||
+                              std::strstr(eventType, "PENALTY AWARDED") != nullptr);
+    bool isCardEvent = (std::strstr(eventType, "CARD") != nullptr);
 
     std::string teamName;
-    if ((isGoalEvent && swos.lastTeamScoredNumber == 1) || actingPtr == team1Info)
-        teamName = t1;
-    else if ((isGoalEvent && swos.lastTeamScoredNumber == 2) || actingPtr == team2Info)
-        teamName = t2;
-
     std::string playerName;
     std::string detail;
+
     if (isGoalEvent) {
+        const TeamGeneralInfo *scoringPtr = swos.lastTeamScored.asAligned();
+        if (swos.lastTeamScoredNumber == 1 || scoringPtr == team1Info)
+            teamName = t1;
+        else if (swos.lastTeamScoredNumber == 2 || scoringPtr == team2Info)
+            teamName = t2;
+
         const Sprite *scorerSprite = swos.currentScorer.asAligned();
         if (scorerSprite && scorerSprite->playerOrdinal >= 1 && scorerSprite->playerOrdinal <= kNumPlayersInTeam) {
             const TeamGame& tg = (scorerSprite->teamNumber == 1) ? swos.topTeamInGame : swos.bottomTeamInGame;
@@ -324,8 +360,54 @@ void recordTelemetryMatchEvent(const char *eventType, bool isGoalEvent /* = fals
                 playerName = tg.players[scorerSprite->playerOrdinal - 1].shortName;
         }
         detail = describeGoalMechanics(scorerSprite, eventType);
-    } else if (!s_lastTouch.name.empty() && (s_frameCounter - s_lastTouch.frameTick) < 90) {
-        playerName = s_lastTouch.name;
+        const char *concedingTeam = (teamName == t1) ? t2 : t1;
+        const TeamGame& concedingTg = (teamName == t1) ? swos.bottomTeamInGame : swos.topTeamInGame;
+        if (concedingTg.players[0].shortName[0] != '\0')
+            detail += ", past " + std::string(concedingTeam) + " goalkeeper " + concedingTg.players[0].shortName;
+    } else if (isKeeperSave) {
+        // Defending team's goalkeeper made the save against the attacking team's shot!
+        teamName = teamNameForInfo(defendingInfo);
+        std::string oppTeam = teamNameForInfo(attackingInfo);
+        playerName = keeperNameForInfo(defendingInfo);
+
+        int atkTeamNum = (attackingInfo == team1Info) ? 1 : 2;
+        std::string shooter;
+        if (s_lastTouch.teamNum == atkTeamNum && !s_lastTouch.name.empty() &&
+            s_frameCounter >= s_lastTouch.frameTick && (s_frameCounter - s_lastTouch.frameTick) < 150) {
+            shooter = s_lastTouch.name;
+        }
+        detail = teamName + " goalkeeper" + (playerName.empty() ? "" : (" " + playerName)) +
+                 " saved shot from " + oppTeam + (shooter.empty() ? "" : (" (" + shooter + ")")) +
+                 " (NOT " + oppTeam + "'s goalkeeper)";
+    } else if (isAttackGoalMouth) {
+        // Attacking team was shooting at defending team's goal
+        teamName = teamNameForInfo(attackingInfo);
+        std::string defTeam = teamNameForInfo(defendingInfo);
+        std::string defGk = keeperNameForInfo(defendingInfo);
+
+        int atkTeamNum = (attackingInfo == team1Info) ? 1 : 2;
+        if (s_lastTouch.teamNum == atkTeamNum && !s_lastTouch.name.empty() &&
+            s_frameCounter >= s_lastTouch.frameTick && (s_frameCounter - s_lastTouch.frameTick) < 150) {
+            playerName = s_lastTouch.name;
+        }
+        detail = teamName + " attacking " + defTeam + "'s goal" +
+                 (defGk.empty() ? "" : (" (defending GK: " + defGk + ")"));
+    } else if (isCardEvent) {
+        const TeamGeneralInfo *bookedTeam = swos.lastTeamBooked.asAligned();
+        teamName = teamNameForInfo(bookedTeam);
+        const Sprite *bookedSp = swos.bookedPlayer.asAligned();
+        if (bookedSp && bookedSp->playerOrdinal >= 1 && bookedSp->playerOrdinal <= kNumPlayersInTeam) {
+            const TeamGame& tg = (bookedSp->teamNumber == 1) ? swos.topTeamInGame : swos.bottomTeamInGame;
+            if (tg.players[bookedSp->playerOrdinal - 1].shortName[0] != '\0')
+                playerName = tg.players[bookedSp->playerOrdinal - 1].shortName;
+        }
+    } else {
+        const TeamGeneralInfo *activePtr = swos.lastTeamPlayed.asAligned();
+        if (!activePtr)
+            activePtr = swos.lastTeamPlayedBeforeBreak.asAligned();
+        teamName = teamNameForInfo(activePtr);
+        if (!s_lastTouch.name.empty() && (s_frameCounter - s_lastTouch.frameTick) < 90)
+            playerName = s_lastTouch.name;
     }
 
     MatchTelemetryEvent ev;
@@ -370,6 +452,8 @@ MatchTelemetrySnapshot captureMatchTelemetrySnapshot()
     if (tf2 && !snap.team2Human)
         snap.team2Human = (tf2->teamControls == kPlayerCoach || tf2->teamControls == kCoach);
 
+    snap.keeper1 = swos.topTeamInGame.players[0].shortName[0] ? swos.topTeamInGame.players[0].shortName : "";
+    snap.keeper2 = swos.bottomTeamInGame.players[0].shortName[0] ? swos.bottomTeamInGame.players[0].shortName : "";
     snap.players1 = collectKeyPlayers(swos.topTeamInGame);
     snap.players2 = collectKeyPlayers(swos.bottomTeamInGame);
 
@@ -424,6 +508,10 @@ std::string formatTelemetryPromptBlock(const MatchTelemetrySnapshot& snap)
     if (!snap.coach1.empty() || !snap.coach2.empty()) {
         out += "\nManagers: " + snap.team1 + " (" + (snap.coach1.empty() ? "Unknown" : snap.coach1) + ") vs " +
                snap.team2 + " (" + (snap.coach2.empty() ? "Unknown" : snap.coach2) + ").";
+    }
+    if (!snap.keeper1.empty() || !snap.keeper2.empty()) {
+        out += "\nGoalkeepers: " + snap.team1 + " GK = " + (snap.keeper1.empty() ? "Unknown" : snap.keeper1) +
+               " | " + snap.team2 + " GK = " + (snap.keeper2.empty() ? "Unknown" : snap.keeper2) + ".";
     }
     if (!snap.players1.empty())
         out += "\n" + snap.team1 + " XI: " + snap.players1;

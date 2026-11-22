@@ -311,6 +311,27 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
     assertTrue(parsedTweets[1].side == SupporterSide::kAway);
     assertTrue(parsedTweets[2].side == SupporterSide::kNeutral);
 
+    // 6. Fan personalities ai.ini round-trip & pundit stream routing
+    {
+        LlmConfig pCfg = getLlmConfig();
+        pCfg.personalities = {
+            { "calm", "You are a righteous and peaceful football fan." },
+            { "fanatic", "You are wicked and only think your team deserves to win." },
+        };
+        setLlmConfigForTest(pCfg);
+        const char *tmpIni = "tmp_test_personalities_ai.ini";
+        assertTrue(saveLlmConfig(tmpIni));
+        assertTrue(loadLlmConfig(tmpIni));
+        const auto& loaded = getLlmConfig();
+        assertEqual(loaded.personalities.size(), size_t{ 2 });
+        assertEqual(loaded.personalities[0].name, std::string("calm"));
+        assertEqual(loaded.personalities[1].name, std::string("fanatic"));
+        assertTrue(loaded.personalities[1].instruction.find("wicked") != std::string::npos);
+        std::remove(tmpIni);
+        pushPunditMessageToStream("Pundit: What a fingertip save by the keeper!");
+        resetSupporterStream();
+    }
+
     setLlmTransportForTest(nullptr);
     shutdownLlmClient();
     setLlmConfigForTest(prevCfg);

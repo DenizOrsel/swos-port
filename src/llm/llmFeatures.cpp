@@ -1,6 +1,8 @@
 #include "llmFeatures.h"
 #include "llmClient.h"
 #include "llmReportMenu.h"
+#include "matchTelemetry.h"
+#include "supporterStream.h"
 #include "continueAbortMenu.h"
 #include "controls.h"
 #include "darkRectangle.h"
@@ -821,64 +823,27 @@ void triggerLivePunditEvent(const char *eventLabel, bool highPriority)
     if (!highPriority && s_punditCooldownFrames > 0)
         return;
 
-    const TeamGeneralInfo *team1Info = nullptr;
-    const TeamGeneralInfo *team2Info = nullptr;
-    resolveTeam1AndTeam2(team1Info, team2Info);
-
-    const char *t1 = swos.topTeamInGame.teamName[0] ? swos.topTeamInGame.teamName : "HOME";
-    const char *t2 = swos.bottomTeamInGame.teamName[0] ? swos.bottomTeamInGame.teamName : "AWAY";
-    int g1 = swos.statsTeam1Goals;
-    int g2 = swos.statsTeam2Goals;
-    bool topHuman = (team1Info->playerNumber != 0 || team1Info->playerCoachNumber != 0);
-    bool botHuman = (team2Info->playerNumber != 0 || team2Info->playerCoachNumber != 0);
-
-    bool isGoalEvent = (std::strstr(eventLabel, "GOAL") != nullptr);
-    const TeamGeneralInfo *actingPtr = isGoalEvent
-        ? static_cast<const TeamGeneralInfo *>(swos.lastTeamScored.asAligned())
-        : static_cast<const TeamGeneralInfo *>(swos.lastTeamPlayedBeforeBreak.asAligned());
-
-    const char *actingTeam = nullptr;
-    const char *otherTeam = nullptr;
-    if ((isGoalEvent && swos.lastTeamScoredNumber == 1) || actingPtr == team1Info) {
-        actingTeam = t1;
-        otherTeam = t2;
-    } else if ((isGoalEvent && swos.lastTeamScoredNumber == 2) || actingPtr == team2Info) {
-        actingTeam = t2;
-        otherTeam = t1;
+    MatchTelemetrySnapshot snap = captureMatchTelemetrySnapshot();
+    std::string prompt = buildMatchPerspectiveContext(
+        snap.team1.c_str(), snap.team2.c_str(), snap.goals1, snap.goals2, snap.team1Human, snap.team2Human);
+    prompt += "\n" + formatTelemetryPromptBlock(snap);
+    prompt += "\nLatest event to react to right now: " + std::string(eventLabel);
+    if (!snap.recentEvents.empty()) {
+        const auto& latest = snap.recentEvents.back();
+        if (!latest.team.empty())
+            prompt += " (" + latest.team + ")";
+        if (!latest.player.empty())
+            prompt += " by " + latest.player;
+        if (!latest.detail.empty())
+            prompt += " [" + latest.detail + "]";
     }
-
-    std::string prompt = buildMatchPerspectiveContext(t1, t2, g1, g2, topHuman, botHuman);
-    prompt += "\nCurrent score: " + std::string(t1) + " " + std::to_string(g1) + "-" + std::to_string(g2) + " " + t2 + ".";
-    prompt += "\nEvent: " + std::string(eventLabel) + ".";
-    if (actingTeam) {
-        prompt += " Team that just acted/scored: " + std::string(actingTeam) +
-                  " (NOT " + otherTeam + "). Credit " + actingTeam + " accurately.";
-    }
-    if (isGoalEvent) {
-        const Sprite *scorerSprite = swos.currentScorer.asAligned();
-        if (scorerSprite && scorerSprite->playerOrdinal >= 1 && scorerSprite->playerOrdinal <= kNumPlayersInTeam) {
-            const TeamGame *scorerTeam = (scorerSprite->teamNumber == 1) ? &swos.topTeamInGame : &swos.bottomTeamInGame;
-            const char *scorerName = scorerTeam->players[scorerSprite->playerOrdinal - 1].shortName;
-            if (scorerName && scorerName[0] != '\0') {
-                prompt += " Scorer: " + std::string(scorerName) + ".";
-            }
-            if (swos.goalTypeScored == static_cast<int>(GoalType::kOwnGoal)) {
-                prompt += " Finish type: own goal.";
-            } else if (swos.penalty || std::strstr(eventLabel, "PENALTY") != nullptr) {
-                prompt += " Finish type: penalty kick.";
-            } else if (scorerSprite->state == PlayerState::kStaticHeader ||
-                       scorerSprite->state == PlayerState::kJumpHeader) {
-                prompt += " Finish type: header.";
-            } else {
-                prompt += " Finish type: footed shot (NOT a header).";
-            }
-        }
-    }
-    prompt += " React with ONE spontaneous, excited 1997 TV co-commentator sentence (short enough for a broadcast banner, plain text, no quotes).";
+    prompt += "\nReact with ONE spontaneous, excited 1997 TV co-commentator sentence grounded strictly in the telemetry facts above "
+              "(exact goalkeeper, exact team, exact scorer, exact finish type, exact minute). Plain text only, no quotes, no speaker prefix.";
 
     s_punditRequestId = enqueueLlmRequest(
         "You are an excited 1997 live football TV co-commentator like Barry Davies or Andy Gray. "
-        "Always credit the exact scoring/acting team accurately in one vivid, punchy broadcast sentence. Plain text only.",
+        "Always credit the exact goalkeeper, shooter, scorer, finish type, and team from the telemetry accurately. "
+        "One vivid, punchy broadcast sentence. Plain text only, no speaker label.",
         prompt);
     s_punditCooldownFrames = 360; // ~6 seconds cooldown between non-goal events
 }
@@ -896,30 +861,14 @@ void updateLivePunditTicker()
     std::string reply;
     if (tryTakeLlmResponse(s_punditRequestId, reply)) {
         s_punditRequestId = 0;
-        s_punditLines = wrapTextForSwosPrompt(reply, 48, 2);
-        if (!s_punditLines.empty())
-            s_punditDisplayFrames = 270; // ~4.5 seconds on screen
+        if (!reply.empty())
+            pushPunditMessageToStream(reply);
     }
 }
 
 void drawLivePunditTicker()
 {
-    if (s_punditDisplayFrames <= 0 || s_punditLines.empty())
-        return;
-    if (showingPostGameStats() || showingUserRequestedStats())
-        return;
-
-    constexpr int kLineH = 8;
-    int numLines = static_cast<int>(s_punditLines.size());
-    float barH = static_cast<float>(numLines * kLineH + 6);
-    float barY = static_cast<float>(kVgaHeight) - barH - 2.0f;
-    float barW = static_cast<float>(kVgaWidth + 2 * getGameScreenOffsetX());
-
-    drawDarkRectangle({ 0.0f, barY, barW, barH }, false);
-    for (int i = 0; i < numLines; ++i) {
-        int y = static_cast<int>(barY) + 3 + i * kLineH;
-        drawTextCentered(kVgaWidth / 2, y, s_punditLines[i].c_str(), kVgaWidth - 12, kWhiteText2, false);
-    }
+    // Live pundit commentary now renders directly inside the Live Chat Stream in yellow.
 }
 
 void onCareerWeeklyTickLlm()

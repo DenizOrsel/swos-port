@@ -10,6 +10,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <cstring>
 #include <deque>
 #include <sstream>
 
@@ -22,6 +23,7 @@ int s_staggerTimerFrames = 0;
 bool s_kickoffTriggered = false;
 bool s_userHidden = false;
 int s_avatarSeq = 0;
+size_t s_personalityCursor = 0;
 
 std::deque<SupporterTweet> s_pendingBatch;
 std::deque<SupporterTweet> s_visibleTweets;
@@ -386,6 +388,18 @@ void drawCompactAvatar(SDL_Renderer *r, float ax, float ay, float px, SupporterS
         SDL_RenderFillRectF(r, &fr);
     };
 
+    if (side == SupporterSide::kPundit) {
+        // Mini 8x8 broadcast microphone icon (gold/yellow accent)
+        fillUnit(2, 0, 4, 4, 255, 224, 72, 250);      // mic capsule
+        fillUnit(3, 1, 2, 2, 180, 145, 36, 250);      // mic grille
+        fillUnit(1, 3, 1, 2, 220, 224, 232, 240);     // left cradle
+        fillUnit(6, 3, 1, 2, 220, 224, 232, 240);     // right cradle
+        fillUnit(2, 5, 4, 1, 220, 224, 232, 240);     // cradle bottom
+        fillUnit(3, 6, 2, 1, 220, 224, 232, 240);     // stand stem
+        fillUnit(2, 7, 4, 1, 255, 224, 72, 240);      // stand base
+        return;
+    }
+
     if (side == SupporterSide::kNeutral && (variant % 2 == 0)) {
         // Mini 8x8 pixel football
         fillUnit(1, 0, 6, 8, 235, 238, 242, 245);
@@ -429,7 +443,26 @@ void enqueueSupporterBatchRequest(const char *triggerContext)
     MatchTelemetrySnapshot snap = captureMatchTelemetrySnapshot();
     std::string prompt = formatTelemetryPromptBlock(snap);
     prompt += "\nTrigger: " + std::string(triggerContext ? triggerContext : "LIVE FLOW");
-    prompt += "\nGenerate 2 to 3 short live supporter chat messages reacting to this exact moment (clock, score, territory, events).";
+    if (!snap.recentEvents.empty() && triggerContext &&
+        std::strcmp(triggerContext, "KICKOFF") != 0 &&
+        std::strcmp(triggerContext, "LIVE MATCH FLOW") != 0) {
+        const auto& latest = snap.recentEvents.back();
+        if (!latest.detail.empty())
+            prompt += " (" + latest.detail + ")";
+    }
+
+    const auto& personas = cfg.personalities.empty() ? defaultFanPersonalities() : cfg.personalities;
+    size_t count = std::min<size_t>(3, personas.size());
+    prompt += "\nGenerate " + std::to_string(count) + " short live supporter chat messages reacting to this exact moment (clock, score, territory, goalkeeper/scorer events).";
+    if (!personas.empty()) {
+        prompt += "\nGive each message its own distinct fan personality from this list:";
+        for (size_t i = 0; i < count; ++i) {
+            const auto& p = personas[(s_personalityCursor + i) % personas.size()];
+            prompt += "\n- Message " + std::to_string(i + 1) + " [" + p.name + "]: " + p.instruction;
+        }
+        s_personalityCursor = (s_personalityCursor + count) % personas.size();
+    }
+
     prompt += "\nFormat STRICTLY one message per line as: HANDLE|SIDE|MESSAGE";
     prompt += "\n- HANDLE: realistic 1997 fan nickname (no spaces, max 13 chars, mixed case e.g. Fan_atic, Terrace97, GoalHunter)";
     prompt += "\n- SIDE: HOME (supports " + snap.team1 + "), AWAY (supports " + snap.team2 + "), or NEUTRAL";
@@ -437,7 +470,8 @@ void enqueueSupporterBatchRequest(const char *triggerContext)
     prompt += "\nOutput ONLY the HANDLE|SIDE|MESSAGE lines. No intro, no numbering, no markdown.";
 
     const std::string sys = "You simulate a live 1997 football fan chat stream watching the match. "
-                            "Be passionate, varied, and strictly faithful to the telemetry facts (score, minute, scorer, finish type, stats). "
+                            "Be passionate, varied in personality (some calm/peaceful, some biased fanatics, etc.), "
+                            "and strictly faithful to the telemetry facts (exact goalkeeper, exact team, score, minute, scorer, finish type, stats). "
                             "Use natural sentence case (not all caps). Output strictly HANDLE|SIDE|MESSAGE lines only.";
 
     s_streamRequestId = enqueueLlmRequest(sys, prompt);
@@ -509,10 +543,41 @@ void toggleSupporterStreamVisible()
     s_userHidden = !s_userHidden;
 }
 
+void pushPunditMessageToStream(const std::string& rawMessage)
+{
+    std::string msg = sanitizeStreamText(trimStream(rawMessage));
+    if (msg.empty())
+        return;
+
+    // Strip any accidental "Pundit:" or "Commentator:" prefix if the model emitted one
+    std::string upper = toUpperAscii(msg);
+    if (upper.rfind("PUNDIT:", 0) == 0)
+        msg = trimStream(msg.substr(7));
+    else if (upper.rfind("COMMENTATOR:", 0) == 0)
+        msg = trimStream(msg.substr(12));
+
+    if (msg.empty())
+        return;
+    if (msg.size() > 140)
+        msg.resize(140);
+
+    SupporterTweet tw;
+    tw.side = SupporterSide::kPundit;
+    tw.message = std::move(msg);
+    tw.avatarVariant = s_avatarSeq++;
+    s_visibleTweets.push_front(std::move(tw));
+
+    const auto& cfg = getLlmConfig();
+    int maxTweets = std::clamp(cfg.telemetry.maxVisibleTweets, 3, 6);
+    while (static_cast<int>(s_visibleTweets.size()) > maxTweets)
+        s_visibleTweets.pop_back();
+}
+
 bool isSupporterStreamVisible()
 {
     const auto& cfg = getLlmConfig();
-    return cfg.enabled && cfg.features.supporterStream && cfg.telemetry.enabled && !s_userHidden;
+    bool anyStreamFeature = (cfg.features.supporterStream && cfg.telemetry.enabled) || cfg.features.livePunditTicker;
+    return cfg.enabled && anyStreamFeature && !s_userHidden;
 }
 
 void triggerSupporterStreamEvent(const char *eventLabel, bool highPriority /* = false */)
@@ -536,16 +601,19 @@ void updateSupporterStream()
         return;
 
     const auto& cfg = getLlmConfig();
-    if (!cfg.enabled || !cfg.features.supporterStream || !cfg.telemetry.enabled)
+    if (!cfg.enabled)
+        return;
+
+    for (auto& tw : s_visibleTweets)
+        ++tw.ageFrames;
+
+    if (!cfg.features.supporterStream || !cfg.telemetry.enabled)
         return;
 
     if (s_cooldownFrames > 0)
         --s_cooldownFrames;
     if (s_staggerTimerFrames > 0)
         --s_staggerTimerFrames;
-
-    for (auto& tw : s_visibleTweets)
-        ++tw.ageFrames;
 
     // Poll async LLM response without blocking
     if (s_streamRequestId != 0) {
@@ -592,7 +660,8 @@ void drawSupporterStreamOverlay()
         return;
 
     const auto& cfg = getLlmConfig();
-    if (!cfg.enabled || !cfg.features.supporterStream || !cfg.telemetry.enabled)
+    bool anyStreamFeature = (cfg.features.supporterStream && cfg.telemetry.enabled) || cfg.features.livePunditTicker;
+    if (!cfg.enabled || !anyStreamFeature)
         return;
     if (s_visibleTweets.empty())
         return;
@@ -644,10 +713,11 @@ void drawSupporterStreamOverlay()
 
     for (size_t i = 0; i < s_visibleTweets.size(); ++i) {
         const auto& tw = s_visibleTweets[i];
-        std::string handleLabel = tw.handle + ": ";
-        int handleW = measureMiniTextUnits(handleLabel) + 2;
+        bool isPundit = (tw.side == SupporterSide::kPundit);
+        std::string handleLabel = isPundit ? std::string() : (tw.handle + ": ");
+        int handleW = isPundit ? 0 : (measureMiniTextUnits(handleLabel) + 2);
         int firstLineAvail = std::max(0, kTextMaxUnits - handleW);
-        auto lines = wrapInlineMessage(tw.message, firstLineAvail, kTextMaxUnits, 3);
+        auto lines = wrapInlineMessage(tw.message, firstLineAvail, kTextMaxUnits, isPundit ? 4 : 3);
         int blockH = std::max(kAvatarSize + 1, static_cast<int>(lines.size()) * kLineStepUnits) + kTweetGapUnits;
 
         if (curY + blockH > maxBodyBottom)
@@ -710,26 +780,32 @@ void drawSupporterStreamOverlay()
     drawMiniText(renderer, atlas, panelX + 38.0f * px, panelY + 4.0f * px, px,
         "CHAT STREAM", { 238, 244, 240, 255 }, 245, true);
 
-    // 2. Render each compact supporter message with inline handle + avatar
+    // 2. Render each compact supporter message (or yellow live commentator message)
     for (const auto& item : layout) {
         float rowY = panelY + item.yUnits * px;
         drawCompactAvatar(renderer, panelX + kPadX * px, rowY, px,
             item.tw->side, item.tw->avatarVariant, static_cast<Uint8>(item.alpha));
 
-        SDL_Color handleColor = (item.tw->side == SupporterSide::kHome) ? SDL_Color{ 122, 198, 255, 255 } :
-                                (item.tw->side == SupporterSide::kAway) ? SDL_Color{ 255, 214, 96, 255 } :
-                                                                          SDL_Color{ 176, 232, 196, 255 };
+        bool isPundit = (item.tw->side == SupporterSide::kPundit);
         float textX = panelX + kTextStartUnits * px;
-        float afterHandleX = drawMiniText(renderer, atlas, textX, rowY, px,
-            item.handleLabel, handleColor, static_cast<Uint8>(item.alpha), true);
+        float firstLineX = textX;
 
+        if (!isPundit && !item.handleLabel.empty()) {
+            SDL_Color handleColor = (item.tw->side == SupporterSide::kHome) ? SDL_Color{ 122, 198, 255, 255 } :
+                                    (item.tw->side == SupporterSide::kAway) ? SDL_Color{ 255, 214, 96, 255 } :
+                                                                              SDL_Color{ 176, 232, 196, 255 };
+            firstLineX = drawMiniText(renderer, atlas, textX, rowY, px,
+                item.handleLabel, handleColor, static_cast<Uint8>(item.alpha), true);
+        }
+
+        SDL_Color bodyColor = isPundit ? SDL_Color{ 255, 226, 78, 255 } : SDL_Color{ 244, 246, 248, 255 };
         for (size_t li = 0; li < item.lines.size(); ++li) {
             if (item.lines[li].empty())
                 continue;
-            float lineX = (li == 0) ? afterHandleX : textX;
+            float lineX = (li == 0) ? firstLineX : textX;
             float lineY = rowY + static_cast<float>(li * kLineStepUnits) * px;
             drawMiniText(renderer, atlas, lineX, lineY, px,
-                item.lines[li], { 244, 246, 248, 255 }, static_cast<Uint8>(item.alpha), false);
+                item.lines[li], bodyColor, static_cast<Uint8>(item.alpha), false);
         }
     }
 

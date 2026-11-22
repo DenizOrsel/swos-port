@@ -403,6 +403,14 @@ enabled = true
 exportMatchJson = false
 streamUpdateSeconds = 18
 maxVisibleTweets = 5
+
+[personalities]
+personalities = calm, fanatic, tactical, pessimist, joker
+calm = You are a fair, peaceful, and respectful football fan who appreciates good play from both sides.
+fanatic = You are a fiercely biased, ultra-passionate terrace fanatic who thinks your team deserves every call and every win.
+tactical = You are an analytical armchair tactician obsessed with formations, pressing, and midfield control.
+pessimist = You are a nervous, glass-half-empty supporter who always fears a late collapse or missed chance.
+joker = You are a witty 1997 terrace comedian who reacts with cheeky banter and dry humour.
 """
             archive.writestr(str(root / "ai.ini"), zipBytes(defaultAiIni))
             archive.writestr(

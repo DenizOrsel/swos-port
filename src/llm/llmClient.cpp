@@ -121,6 +121,18 @@ void writeAiIni(const std::string& path, const LlmConfig& cfg)
     ini.SetLongValue("telemetry", "streamUpdateSeconds", cfg.telemetry.streamUpdateSeconds);
     ini.SetLongValue("telemetry", "maxVisibleTweets", cfg.telemetry.maxVisibleTweets);
 
+    const auto& plist = cfg.personalities.empty() ? defaultFanPersonalities() : cfg.personalities;
+    std::string namesList;
+    for (size_t i = 0; i < plist.size(); ++i) {
+        if (i > 0)
+            namesList += ", ";
+        namesList += plist[i].name;
+    }
+    ini.SetValue("personalities", "personalities", namesList.c_str());
+    for (const auto& p : plist) {
+        ini.SetValue("personalities", p.name.c_str(), p.instruction.c_str());
+    }
+
     SI_Error rc = ini.SaveFile(path.c_str());
     if (rc < 0)
         logWarn("Failed to write %s", path.c_str());
@@ -367,6 +379,17 @@ void initLlmClient()
     }
 }
 
+std::vector<FanPersonality> defaultFanPersonalities()
+{
+    return {
+        { "calm", "You are a fair, peaceful, and respectful football fan who appreciates good play from both sides." },
+        { "fanatic", "You are a fiercely biased, ultra-passionate terrace fanatic who thinks your team deserves every call and every win." },
+        { "tactical", "You are an analytical armchair tactician obsessed with formations, pressing, and midfield control." },
+        { "pessimist", "You are a nervous, glass-half-empty supporter who always fears a late collapse or missed chance." },
+        { "joker", "You are a witty 1997 terrace comedian who reacts with cheeky banter and dry humour." },
+    };
+}
+
 void shutdownLlmClient()
 {
     {
@@ -431,6 +454,29 @@ bool loadLlmConfig(const char *iniPath /* = nullptr */)
         static_cast<int>(ini.GetLongValue("telemetry", "streamUpdateSeconds", s_config.telemetry.streamUpdateSeconds)), 5, 120);
     s_config.telemetry.maxVisibleTweets = std::clamp(
         static_cast<int>(ini.GetLongValue("telemetry", "maxVisibleTweets", s_config.telemetry.maxVisibleTweets)), 3, 6);
+
+    const char *rawPersonalities = ini.GetValue("personalities", "personalities", nullptr);
+    if (rawPersonalities && rawPersonalities[0] != '\0') {
+        std::vector<FanPersonality> parsed;
+        std::string listStr(rawPersonalities);
+        size_t pos = 0;
+        while (pos <= listStr.size()) {
+            size_t comma = listStr.find(',', pos);
+            std::string token = trimCopy(listStr.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos));
+            if (!token.empty()) {
+                const char *instr = ini.GetValue("personalities", token.c_str(), nullptr);
+                std::string instrStr = instr ? trimCopy(instr) : std::string();
+                if (instrStr.empty())
+                    instrStr = "You are a " + token + " football fan watching the match.";
+                parsed.push_back({ std::move(token), std::move(instrStr) });
+            }
+            if (comma == std::string::npos)
+                break;
+            pos = comma + 1;
+        }
+        if (!parsed.empty())
+            s_config.personalities = std::move(parsed);
+    }
 
     logInfo("Loaded LLM config (%s, provider=%s, model=%s, enabled=%s)",
         resolvedPath.c_str(), providerToString(s_config.provider), s_config.model.c_str(),

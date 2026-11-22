@@ -3,12 +3,20 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 enum class LlmProvider {
     kOllama,
     kOpenAi,
     kCustom,
 };
+
+struct FanPersonality {
+    std::string name;
+    std::string instruction;
+};
+
+std::vector<FanPersonality> defaultFanPersonalities();
 
 struct LlmFeaturesConfig {
     bool postMatchNewspaper = true;
@@ -41,6 +49,7 @@ struct LlmConfig {
     bool think = false;
     LlmFeaturesConfig features;
     LlmTelemetryConfig telemetry;
+    std::vector<FanPersonality> personalities = defaultFanPersonalities();
 };
 
 struct LlmHttpResult {

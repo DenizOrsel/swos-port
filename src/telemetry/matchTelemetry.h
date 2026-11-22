@@ -25,6 +25,8 @@ struct MatchTelemetrySnapshot {
     std::string team2;
     std::string coach1;
     std::string coach2;
+    std::string keeper1;
+    std::string keeper2;
     std::string players1;
     std::string players2;
     bool team1Human = false;
