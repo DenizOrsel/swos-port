@@ -37,6 +37,7 @@ enum PitchTypes {
 };
 
 static int m_pitchType;
+static bool m_pitchTypeResolved = false;
 static int m_pitchNumber;
 
 static int m_res;
@@ -68,11 +69,17 @@ void setPitchTypeAndNumber()
 {
     setPitchType();
     setPitchNumber();
+    m_pitchTypeResolved = true;
 }
 
 int getPitchType()
 {
     return m_pitchType;
+}
+
+bool isPitchTypeResolved()
+{
+    return m_pitchTypeResolved;
 }
 
 int getPitchNumber()

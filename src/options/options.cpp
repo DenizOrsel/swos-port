@@ -205,7 +205,7 @@ static void setDefaultOptions()
 {
     swos.g_autoReplays = 1;
     swos.g_autoSaveHighlights = 1;
-    swos.g_pitchType = -1;
+    swos.g_pitchType = -2;
     m_showPreMatchMenus = 1;
 }
 

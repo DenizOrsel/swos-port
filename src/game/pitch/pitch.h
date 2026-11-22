@@ -6,6 +6,7 @@ constexpr int kPitchHeight = 848;
 void initPitches();
 void setPitchTypeAndNumber();
 int getPitchType();
+bool isPitchTypeResolved();
 int getPitchNumber();
 void loadPitch();
 void reloadPitchTexturesIfNeeded();

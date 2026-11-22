@@ -153,9 +153,9 @@ void gameLoop(TeamGame *topTeam, TeamGame *bottomTeam)
 void showStadiumScreenAndFadeOutMusic(TeamGame *topTeam, TeamGame *bottomTeam, int maxSubstitutes)
 {
     if (showPreMatchMenus()) {
-        beginPreMatchScoutingRequest(topTeam, bottomTeam);
         showStadiumMenu(topTeam, bottomTeam, maxSubstitutes, [&]() {
             initMatch(topTeam, bottomTeam, true);
+            beginPreMatchScoutingRequest(topTeam, bottomTeam);
         });
         showPreMatchScoutingIfReady();
     } else {

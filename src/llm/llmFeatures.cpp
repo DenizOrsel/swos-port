@@ -240,6 +240,100 @@ std::string buildMatchPerspectiveContext(const char *t1, const char *t2, int g1,
     return "Match: " + std::string(t1) + " " + std::to_string(g1) + "-" + std::to_string(g2) + " " + t2 + ".";
 }
 
+struct LlmMatchContext {
+    std::string team1;
+    std::string team2;
+    std::string coach1;
+    std::string coach2;
+    std::string players1;
+    std::string players2;
+    std::string competition;
+    std::string pitchCondition;
+    bool team1Human = false;
+    bool team2Human = false;
+};
+
+std::string extractCoachName(const TeamFile *tf)
+{
+    if (!tf || tf->coachName[0] == '\0')
+        return {};
+    std::string name;
+    for (size_t i = 0; i < sizeof(tf->coachName) && tf->coachName[i] != '\0'; ++i) {
+        unsigned char ch = tf->coachName[i];
+        if (ch >= 0x20 && ch <= 0x7E)
+            name.push_back(static_cast<char>(ch));
+    }
+    return name;
+}
+
+std::string collectOutfieldNames(const TeamGame *team)
+{
+    if (!team)
+        return {};
+    std::string names;
+    for (int i = 1; i < 11; ++i) {
+        if (team->players[i].shortName[0] == '\0')
+            continue;
+        if (!names.empty())
+            names += ", ";
+        names += team->players[i].shortName;
+        if (names.size() > 56)
+            break;
+    }
+    return names;
+}
+
+LlmMatchContext buildLlmMatchContext(const TeamGame *preMatchTop = nullptr, const TeamGame *preMatchBot = nullptr)
+{
+    LlmMatchContext ctx;
+    if (preMatchTop && preMatchBot) {
+        ctx.team1 = preMatchTop->teamName[0] ? preMatchTop->teamName : "HOME";
+        ctx.team2 = preMatchBot->teamName[0] ? preMatchBot->teamName : "AWAY";
+        ctx.players1 = collectOutfieldNames(preMatchTop);
+        ctx.players2 = collectOutfieldNames(preMatchBot);
+    } else {
+        ctx.team1 = swos.topTeamInGame.teamName[0] ? swos.topTeamInGame.teamName : "HOME";
+        ctx.team2 = swos.bottomTeamInGame.teamName[0] ? swos.bottomTeamInGame.teamName : "AWAY";
+        ctx.players1 = collectOutfieldNames(&swos.topTeamInGame);
+        ctx.players2 = collectOutfieldNames(&swos.bottomTeamInGame);
+    }
+
+    const TeamGeneralInfo *team1Info = nullptr;
+    const TeamGeneralInfo *team2Info = nullptr;
+    resolveTeam1AndTeam2(team1Info, team2Info);
+    ctx.team1Human = (team1Info->playerNumber != 0 || team1Info->playerCoachNumber != 0);
+    ctx.team2Human = (team2Info->playerNumber != 0 || team2Info->playerCoachNumber != 0);
+
+    const TeamFile *tf1 = swos.playMatchTeam1Ptr.asAligned();
+    const TeamFile *tf2 = swos.playMatchTeam2Ptr.asAligned();
+    ctx.coach1 = extractCoachName(tf1);
+    ctx.coach2 = extractCoachName(tf2);
+    if (tf1 && !ctx.team1Human)
+        ctx.team1Human = (tf1->teamControls == kPlayerCoach || tf1->teamControls == kCoach);
+    if (tf2 && !ctx.team2Human)
+        ctx.team2Human = (tf2->teamControls == kPlayerCoach || tf2->teamControls == kCoach);
+
+    ctx.competition = gameModeName();
+    if (isPitchTypeResolved()) {
+        ctx.pitchCondition = pitchConditionName(getPitchType());
+    }
+    return ctx;
+}
+
+std::string formatLlmMatchInfoBase(const LlmMatchContext& ctx)
+{
+    std::string info = "Competition: " + ctx.competition;
+    if (!ctx.pitchCondition.empty())
+        info += ", Pitch: " + ctx.pitchCondition;
+    info += "\n" + ctx.team1 + (ctx.team1Human ? " [HUMAN]" : " [CPU]");
+    if (!ctx.coach1.empty()) info += " (Coach: " + ctx.coach1 + ")";
+    if (!ctx.players1.empty()) info += " | Players: " + ctx.players1;
+    info += "\n" + ctx.team2 + (ctx.team2Human ? " [HUMAN]" : " [CPU]");
+    if (!ctx.coach2.empty()) info += " (Coach: " + ctx.coach2 + ")";
+    if (!ctx.players2.empty()) info += " | Players: " + ctx.players2;
+    return info;
+}
+
 } // namespace
 
 std::vector<std::string> wrapTextForSwosPrompt(const std::string& text, size_t maxLineLen, size_t maxLines)
@@ -291,29 +385,21 @@ void beginPostMatchNewspaperRequest()
 
     s_postMatchTriggered = true;
 
-    const TeamGeneralInfo *team1Info = nullptr;
-    const TeamGeneralInfo *team2Info = nullptr;
-    resolveTeam1AndTeam2(team1Info, team2Info);
-
-    const char *t1 = swos.topTeamInGame.teamName[0] ? swos.topTeamInGame.teamName : "HOME";
-    const char *t2 = swos.bottomTeamInGame.teamName[0] ? swos.bottomTeamInGame.teamName : "AWAY";
+    LlmMatchContext ctx = buildLlmMatchContext();
     int g1 = swos.statsTeam1Goals;
     int g2 = swos.statsTeam2Goals;
-    bool topHuman = (team1Info->playerNumber != 0 || team1Info->playerCoachNumber != 0);
-    bool botHuman = (team2Info->playerNumber != 0 || team2Info->playerCoachNumber != 0);
     const auto stats = getStats();
     std::string s1 = getMatchScorersSummary(1);
     std::string s2 = getMatchScorersSummary(2);
 
-    std::string prompt = buildMatchPerspectiveContext(t1, t2, g1, g2, topHuman, botHuman);
-    prompt += "\nScoreline: " + std::string(t1) + " " + std::to_string(g1) + "-" + std::to_string(g2) + " " + t2;
+    std::string prompt = buildMatchPerspectiveContext(ctx.team1.c_str(), ctx.team2.c_str(), g1, g2, ctx.team1Human, ctx.team2Human);
+    prompt += "\n" + formatLlmMatchInfoBase(ctx);
+    prompt += "\nScoreline: " + ctx.team1 + " " + std::to_string(g1) + "-" + std::to_string(g2) + " " + ctx.team2;
     if (swos.playingPenalties) {
         prompt += " (PENS " + std::to_string(swos.team1PenaltyGoals) + "-" + std::to_string(swos.team2PenaltyGoals) + ")";
     }
-    prompt += "\nCompetition: " + std::string(gameModeName());
-    prompt += ", Pitch: " + std::string(pitchConditionName(getPitchType()));
-    if (!s1.empty()) prompt += "\n" + std::string(t1) + " scorers: " + s1;
-    if (!s2.empty()) prompt += "\n" + std::string(t2) + " scorers: " + s2;
+    if (!s1.empty()) prompt += "\n" + ctx.team1 + " scorers: " + s1;
+    if (!s2.empty()) prompt += "\n" + ctx.team2 + " scorers: " + s2;
     prompt += "\nStats: Shots " + std::to_string(stats.team1.goalAttempts) + "-" + std::to_string(stats.team2.goalAttempts);
     prompt += ", Possession " + std::to_string(stats.team1.ballPossession) + "%-" + std::to_string(stats.team2.ballPossession) + "%.";
     prompt += "\nWrite a punchy 1990s British sports newspaper blurb:\n"
@@ -581,30 +667,8 @@ void beginPreMatchScoutingRequest(const TeamGame *topTeam, const TeamGame *botto
     if (!cfg.enabled || !cfg.features.preMatchScouting)
         return;
 
-    auto collectNames = [](const TeamGame *team) {
-        std::string names;
-        for (int i = 0; i < 11; ++i) {
-            if (team->players[i].shortName[0] == '\0')
-                continue;
-            if (i == 0)
-                continue; // skip GK to highlight outfield threats
-            if (!names.empty())
-                names += ", ";
-            names += team->players[i].shortName;
-            if (names.size() > 48)
-                break;
-        }
-        return names;
-    };
-
-    const char *t1 = topTeam->teamName[0] ? topTeam->teamName : "HOME";
-    const char *t2 = bottomTeam->teamName[0] ? bottomTeam->teamName : "AWAY";
-    std::string prompt = "Pre-match: " + std::string(t1) + " vs " + t2 +
-        " (" + gameModeName() + ", Pitch: " + pitchConditionName(getPitchType()) + ").";
-    std::string p1 = collectNames(topTeam);
-    std::string p2 = collectNames(bottomTeam);
-    if (!p1.empty()) prompt += "\n" + std::string(t1) + " key men: " + p1;
-    if (!p2.empty()) prompt += "\n" + std::string(t2) + " key men: " + p2;
+    LlmMatchContext ctx = buildLlmMatchContext(topTeam, bottomTeam);
+    std::string prompt = "Pre-match briefing:\n" + formatLlmMatchInfoBase(ctx);
     prompt += "\nGive a 2-sentence assistant manager scout & pitch briefing (max 150 chars total). Plain ASCII, no markdown.";
 
     s_preMatchRequestId = enqueueLlmRequest(
