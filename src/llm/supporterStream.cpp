@@ -451,9 +451,24 @@ void enqueueSupporterBatchRequest(const char *triggerContext)
             prompt += " (" + latest.detail + ")";
     }
 
+    if (!s_visibleTweets.empty()) {
+        prompt += "\nRecent chat stream (oldest to newest - fans can banter, tease, or @Handle reply to these, or react to the TV Commentator, but output ONLY new messages):";
+        size_t histCount = std::min<size_t>(5, s_visibleTweets.size());
+        for (size_t i = histCount; i > 0; --i) {
+            const auto& prev = s_visibleTweets[i - 1];
+            if (prev.side == SupporterSide::kPundit) {
+                prompt += "\n- [TV Commentator]: " + prev.message;
+            } else {
+                const char *sideLabel = (prev.side == SupporterSide::kHome) ? "HOME" :
+                                        (prev.side == SupporterSide::kAway) ? "AWAY" : "NEUTRAL";
+                prompt += "\n- @" + prev.handle + " (" + sideLabel + "): " + prev.message;
+            }
+        }
+    }
+
     const auto& personas = cfg.personalities.empty() ? defaultFanPersonalities() : cfg.personalities;
     size_t count = std::min<size_t>(3, personas.size());
-    prompt += "\nGenerate " + std::to_string(count) + " short live supporter chat messages reacting to this exact moment (clock, score, territory, goalkeeper/scorer events).";
+    prompt += "\nGenerate " + std::to_string(count) + " NEW short live supporter chat messages reacting to this exact moment (clock, score, territory, goalkeeper/scorer events) and naturally bantering with or @Handle-replying to earlier chatters when fitting.";
     if (!personas.empty()) {
         prompt += "\nGive each message its own distinct fan personality from this list:";
         for (size_t i = 0; i < count; ++i) {
