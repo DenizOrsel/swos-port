@@ -312,18 +312,52 @@ bool resolveHumanCareerSide(const TeamGame *topTeam, const TeamGame *bottomTeam,
         team2Info = &swos.topTeamData;
     }
 
-    bool t1Human = (team1Info->playerNumber != 0 || team1Info->playerCoachNumber != 0);
-    bool t2Human = (team2Info->playerNumber != 0 || team2Info->playerCoachNumber != 0);
+    // 1. Primary: exact in-game team controls set by initializeIngameTeams()
+    const TeamFile *gt1 = swos.gameTeam1.asAligned();
+    const TeamFile *gt2 = swos.gameTeam2.asAligned();
+    bool t1Human = (team1Info->playerNumber != 0 || team1Info->playerCoachNumber != 0 || team1Info->isPlCoach != 0);
+    bool t2Human = (team2Info->playerNumber != 0 || team2Info->playerCoachNumber != 0 || team2Info->isPlCoach != 0);
 
-    const TeamFile *tf1 = swos.playMatchTeam1Ptr.asAligned();
-    const TeamFile *tf2 = swos.playMatchTeam2Ptr.asAligned();
-    if (tf1 && !t1Human)
-        t1Human = (tf1->teamControls == kPlayerCoach || tf1->teamControls == kCoach);
-    if (tf2 && !t2Human)
-        t2Human = (tf2->teamControls == kPlayerCoach || tf2->teamControls == kCoach);
+    if (!t1Human && !t2Human) {
+        if (gt1)
+            t1Human = (gt1->teamControls != kComputerTeam && gt1->teamControls != kTeamNotSelected);
+        if (gt2)
+            t2Human = (gt2->teamControls != kComputerTeam && gt2->teamControls != kTeamNotSelected);
+    }
 
-    if (t1Human == t2Human)
+    if (!t1Human && !t2Human) {
+        t1Human = (swos.team1Computer == 0);
+        t2Human = (swos.team2Computer == 0);
+    }
+
+    // 2. Fallback: match active career club name directly against topTeam / bottomTeam
+    if (t1Human == t2Human) {
+        std::string careerClub;
+        const auto& mgr = HotseatCareerManager::get();
+        if (mgr.isActive() && mgr.activePlayerIndex() >= 0 && mgr.activePlayerIndex() < mgr.numPlayers()) {
+            careerClub = toUpperAscii(trimCopy(mgr.activePlayer().teamName));
+        } else {
+            const auto *hdr = reinterpret_cast<const TeamFileHeader *>(&SwosVM::g_memByte[CareerOffsets::kCareerTeam]);
+            if (hdr && hdr->teamName[0] != '\0')
+                careerClub = toUpperAscii(trimCopy(hdr->teamName));
+        }
+        if (!careerClub.empty()) {
+            std::string topName = toUpperAscii(trimCopy(topTeam->teamName));
+            std::string botName = toUpperAscii(trimCopy(bottomTeam->teamName));
+            bool matchTop = (topName == careerClub);
+            bool matchBot = (botName == careerClub);
+            if (matchTop != matchBot) {
+                t1Human = matchTop;
+                t2Human = matchBot;
+            }
+        }
+    }
+
+    if (t1Human == t2Human) {
+        logInfo("Sponsor challenge skipped: ambiguous human side (t1Human=%d, t2Human=%d, top='%s', bot='%s')",
+            t1Human ? 1 : 0, t2Human ? 1 : 0, topTeam->teamName, bottomTeam->teamName);
         return false;
+    }
 
     outHumanIsTeam1 = t1Human;
     return true;

@@ -388,17 +388,21 @@ LlmMatchContext buildLlmMatchContext(const TeamGame *preMatchTop = nullptr, cons
     const TeamGeneralInfo *team1Info = nullptr;
     const TeamGeneralInfo *team2Info = nullptr;
     resolveTeam1AndTeam2(team1Info, team2Info);
-    ctx.team1Human = (team1Info->playerNumber != 0 || team1Info->playerCoachNumber != 0);
-    ctx.team2Human = (team2Info->playerNumber != 0 || team2Info->playerCoachNumber != 0);
+    ctx.team1Human = (team1Info->playerNumber != 0 || team1Info->playerCoachNumber != 0 || team1Info->isPlCoach != 0);
+    ctx.team2Human = (team2Info->playerNumber != 0 || team2Info->playerCoachNumber != 0 || team2Info->isPlCoach != 0);
 
-    const TeamFile *tf1 = swos.playMatchTeam1Ptr.asAligned();
-    const TeamFile *tf2 = swos.playMatchTeam2Ptr.asAligned();
+    const TeamFile *tf1 = swos.gameTeam1.asAligned();
+    const TeamFile *tf2 = swos.gameTeam2.asAligned();
+    if (!tf1) tf1 = swos.playMatchTeam1Ptr.asAligned();
+    if (!tf2) tf2 = swos.playMatchTeam2Ptr.asAligned();
     ctx.coach1 = extractCoachName(tf1);
     ctx.coach2 = extractCoachName(tf2);
-    if (tf1 && !ctx.team1Human)
-        ctx.team1Human = (tf1->teamControls == kPlayerCoach || tf1->teamControls == kCoach);
-    if (tf2 && !ctx.team2Human)
-        ctx.team2Human = (tf2->teamControls == kPlayerCoach || tf2->teamControls == kCoach);
+    if (!ctx.team1Human && !ctx.team2Human) {
+        if (tf1)
+            ctx.team1Human = (tf1->teamControls == kPlayerCoach || tf1->teamControls == kCoach);
+        if (tf2)
+            ctx.team2Human = (tf2->teamControls == kPlayerCoach || tf2->teamControls == kCoach);
+    }
 
     ctx.competition = gameModeName();
     if (isPitchTypeResolved()) {

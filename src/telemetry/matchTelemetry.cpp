@@ -688,17 +688,21 @@ MatchTelemetrySnapshot captureMatchTelemetrySnapshot()
 
     snap.team1 = swos.topTeamInGame.teamName[0] ? swos.topTeamInGame.teamName : "HOME";
     snap.team2 = swos.bottomTeamInGame.teamName[0] ? swos.bottomTeamInGame.teamName : "AWAY";
-    snap.team1Human = (team1Info->playerNumber != 0 || team1Info->playerCoachNumber != 0);
-    snap.team2Human = (team2Info->playerNumber != 0 || team2Info->playerCoachNumber != 0);
+    snap.team1Human = (team1Info->playerNumber != 0 || team1Info->playerCoachNumber != 0 || team1Info->isPlCoach != 0);
+    snap.team2Human = (team2Info->playerNumber != 0 || team2Info->playerCoachNumber != 0 || team2Info->isPlCoach != 0);
 
-    const TeamFile *tf1 = swos.playMatchTeam1Ptr.asAligned();
-    const TeamFile *tf2 = swos.playMatchTeam2Ptr.asAligned();
+    const TeamFile *tf1 = swos.gameTeam1.asAligned();
+    const TeamFile *tf2 = swos.gameTeam2.asAligned();
+    if (!tf1) tf1 = swos.playMatchTeam1Ptr.asAligned();
+    if (!tf2) tf2 = swos.playMatchTeam2Ptr.asAligned();
     snap.coach1 = cleanCoachName(tf1);
     snap.coach2 = cleanCoachName(tf2);
-    if (tf1 && !snap.team1Human)
-        snap.team1Human = (tf1->teamControls == kPlayerCoach || tf1->teamControls == kCoach);
-    if (tf2 && !snap.team2Human)
-        snap.team2Human = (tf2->teamControls == kPlayerCoach || tf2->teamControls == kCoach);
+    if (!snap.team1Human && !snap.team2Human) {
+        if (tf1)
+            snap.team1Human = (tf1->teamControls == kPlayerCoach || tf1->teamControls == kCoach);
+        if (tf2)
+            snap.team2Human = (tf2->teamControls == kPlayerCoach || tf2->teamControls == kCoach);
+    }
 
     snap.keeper1 = swos.topTeamInGame.players[0].shortName[0] ? swos.topTeamInGame.players[0].shortName : "";
     snap.keeper2 = swos.bottomTeamInGame.players[0].shortName[0] ? swos.bottomTeamInGame.players[0].shortName : "";
