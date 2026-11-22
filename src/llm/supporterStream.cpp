@@ -24,6 +24,7 @@ bool s_kickoffTriggered = false;
 bool s_userHidden = false;
 int s_avatarSeq = 0;
 size_t s_personalityCursor = 0;
+size_t s_banterTopicCursor = 0;
 
 std::deque<SupporterTweet> s_pendingBatch;
 std::deque<SupporterTweet> s_visibleTweets;
@@ -230,6 +231,40 @@ float drawMiniText(SDL_Renderer *r, SDL_Texture *atlas, float x, float y, float 
     Uint8 shadowAlpha = static_cast<Uint8>((static_cast<int>(alpha) * 185) / 255);
     renderPass(px * 0.75f, px * 0.75f, 8, 10, 12, shadowAlpha);
     return renderPass(0.0f, 0.0f, color.r, color.g, color.b, alpha);
+}
+
+bool isMentionChar(char c)
+{
+    unsigned char uc = static_cast<unsigned char>(c);
+    return std::isalnum(uc) != 0 || uc == '_' || uc == '-';
+}
+
+// Draws text while highlighting @nickname mentions (e.g. @archy_brown) in a distinct color
+void drawMiniTextWithMentions(SDL_Renderer *r, SDL_Texture *atlas, float x, float y, float px,
+    const std::string& text, SDL_Color baseColor, SDL_Color mentionColor, Uint8 alpha)
+{
+    float curX = x;
+    size_t pos = 0;
+    while (pos < text.size()) {
+        size_t at = text.find('@', pos);
+        if (at == std::string::npos) {
+            curX = drawMiniText(r, atlas, curX, y, px, text.substr(pos), baseColor, alpha, false);
+            break;
+        }
+        if (at > pos) {
+            curX = drawMiniText(r, atlas, curX, y, px, text.substr(pos, at - pos), baseColor, alpha, false);
+        }
+        size_t end = at + 1;
+        while (end < text.size() && isMentionChar(text[end]))
+            ++end;
+        if (end > at + 1) {
+            curX = drawMiniText(r, atlas, curX, y, px, text.substr(at, end - at), mentionColor, alpha, true);
+            pos = end;
+        } else {
+            curX = drawMiniText(r, atlas, curX, y, px, "@", baseColor, alpha, false);
+            pos = at + 1;
+        }
+    }
 }
 
 std::string trimStream(const std::string& s)
@@ -451,14 +486,16 @@ void enqueueSupporterBatchRequest(const char *triggerContext)
             prompt += " (" + latest.detail + ")";
     }
 
+    bool hasPriorFanChat = false;
     if (!s_visibleTweets.empty()) {
-        prompt += "\nRecent chat stream (oldest to newest - fans can banter, tease, or @Handle reply to these, or react to the TV Commentator, but output ONLY new messages):";
+        prompt += "\nRecent chat stream (oldest to newest - output ONLY new messages):";
         size_t histCount = std::min<size_t>(5, s_visibleTweets.size());
         for (size_t i = histCount; i > 0; --i) {
             const auto& prev = s_visibleTweets[i - 1];
             if (prev.side == SupporterSide::kPundit) {
                 prompt += "\n- [TV Commentator]: " + prev.message;
             } else {
+                hasPriorFanChat = true;
                 const char *sideLabel = (prev.side == SupporterSide::kHome) ? "HOME" :
                                         (prev.side == SupporterSide::kAway) ? "AWAY" : "NEUTRAL";
                 prompt += "\n- @" + prev.handle + " (" + sideLabel + "): " + prev.message;
@@ -468,7 +505,29 @@ void enqueueSupporterBatchRequest(const char *triggerContext)
 
     const auto& personas = cfg.personalities.empty() ? defaultFanPersonalities() : cfg.personalities;
     size_t count = std::min<size_t>(3, personas.size());
-    prompt += "\nGenerate " + std::to_string(count) + " NEW short live supporter chat messages reacting to this exact moment (clock, score, territory, goalkeeper/scorer events) and naturally bantering with or @Handle-replying to earlier chatters when fitting.";
+    prompt += "\nGenerate " + std::to_string(count) + " NEW short live supporter chat messages.";
+    if (hasPriorFanChat) {
+        prompt += "\n- INTERACTION RULE: At least ONE message MUST directly reply to or tease an earlier fan from the Recent chat stream by placing @TheirExactHandle in front of their nickname (e.g. @archy_brown ...).";
+    }
+
+    bool isAmbientFlow = (!triggerContext ||
+                          std::strcmp(triggerContext, "LIVE MATCH FLOW") == 0 ||
+                          std::strcmp(triggerContext, "KICKOFF") == 0);
+    if (isAmbientFlow) {
+        size_t topic = (s_banterTopicCursor++) % 4;
+        if (topic == 0) {
+            prompt += "\n- BANTER TOPIC: Include at least 1 message discussing squad/bench subs (calling for a real available bench player listed above to come on), the manager's record/trophies (showing love for a winning boss or impatience if struggling/new), or the team's season top scorers/assists.";
+        } else if (topic == 1) {
+            prompt += "\n- BANTER TOPIC: Include at least 1 message dropping casual 1996/97 global football season banter (talking about the best players or top clubs of 96/97 like Ronaldo at Barcelona, Shearer at Newcastle, Cantona at Man Utd, Juventus/Del Piero/Zidane, Dortmund in Europe, Bergkamp, Weah, or Roberto Carlos) tied naturally into watching this match.";
+        } else if (topic == 2) {
+            prompt += "\n- BANTER TOPIC: Include at least 1 message chatting about upcoming fixtures (e.g. an upcoming cup tie, European night, or big league fixture from the schedule above, or worrying about resting players for the next big cup game).";
+        } else {
+            prompt += "\n- BANTER TOPIC: Mix live reactions to possession, shots, and territory with lively terrace banter and rivalry between fans.";
+        }
+    } else {
+        prompt += "\n- React directly to the live Trigger event above (exact goalkeeper, scorer, finish type, minute), and fans may also debate subs, the manager, or banter with earlier chatters.";
+    }
+
     if (!personas.empty()) {
         prompt += "\nGive each message its own distinct fan personality from this list:";
         for (size_t i = 0; i < count; ++i) {
@@ -479,16 +538,17 @@ void enqueueSupporterBatchRequest(const char *triggerContext)
     }
 
     prompt += "\nFormat STRICTLY one message per line as: HANDLE|SIDE|MESSAGE";
-    prompt += "\n- HANDLE: realistic 1997 fan nickname (no spaces, max 13 chars, mixed case e.g. Fan_atic, Terrace97, GoalHunter)";
+    prompt += "\n- HANDLE: realistic 1997 fan nickname (no spaces, max 13 chars, mixed case e.g. archy_brown, Fan_atic, Terrace97)";
     prompt += "\n- SIDE: HOME (supports " + snap.team1 + "), AWAY (supports " + snap.team2 + "), or NEUTRAL";
-    prompt += "\n- MESSAGE: short punchy fan reaction in normal sentence case (4 to 12 words). Use classic ASCII-only text emoticons naturally where fitting (like :), :(, :D, ;), :P, >:), O_O, T_T, <3, ^_^, xD, uWu) - NEVER use Unicode emojis. If minute >= 85 and margin <= 1, leading fans beg the ref to blow the whistle!";
+    prompt += "\n- MESSAGE: short punchy fan reaction in normal sentence case (4 to 13 words). Use classic ASCII-only text emoticons naturally where fitting (like :), :(, :D, ;), :P, >:), O_O, T_T, <3, ^_^, xD, uWu) - NEVER use Unicode emojis. If minute >= 85 and margin <= 1, leading fans beg the ref to blow the whistle!";
     prompt += "\nOutput ONLY the HANDLE|SIDE|MESSAGE lines. No intro, no numbering, no markdown.";
 
-    const std::string sys = "You simulate a live 1997 football fan chat stream watching the match. "
-                            "Be passionate, varied in personality (some calm/peaceful, some biased fanatics, trolls winding up other fans, etc.), "
-                            "expressive with classic ASCII text emoticons only (like :), :D, >:), O_O, uWu - strictly NO Unicode emojis), "
-                            "and strictly faithful to the telemetry facts (exact goalkeeper, exact team, score, minute, scorer, finish type, stats). "
-                            "Use natural sentence case (not all caps). Output strictly HANDLE|SIDE|MESSAGE lines only.";
+    const std::string sys = "You simulate a lively 1996/97 football fan chat stream watching the match live. "
+                            "Be passionate, varied in personality (calm, fanatic, tactical, pessimist, joker, troll), "
+                            "banter with each other using @Handle mentions, discuss real bench subs, managers/trophies, season scorers/assists, upcoming fixtures, and occasional 1996/97 world football talk. "
+                            "Use classic ASCII text emoticons only (like :), :D, >:), O_O, uWu - strictly NO Unicode emojis). "
+                            "For anything happening in THIS match, stay 100% faithful to the telemetry facts (never invent fake goals, headers, cards, or weather). "
+                            "Use natural sentence case. Output strictly HANDLE|SIDE|MESSAGE lines only.";
 
     s_streamRequestId = enqueueLlmRequest(sys, prompt);
     s_cooldownFrames = 240; // ~4s minimum spacing between requests
@@ -550,6 +610,7 @@ void resetSupporterStream()
     s_ambientTimerFrames = 90; // ~1.5s after kickoff
     s_staggerTimerFrames = 0;
     s_kickoffTriggered = false;
+    s_banterTopicCursor = 0;
     s_pendingBatch.clear();
     s_visibleTweets.clear();
 }
@@ -815,13 +876,14 @@ void drawSupporterStreamOverlay()
         }
 
         SDL_Color bodyColor = isPundit ? SDL_Color{ 255, 226, 78, 255 } : SDL_Color{ 244, 246, 248, 255 };
+        SDL_Color mentionColor = SDL_Color{ 118, 244, 232, 255 };
         for (size_t li = 0; li < item.lines.size(); ++li) {
             if (item.lines[li].empty())
                 continue;
             float lineX = (li == 0) ? firstLineX : textX;
             float lineY = rowY + static_cast<float>(li * kLineStepUnits) * px;
-            drawMiniText(renderer, atlas, lineX, lineY, px,
-                item.lines[li], bodyColor, static_cast<Uint8>(item.alpha), false);
+            drawMiniTextWithMentions(renderer, atlas, lineX, lineY, px,
+                item.lines[li], bodyColor, mentionColor, static_cast<Uint8>(item.alpha));
         }
     }
 

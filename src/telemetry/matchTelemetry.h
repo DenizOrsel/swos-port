@@ -29,6 +29,8 @@ struct MatchTelemetrySnapshot {
     std::string keeper2;
     std::string players1;
     std::string players2;
+    std::string bench1;
+    std::string bench2;
     bool team1Human = false;
     bool team2Human = false;
 
@@ -53,6 +55,9 @@ struct MatchTelemetrySnapshot {
     int team2AttackZonePct = 33;
 
     std::string careerRecordSummary;
+    std::string managerCareerSummary;
+    std::string topScorersSummary;
+    std::string upcomingFixturesSummary;
     std::vector<MatchTelemetryEvent> recentEvents;
 };
 

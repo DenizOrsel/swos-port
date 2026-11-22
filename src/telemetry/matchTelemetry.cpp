@@ -17,6 +17,7 @@
 #include <ctime>
 #include <deque>
 #include <fstream>
+#include <map>
 
 namespace {
 
@@ -38,6 +39,7 @@ TouchRecord s_lastTouch;
 TouchRecord s_prevTouch;
 std::deque<MatchTelemetryEvent> s_recentEvents;
 std::vector<MatchTelemetryEvent> s_allMatchEvents;
+std::map<std::string, int> s_matchAssists;
 
 const char *telemetryPitchName(int pitchType)
 {
@@ -92,6 +94,21 @@ std::string cleanCoachName(const TeamFile *tf)
     return out;
 }
 
+const char *shortPosTag(PlayerPosition pos)
+{
+    switch (pos) {
+    case PlayerPosition::kGoalkeeper: return "GK";
+    case PlayerPosition::kRightBack: return "RB";
+    case PlayerPosition::kLeftBack: return "LB";
+    case PlayerPosition::kDefender: return "DEF";
+    case PlayerPosition::kRightWing: return "RW";
+    case PlayerPosition::kLeftWing: return "LW";
+    case PlayerPosition::kMidfielder: return "MID";
+    case PlayerPosition::kAttacker: return "ATT";
+    default: return "SUB";
+    }
+}
+
 std::string collectKeyPlayers(const TeamGame& team)
 {
     std::string out;
@@ -105,6 +122,220 @@ std::string collectKeyPlayers(const TeamGame& team)
             break;
     }
     return out;
+}
+
+std::string collectBenchPlayers(const TeamGame& team)
+{
+    std::string out;
+    for (int i = kNumPlayersInLineup; i < kNumPlayersInTeam; ++i) {
+        const auto& pl = team.players[i];
+        if (pl.shortName[0] == '\0' || pl.wasSubstituted())
+            continue;
+        if (!out.empty())
+            out += ", ";
+        out += std::string(pl.shortName) + " (" + shortPosTag(pl.position) + ")";
+    }
+    return out;
+}
+
+std::string readBoundedAscii(const uint8_t *buf, size_t maxLen)
+{
+    std::string out;
+    for (size_t i = 0; i < maxLen && buf[i] != '\0'; ++i) {
+        if (buf[i] >= 0x20 && buf[i] <= 0x7E)
+            out.push_back(static_cast<char>(buf[i]));
+    }
+    while (!out.empty() && out.back() == ' ')
+        out.pop_back();
+    return out;
+}
+
+std::string extractManagerCareerSummary()
+{
+    if (swos.g_gameType != kGameTypeCareer)
+        return {};
+
+    std::string mgrName;
+    uint16_t seasonsIdx = 0;
+    uint16_t played = 0, wins = 0, drawn = 0, lost = 0;
+    const uint8_t *histBuf = nullptr;
+
+    const auto& mgr = HotseatCareerManager::get();
+    if (mgr.isActive() && mgr.activePlayerIndex() >= 0 && mgr.activePlayerIndex() < mgr.numPlayers()) {
+        const auto& p = mgr.activePlayer();
+        mgrName = p.managerName;
+        if (!p.managerSurname.empty()) {
+            if (!mgrName.empty()) mgrName += " ";
+            mgrName += p.managerSurname;
+        }
+        seasonsIdx = p.currentSeasonShowing;
+        played = p.gamesPlayed;
+        wins = p.numWins;
+        drawn = p.numDrawn;
+        lost = p.numLost;
+        histBuf = p.careerHistory;
+    } else {
+        std::string first = readBoundedAscii(&SwosVM::g_memByte[CareerOffsets::kManagerNameBuffer], 9);
+        std::string last = readBoundedAscii(&SwosVM::g_memByte[CareerOffsets::kManagerSurnameBuffer], 13);
+        mgrName = first;
+        if (!last.empty()) {
+            if (!mgrName.empty()) mgrName += " ";
+            mgrName += last;
+        }
+        seasonsIdx = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCurrentSeasonShowing]);
+        played = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kGamesPlayed]);
+        wins = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumWins]);
+        drawn = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumDrawn]);
+        lost = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kNumLost]);
+        histBuf = &SwosVM::g_memByte[CareerOffsets::kCareerHistory];
+    }
+
+    int leagueTitles = 0;
+    int cupTitles = 0;
+    if (histBuf) {
+        size_t maxSeasons = std::min<size_t>(static_cast<size_t>(seasonsIdx) + 1, kCareerHistoryBufferSize / kCareerHistoryEntrySize);
+        for (size_t s = 0; s < maxSeasons; ++s) {
+            uint16_t trophyMask = *reinterpret_cast<const uint16_t *>(&histBuf[s * kCareerHistoryEntrySize + 20]);
+            if (trophyMask & (32u | 64u))
+                ++leagueTitles;
+            uint16_t cupBits = trophyMask & static_cast<uint16_t>(~(32u | 64u)) & 0x03FFu;
+            while (cupBits) {
+                cupTitles += (cupBits & 1u);
+                cupBits >>= 1;
+            }
+        }
+    }
+
+    int totalTrophies = leagueTitles + cupTitles;
+    std::string mood;
+    if (played < 5 && seasonsIdx == 0) {
+        mood = "brand-new boss (fans still making up their minds)";
+    } else if (totalTrophies >= 3 || (played >= 10 && wins * 100 / std::max<uint16_t>(1, played) >= 62)) {
+        mood = "beloved club hero (fans adore the manager)";
+    } else if (played >= 8 && lost * 100 / std::max<uint16_t>(1, played) >= 48) {
+        mood = "under heavy pressure (angry fans questioning tactics/job)";
+    } else {
+        mood = "mixed fan approval";
+    }
+
+    char buf[256];
+    std::snprintf(buf, sizeof(buf),
+        "Human Manager %s: Season %u, Trophies won: %d (%d league, %d cup), Career W-D-L: %u-%u-%u (%u games) - %s",
+        mgrName.empty() ? "Boss" : mgrName.c_str(),
+        static_cast<unsigned>(seasonsIdx + 1),
+        totalTrophies, leagueTitles, cupTitles,
+        wins, drawn, lost, played, mood.c_str());
+    return buf;
+}
+
+std::string extractTopScorersAndAssistsSummary()
+{
+    std::string out;
+
+    // 1. In-match scorers & assists
+    std::string matchPart;
+    auto appendTeamScorers = [&](const TeamGame& tg) {
+        for (int i = 0; i < kNumPlayersInTeam; ++i) {
+            if (tg.players[i].goalsScored > 0 && tg.players[i].shortName[0] != '\0') {
+                if (!matchPart.empty()) matchPart += ", ";
+                matchPart += std::string(tg.players[i].shortName) + " (" + std::to_string(tg.players[i].goalsScored) + "G)";
+            }
+        }
+    };
+    appendTeamScorers(swos.topTeamInGame);
+    appendTeamScorers(swos.bottomTeamInGame);
+    for (const auto& kv : s_matchAssists) {
+        if (!matchPart.empty()) matchPart += ", ";
+        matchPart += kv.first + " (" + std::to_string(kv.second) + "A)";
+    }
+    if (!matchPart.empty())
+        out = "Match scorers/assists: " + matchPart;
+
+    // 2. Career season top scorers from PlayerFile bytes unk_2..unk_5 (league/cup/euro/other goals)
+    if (swos.g_gameType == kGameTypeCareer) {
+        uint16_t numPlayers = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]);
+        if (numPlayers > 0 && numPlayers <= kMaxCareerSquadPlayers) {
+            std::vector<std::pair<int, std::string>> scorers;
+            for (uint16_t i = 0; i < numPlayers; ++i) {
+                size_t ofs = CareerOffsets::kCareerTeam +
+                             HotseatInternal::kTeamFileHeaderSize +
+                             static_cast<size_t>(i) * HotseatInternal::kPlayerFileSize;
+                const auto *pf = reinterpret_cast<const PlayerFile *>(&SwosVM::g_memByte[ofs]);
+                if (pf->playerName[0] == '\0')
+                    continue;
+                int seasonGoals = static_cast<int>(pf->unk_2) + static_cast<int>(pf->unk_3) +
+                                  static_cast<int>(pf->unk_4) + static_cast<int>(pf->unk_5);
+                if (seasonGoals > 0)
+                    scorers.emplace_back(seasonGoals, std::string(pf->playerName));
+            }
+            std::sort(scorers.begin(), scorers.end(), [](const auto& a, const auto& b) {
+                return a.first > b.first;
+            });
+            if (!scorers.empty()) {
+                std::string seasonPart;
+                size_t limit = std::min<size_t>(3, scorers.size());
+                for (size_t i = 0; i < limit; ++i) {
+                    if (i > 0) seasonPart += ", ";
+                    seasonPart += scorers[i].second + " (" + std::to_string(scorers[i].first) + " goals)";
+                }
+                if (!out.empty()) out += " | ";
+                out += "Season top scorers: " + seasonPart;
+            }
+        }
+    }
+    return out;
+}
+
+std::string extractUpcomingFixturesSummary()
+{
+    if (swos.g_gameType != kGameTypeCareer)
+        return {};
+
+    uint16_t totalEntries = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E2]);
+    uint16_t curIdx = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3DE]);
+    uint16_t curOfs = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegDB3E0]);
+    if (totalEntries == 0 || curIdx >= totalEntries || curOfs >= kCalendarBufferSize)
+        return {};
+
+    const uint8_t *cal = &SwosVM::g_memByte[CareerOffsets::kDsegDB3E6];
+    uint16_t idx = curIdx;
+    uint16_t ofs = curOfs;
+    std::string upcoming;
+    int found = 0;
+    bool skippedCurrent = false;
+
+    while (idx < totalEntries && ofs + 22 <= kCalendarBufferSize && found < 3) {
+        const uint8_t *entry = &cal[ofs];
+        uint16_t len = *reinterpret_cast<const uint16_t *>(entry + 2);
+        if (len < 22)
+            break;
+        if (entry[4] == 0) {
+            if (!skippedCurrent) {
+                skippedCurrent = true;
+            } else {
+                const char *compName = nullptr;
+                switch (entry[0]) {
+                case 0: compName = "League match"; break;
+                case 1: compName = "Big Domestic Cup tie"; break;
+                case 2: compName = "League Cup tie"; break;
+                case 3: compName = "Huge European Cup night"; break;
+                case 4: compName = "Cup / Playoff tie"; break;
+                default: break;
+                }
+                if (compName) {
+                    if (!upcoming.empty()) upcoming += ", then ";
+                    upcoming += compName;
+                    ++found;
+                }
+            }
+        }
+        ofs += len;
+        ++idx;
+    }
+
+    if (upcoming.empty())
+        return {};
+    return "Upcoming schedule: " + upcoming;
 }
 
 std::string extractCareerRecordSummary()
@@ -240,6 +471,7 @@ std::string describeGoalMechanics(const Sprite *scorerSprite, const char *eventT
             s_frameCounter >= s_prevTouch.frameTick &&
             (s_frameCounter - s_prevTouch.frameTick) <= 300) {
             detail += ", assisted by " + s_prevTouch.name;
+            ++s_matchAssists[s_prevTouch.name];
         }
     }
     return detail;
@@ -279,6 +511,7 @@ void resetMatchTelemetry()
     s_prevTouch = {};
     s_recentEvents.clear();
     s_allMatchEvents.clear();
+    s_matchAssists.clear();
 }
 
 void updateMatchTelemetry()
@@ -456,6 +689,8 @@ MatchTelemetrySnapshot captureMatchTelemetrySnapshot()
     snap.keeper2 = swos.bottomTeamInGame.players[0].shortName[0] ? swos.bottomTeamInGame.players[0].shortName : "";
     snap.players1 = collectKeyPlayers(swos.topTeamInGame);
     snap.players2 = collectKeyPlayers(swos.bottomTeamInGame);
+    snap.bench1 = collectBenchPlayers(swos.topTeamInGame);
+    snap.bench2 = collectBenchPlayers(swos.bottomTeamInGame);
 
     snap.goals1 = swos.statsTeam1Goals;
     snap.goals2 = swos.statsTeam2Goals;
@@ -483,6 +718,9 @@ MatchTelemetrySnapshot captureMatchTelemetrySnapshot()
     }
 
     snap.careerRecordSummary = extractCareerRecordSummary();
+    snap.managerCareerSummary = extractManagerCareerSummary();
+    snap.topScorersSummary = extractTopScorersAndAssistsSummary();
+    snap.upcomingFixturesSummary = extractUpcomingFixturesSummary();
     snap.recentEvents.assign(s_recentEvents.begin(), s_recentEvents.end());
     return snap;
 }
@@ -515,10 +753,20 @@ std::string formatTelemetryPromptBlock(const MatchTelemetrySnapshot& snap)
     }
     if (!snap.players1.empty())
         out += "\n" + snap.team1 + " XI: " + snap.players1;
+    if (!snap.bench1.empty())
+        out += "\n" + snap.team1 + " Bench (available subs): " + snap.bench1;
     if (!snap.players2.empty())
         out += "\n" + snap.team2 + " XI: " + snap.players2;
+    if (!snap.bench2.empty())
+        out += "\n" + snap.team2 + " Bench (available subs): " + snap.bench2;
     if (!snap.careerRecordSummary.empty())
         out += "\n" + snap.careerRecordSummary;
+    if (!snap.managerCareerSummary.empty())
+        out += "\n" + snap.managerCareerSummary;
+    if (!snap.topScorersSummary.empty())
+        out += "\n" + snap.topScorersSummary;
+    if (!snap.upcomingFixturesSummary.empty())
+        out += "\n" + snap.upcomingFixturesSummary;
 
     if (!snap.recentEvents.empty()) {
         out += "\nRecent events:";
