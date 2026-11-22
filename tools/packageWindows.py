@@ -395,7 +395,14 @@ preMatchScouting = true
 transferNegotiations = true
 dressingRoomVoices = true
 livePunditTicker = true
+supporterStream = true
 cpuTacticalManager = false
+
+[telemetry]
+enabled = true
+exportMatchJson = false
+streamUpdateSeconds = 18
+maxVisibleTweets = 5
 """
             archive.writestr(str(root / "ai.ini"), zipBytes(defaultAiIni))
             archive.writestr(

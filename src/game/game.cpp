@@ -15,6 +15,7 @@
 #include "dump.h"
 #include "util.h"
 #include "replays.h"
+#include "supporterStream.h"
 #include "pitch.h"
 #include "pitchConstants.h"
 #include "goalNet.h"
@@ -312,6 +313,9 @@ bool checkGameKeys()
                     lastSaveRequestTime = now;
                 }
             }
+            break;
+        case SDL_SCANCODE_T:
+            toggleSupporterStreamVisible();
             break;
         case SDL_SCANCODE_F8:
             toggleMuteCommentary();

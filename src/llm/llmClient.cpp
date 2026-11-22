@@ -113,7 +113,13 @@ void writeAiIni(const std::string& path, const LlmConfig& cfg)
     ini.SetBoolValue("features", "transferNegotiations", cfg.features.transferNegotiations);
     ini.SetBoolValue("features", "dressingRoomVoices", cfg.features.dressingRoomVoices);
     ini.SetBoolValue("features", "livePunditTicker", cfg.features.livePunditTicker);
+    ini.SetBoolValue("features", "supporterStream", cfg.features.supporterStream);
     ini.SetBoolValue("features", "cpuTacticalManager", cfg.features.cpuTacticalManager);
+
+    ini.SetBoolValue("telemetry", "enabled", cfg.telemetry.enabled);
+    ini.SetBoolValue("telemetry", "exportMatchJson", cfg.telemetry.exportMatchJson);
+    ini.SetLongValue("telemetry", "streamUpdateSeconds", cfg.telemetry.streamUpdateSeconds);
+    ini.SetLongValue("telemetry", "maxVisibleTweets", cfg.telemetry.maxVisibleTweets);
 
     SI_Error rc = ini.SaveFile(path.c_str());
     if (rc < 0)
@@ -416,7 +422,15 @@ bool loadLlmConfig(const char *iniPath /* = nullptr */)
     s_config.features.transferNegotiations = ini.GetBoolValue("features", "transferNegotiations", s_config.features.transferNegotiations);
     s_config.features.dressingRoomVoices = ini.GetBoolValue("features", "dressingRoomVoices", s_config.features.dressingRoomVoices);
     s_config.features.livePunditTicker = ini.GetBoolValue("features", "livePunditTicker", s_config.features.livePunditTicker);
+    s_config.features.supporterStream = ini.GetBoolValue("features", "supporterStream", s_config.features.supporterStream);
     s_config.features.cpuTacticalManager = ini.GetBoolValue("features", "cpuTacticalManager", s_config.features.cpuTacticalManager);
+
+    s_config.telemetry.enabled = ini.GetBoolValue("telemetry", "enabled", s_config.telemetry.enabled);
+    s_config.telemetry.exportMatchJson = ini.GetBoolValue("telemetry", "exportMatchJson", s_config.telemetry.exportMatchJson);
+    s_config.telemetry.streamUpdateSeconds = std::clamp(
+        static_cast<int>(ini.GetLongValue("telemetry", "streamUpdateSeconds", s_config.telemetry.streamUpdateSeconds)), 5, 120);
+    s_config.telemetry.maxVisibleTweets = std::clamp(
+        static_cast<int>(ini.GetLongValue("telemetry", "maxVisibleTweets", s_config.telemetry.maxVisibleTweets)), 3, 6);
 
     logInfo("Loaded LLM config (%s, provider=%s, model=%s, enabled=%s)",
         resolvedPath.c_str(), providerToString(s_config.provider), s_config.model.c_str(),

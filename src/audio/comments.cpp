@@ -8,6 +8,8 @@
 #include "SampleTable.h"
 #include "SoundSample.h"
 #include "llmFeatures.h"
+#include "matchTelemetry.h"
+#include "supporterStream.h"
 
 constexpr int kEnqueuedSampleDelay = 70;
 constexpr int kEnqueuedLongerSampleDelay = 100;
@@ -342,20 +344,27 @@ static void playComment(Mix_Chunk *chunk, bool interrupt = true)
 static void playComment(CommentarySampleTableIndex tableIndex, bool interrupt /* = true */)
 {
     if (!swos.g_trainingGame) {
+        auto notifyEvent = [](const char *label, bool highPriority, bool isGoal = false) {
+            recordTelemetryMatchEvent(label, isGoal);
+            triggerLivePunditEvent(label, highPriority);
+            triggerSupporterStreamEvent(label, highPriority);
+        };
         switch (tableIndex) {
-        case kGoal: triggerLivePunditEvent("GOAL SCORED", true); break;
-        case kOwnGoal: triggerLivePunditEvent("OWN GOAL", true); break;
-        case kPenaltyGoal: triggerLivePunditEvent("PENALTY SCORED", true); break;
-        case kPenalty: triggerLivePunditEvent("PENALTY AWARDED", true); break;
-        case kPenaltySaved: triggerLivePunditEvent("PENALTY SAVED", true); break;
-        case kPenaltyMissed: triggerLivePunditEvent("PENALTY MISSED", true); break;
-        case kRedCard: triggerLivePunditEvent("RED CARD", true); break;
-        case kHitPost: triggerLivePunditEvent("HIT THE POST", false); break;
-        case kHitBar: triggerLivePunditEvent("HIT THE CROSSBAR", false); break;
-        case kYellowCard: triggerLivePunditEvent("YELLOW CARD", false); break;
-        case kKeeperSaved: triggerLivePunditEvent("GREAT SAVE BY KEEPER", false); break;
-        case kNearMiss: triggerLivePunditEvent("SHOT JUST WIDE", false); break;
-        case kDirtyTackle: triggerLivePunditEvent("HEAVY TACKLE", false); break;
+        case kGoal: notifyEvent("GOAL SCORED", true, true); break;
+        case kOwnGoal: notifyEvent("OWN GOAL", true, true); break;
+        case kPenaltyGoal: notifyEvent("PENALTY SCORED", true, true); break;
+        case kPenalty: notifyEvent("PENALTY AWARDED", true); break;
+        case kPenaltySaved: notifyEvent("PENALTY SAVED", true); break;
+        case kPenaltyMissed: notifyEvent("PENALTY MISSED", true); break;
+        case kRedCard: notifyEvent("RED CARD", true); break;
+        case kHitPost: notifyEvent("HIT THE POST", false); break;
+        case kHitBar: notifyEvent("HIT THE CROSSBAR", false); break;
+        case kYellowCard: notifyEvent("YELLOW CARD", false); break;
+        case kKeeperSaved: notifyEvent("GREAT SAVE BY KEEPER", false); break;
+        case kNearMiss: notifyEvent("SHOT JUST WIDE", false); break;
+        case kDirtyTackle: notifyEvent("HEAVY TACKLE", false); break;
+        case kInjury: notifyEvent("PLAYER INJURED", false); break;
+        case kSubstitution: notifyEvent("SUBSTITUTION", false); break;
         default: break;
         }
     }

@@ -40,6 +40,8 @@
 #include "stadiumMenu.h"
 #include "replayExitMenu.h"
 #include "llmFeatures.h"
+#include "matchTelemetry.h"
+#include "supporterStream.h"
 #include "util.h"
 #include "FixedPoint.h"
 
@@ -144,6 +146,7 @@ void gameLoop(TeamGame *topTeam, TeamGame *bottomTeam)
     if (!swos.gameCanceled) {
         HotseatCareerManager::get().onMatchCompleted();
         markMatchHandledInGameLoop();
+        finalizeMatchTelemetry();
         beginPostMatchNewspaperRequest();
         showPostMatchNewspaperIfReady();
         onCareerMatchCompletedLlm(swos.statsTeam1Goals, swos.statsTeam2Goals);
@@ -223,6 +226,8 @@ static void initGameLoop()
     m_doFadeIn = true;
     resetPostMatchNewspaper();
     resetLivePunditTicker();
+    resetMatchTelemetry();
+    resetSupporterStream();
 
     initGameAudio();
     playCrowdNoise();
@@ -272,6 +277,7 @@ static void drawFrame(bool recordingEnabled)
     drawPlayerName();
     drawGameTime();
     drawLivePunditTicker();
+    drawSupporterStreamOverlay();
     drawStatsIfNeeded();
     drawResult();
     drawSpinningLogo();
@@ -344,7 +350,9 @@ static void coreGameUpdate()
     SWOS::DrawAnimatedPatterns(); // remove/re-implement
     updateBench();
     updateStatistics();
+    updateMatchTelemetry();
     updateLivePunditTicker();
+    updateSupporterStream();
 }
 
 static void handleHighlightsAndReplays()

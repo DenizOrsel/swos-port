@@ -1,0 +1,64 @@
+#pragma once
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+struct MatchTelemetryEvent {
+    int minute = 0;
+    std::string type;
+    std::string team;
+    std::string player;
+    std::string detail;
+};
+
+struct MatchTelemetrySnapshot {
+    int minute = 0;
+    int half = 1;
+    bool playingPenalties = false;
+    std::string timePressureTag;
+
+    std::string competition;
+    std::string pitchCondition;
+
+    std::string team1;
+    std::string team2;
+    std::string coach1;
+    std::string coach2;
+    std::string players1;
+    std::string players2;
+    bool team1Human = false;
+    bool team2Human = false;
+
+    int goals1 = 0;
+    int goals2 = 0;
+    int penGoals1 = 0;
+    int penGoals2 = 0;
+
+    int shots1 = 0;
+    int shots2 = 0;
+    int onTarget1 = 0;
+    int onTarget2 = 0;
+    int possession1 = 50;
+    int possession2 = 50;
+    int corners1 = 0;
+    int corners2 = 0;
+    int fouls1 = 0;
+    int fouls2 = 0;
+
+    int team1AttackZonePct = 33;
+    int midfieldZonePct = 34;
+    int team2AttackZonePct = 33;
+
+    std::string careerRecordSummary;
+    std::vector<MatchTelemetryEvent> recentEvents;
+};
+
+void resetMatchTelemetry();
+void updateMatchTelemetry();
+void recordTelemetryMatchEvent(const char *eventType, bool isGoalEvent = false);
+void finalizeMatchTelemetry();
+
+MatchTelemetrySnapshot captureMatchTelemetrySnapshot();
+std::string formatTelemetryPromptBlock(const MatchTelemetrySnapshot& snap);
+std::string computeTimePressureTag(int minute, int goals1, int goals2, bool playingPenalties);

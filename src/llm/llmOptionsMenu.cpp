@@ -66,6 +66,7 @@ static void refreshLlmOptionsMenu()
     transfersEntry.copyString(cfg.features.transferNegotiations ? "ON" : "OFF");
     dressingRoomEntry.copyString(cfg.features.dressingRoomVoices ? "ON" : "OFF");
     punditEntry.copyString(cfg.features.livePunditTicker ? "ON" : "OFF");
+    supporterStreamEntry.copyString(cfg.features.supporterStream ? "ON" : "OFF");
     cpuTacticsEntry.copyString("OFF");
 }
 
@@ -233,6 +234,14 @@ static void toggleFeatureLivePundit()
 {
     LlmConfig cfg = getLlmConfig();
     cfg.features.livePunditTicker = !cfg.features.livePunditTicker;
+    updateLlmConfig(cfg);
+    refreshLlmOptionsMenu();
+}
+
+static void toggleFeatureSupporterStream()
+{
+    LlmConfig cfg = getLlmConfig();
+    cfg.features.supporterStream = !cfg.features.supporterStream;
     updateLlmConfig(cfg);
     refreshLlmOptionsMenu();
 }

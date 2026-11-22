@@ -6,6 +6,8 @@
 #include "llmClient.h"
 #include "llmFeatures.h"
 #include "llmReportMenu.h"
+#include "matchTelemetry.h"
+#include "supporterStream.h"
 
 static SwosDataLayoutTest t;
 
@@ -294,6 +296,19 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
         SDL_Delay(5);
     }
     resetLivePunditTicker();
+
+    // 5. Match telemetry time-pressure cues & supporter chat tweet parsing
+    auto lateClose = computeTimePressureTag(88, 2, 1, false);
+    assertTrue(lateClose.find("WHISTLE") != std::string::npos);
+    auto parsedTweets = parseSupporterTweetBatch(
+        "@User1988|HOME|Ref blow the whistle already!\n"
+        "Fan_atic|AWAY|One more corner, we can still equalize!\n"
+        "PixelGuru|NEUTRAL|What a tense finish in the 88th minute!");
+    assertEqual(parsedTweets.size(), size_t{ 3 });
+    assertEqual(parsedTweets[0].handle, std::string("USER1988"));
+    assertTrue(parsedTweets[0].side == SupporterSide::kHome);
+    assertTrue(parsedTweets[1].side == SupporterSide::kAway);
+    assertTrue(parsedTweets[2].side == SupporterSide::kNeutral);
 
     setLlmTransportForTest(nullptr);
     shutdownLlmClient();

@@ -16,7 +16,15 @@ struct LlmFeaturesConfig {
     bool transferNegotiations = true;
     bool dressingRoomVoices = true;
     bool livePunditTicker = true;
+    bool supporterStream = true;
     bool cpuTacticalManager = false;
+};
+
+struct LlmTelemetryConfig {
+    bool enabled = true;
+    bool exportMatchJson = false;
+    int streamUpdateSeconds = 18;
+    int maxVisibleTweets = 5;
 };
 
 struct LlmConfig {
@@ -32,6 +40,7 @@ struct LlmConfig {
     float temperature = 0.85f;
     bool think = false;
     LlmFeaturesConfig features;
+    LlmTelemetryConfig telemetry;
 };
 
 struct LlmHttpResult {

@@ -6,7 +6,7 @@
 
 Menu llmOptionsMenu
 {
-    kLlmStartY = 21
+    kLlmStartY = 17
     kLlmRowHeight = 9
     kLlmRowGap = 1
 
@@ -53,6 +53,7 @@ Menu llmOptionsMenu
     Entry { text: "TRANSFERS" }
     Entry { text: "DRESSING ROOM" }
     Entry { text: "LIVE PUNDIT" }
+    Entry { text: "CHAT STREAM" }
     Entry { text: "CPU TACTICS" }
 
     // Column 2: Interactive values
@@ -156,6 +157,13 @@ Menu llmOptionsMenu
     Entry pundit {
         text: @kAlloc
         onSelect: toggleFeatureLivePundit
+        upEntry: <
+        downEntry: >
+    }
+
+    Entry supporterStream {
+        text: @kAlloc
+        onSelect: toggleFeatureSupporterStream
         upEntry: <
         downEntry: >
     }
