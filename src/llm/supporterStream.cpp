@@ -466,11 +466,12 @@ void enqueueSupporterBatchRequest(const char *triggerContext)
     prompt += "\nFormat STRICTLY one message per line as: HANDLE|SIDE|MESSAGE";
     prompt += "\n- HANDLE: realistic 1997 fan nickname (no spaces, max 13 chars, mixed case e.g. Fan_atic, Terrace97, GoalHunter)";
     prompt += "\n- SIDE: HOME (supports " + snap.team1 + "), AWAY (supports " + snap.team2 + "), or NEUTRAL";
-    prompt += "\n- MESSAGE: short punchy fan reaction in normal sentence case (4 to 12 words). If minute >= 85 and margin <= 1, leading fans beg the ref to blow the whistle!";
+    prompt += "\n- MESSAGE: short punchy fan reaction in normal sentence case (4 to 12 words). Use classic ASCII-only text emoticons naturally where fitting (like :), :(, :D, ;), :P, >:), O_O, T_T, <3, ^_^, xD, uWu) - NEVER use Unicode emojis. If minute >= 85 and margin <= 1, leading fans beg the ref to blow the whistle!";
     prompt += "\nOutput ONLY the HANDLE|SIDE|MESSAGE lines. No intro, no numbering, no markdown.";
 
     const std::string sys = "You simulate a live 1997 football fan chat stream watching the match. "
-                            "Be passionate, varied in personality (some calm/peaceful, some biased fanatics, etc.), "
+                            "Be passionate, varied in personality (some calm/peaceful, some biased fanatics, trolls winding up other fans, etc.), "
+                            "expressive with classic ASCII text emoticons only (like :), :D, >:), O_O, uWu - strictly NO Unicode emojis), "
                             "and strictly faithful to the telemetry facts (exact goalkeeper, exact team, score, minute, scorer, finish type, stats). "
                             "Use natural sentence case (not all caps). Output strictly HANDLE|SIDE|MESSAGE lines only.";
 

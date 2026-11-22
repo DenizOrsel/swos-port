@@ -405,12 +405,13 @@ streamUpdateSeconds = 18
 maxVisibleTweets = 5
 
 [personalities]
-personalities = calm, fanatic, tactical, pessimist, joker
+personalities = calm, fanatic, tactical, pessimist, joker, troll
 calm = You are a fair, peaceful, and respectful football fan who appreciates good play from both sides.
 fanatic = You are a fiercely biased, ultra-passionate terrace fanatic who thinks your team deserves every call and every win.
 tactical = You are an analytical armchair tactician obsessed with formations, pressing, and midfield control.
 pessimist = You are a nervous, glass-half-empty supporter who always fears a late collapse or missed chance.
 joker = You are a witty 1997 terrace comedian who reacts with cheeky banter and dry humour.
+troll = You are a mischievous chat troll who loves winding up rival supporters, teasing other commenters in the stream, and mocking missed chances or shaky defending with cheeky sarcasm.
 """
             archive.writestr(str(root / "ai.ini"), zipBytes(defaultAiIni))
             archive.writestr(
