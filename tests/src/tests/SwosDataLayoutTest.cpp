@@ -305,7 +305,8 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
         "Fan_atic|AWAY|One more corner, we can still equalize!\n"
         "PixelGuru|NEUTRAL|What a tense finish in the 88th minute!");
     assertEqual(parsedTweets.size(), size_t{ 3 });
-    assertEqual(parsedTweets[0].handle, std::string("USER1988"));
+    assertEqual(parsedTweets[0].handle, std::string("User1988"));
+    assertEqual(parsedTweets[0].message, std::string("Ref blow the whistle already!"));
     assertTrue(parsedTweets[0].side == SupporterSide::kHome);
     assertTrue(parsedTweets[1].side == SupporterSide::kAway);
     assertTrue(parsedTweets[2].side == SupporterSide::kNeutral);
