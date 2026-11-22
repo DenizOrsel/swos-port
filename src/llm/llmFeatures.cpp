@@ -198,6 +198,17 @@ bool waitForLlmWithIndicator(uint64_t requestId, int maxWaitMs, const char *stat
 #endif
 }
 
+void resolveTeam1AndTeam2(const TeamGeneralInfo*& outTeam1, const TeamGeneralInfo*& outTeam2)
+{
+    if (swos.topTeamData.inGameTeamPtr.asAligned() == &swos.topTeamInGame) {
+        outTeam1 = &swos.topTeamData;
+        outTeam2 = &swos.bottomTeamData;
+    } else {
+        outTeam1 = &swos.bottomTeamData;
+        outTeam2 = &swos.topTeamData;
+    }
+}
+
 std::string buildMatchPerspectiveContext(const char *t1, const char *t2, int g1, int g2,
     bool topHuman, bool botHuman)
 {
@@ -280,14 +291,16 @@ void beginPostMatchNewspaperRequest()
 
     s_postMatchTriggered = true;
 
-    const char *t1 = (swos.topTeamData.inGameTeamPtr && swos.topTeamData.inGameTeamPtr->teamName[0])
-        ? swos.topTeamData.inGameTeamPtr->teamName : "HOME";
-    const char *t2 = (swos.bottomTeamData.inGameTeamPtr && swos.bottomTeamData.inGameTeamPtr->teamName[0])
-        ? swos.bottomTeamData.inGameTeamPtr->teamName : "AWAY";
+    const TeamGeneralInfo *team1Info = nullptr;
+    const TeamGeneralInfo *team2Info = nullptr;
+    resolveTeam1AndTeam2(team1Info, team2Info);
+
+    const char *t1 = swos.topTeamInGame.teamName[0] ? swos.topTeamInGame.teamName : "HOME";
+    const char *t2 = swos.bottomTeamInGame.teamName[0] ? swos.bottomTeamInGame.teamName : "AWAY";
     int g1 = swos.statsTeam1Goals;
     int g2 = swos.statsTeam2Goals;
-    bool topHuman = (swos.topTeamData.playerNumber != 0 || swos.topTeamData.playerCoachNumber != 0);
-    bool botHuman = (swos.bottomTeamData.playerNumber != 0 || swos.bottomTeamData.playerCoachNumber != 0);
+    bool topHuman = (team1Info->playerNumber != 0 || team1Info->playerCoachNumber != 0);
+    bool botHuman = (team2Info->playerNumber != 0 || team2Info->playerCoachNumber != 0);
     const auto stats = getStats();
     std::string s1 = getMatchScorersSummary(1);
     std::string s2 = getMatchScorersSummary(2);
@@ -370,12 +383,14 @@ void onCareerMatchCompletedLlm(int topGoals, int botGoals)
     if (pickCareerSquadVoice(club, player, role).empty())
         return;
 
-    const char *t1 = (swos.topTeamData.inGameTeamPtr && swos.topTeamData.inGameTeamPtr->teamName[0])
-        ? swos.topTeamData.inGameTeamPtr->teamName : "HOME";
-    const char *t2 = (swos.bottomTeamData.inGameTeamPtr && swos.bottomTeamData.inGameTeamPtr->teamName[0])
-        ? swos.bottomTeamData.inGameTeamPtr->teamName : "AWAY";
-    bool topHuman = (swos.topTeamData.playerNumber != 0 || swos.topTeamData.playerCoachNumber != 0);
-    bool botHuman = (swos.bottomTeamData.playerNumber != 0 || swos.bottomTeamData.playerCoachNumber != 0);
+    const TeamGeneralInfo *team1Info = nullptr;
+    const TeamGeneralInfo *team2Info = nullptr;
+    resolveTeam1AndTeam2(team1Info, team2Info);
+
+    const char *t1 = swos.topTeamInGame.teamName[0] ? swos.topTeamInGame.teamName : "HOME";
+    const char *t2 = swos.bottomTeamInGame.teamName[0] ? swos.bottomTeamInGame.teamName : "AWAY";
+    bool topHuman = (team1Info->playerNumber != 0 || team1Info->playerCoachNumber != 0);
+    bool botHuman = (team2Info->playerNumber != 0 || team2Info->playerCoachNumber != 0);
 
     std::string prompt = buildMatchPerspectiveContext(t1, t2, topGoals, botGoals, topHuman, botHuman) +
         " Speaker's club: " + club + ". Player speaking: " + player + " (" + role + "). "
@@ -636,14 +651,16 @@ void triggerLivePunditEvent(const char *eventLabel, bool highPriority)
     if (!highPriority && s_punditCooldownFrames > 0)
         return;
 
-    const char *t1 = (swos.topTeamData.inGameTeamPtr && swos.topTeamData.inGameTeamPtr->teamName[0])
-        ? swos.topTeamData.inGameTeamPtr->teamName : "HOME";
-    const char *t2 = (swos.bottomTeamData.inGameTeamPtr && swos.bottomTeamData.inGameTeamPtr->teamName[0])
-        ? swos.bottomTeamData.inGameTeamPtr->teamName : "AWAY";
+    const TeamGeneralInfo *team1Info = nullptr;
+    const TeamGeneralInfo *team2Info = nullptr;
+    resolveTeam1AndTeam2(team1Info, team2Info);
+
+    const char *t1 = swos.topTeamInGame.teamName[0] ? swos.topTeamInGame.teamName : "HOME";
+    const char *t2 = swos.bottomTeamInGame.teamName[0] ? swos.bottomTeamInGame.teamName : "AWAY";
     int g1 = swos.statsTeam1Goals;
     int g2 = swos.statsTeam2Goals;
-    bool topHuman = (swos.topTeamData.playerNumber != 0 || swos.topTeamData.playerCoachNumber != 0);
-    bool botHuman = (swos.bottomTeamData.playerNumber != 0 || swos.bottomTeamData.playerCoachNumber != 0);
+    bool topHuman = (team1Info->playerNumber != 0 || team1Info->playerCoachNumber != 0);
+    bool botHuman = (team2Info->playerNumber != 0 || team2Info->playerCoachNumber != 0);
 
     bool isGoalEvent = (std::strstr(eventLabel, "GOAL") != nullptr);
     const TeamGeneralInfo *actingPtr = isGoalEvent
@@ -652,10 +669,10 @@ void triggerLivePunditEvent(const char *eventLabel, bool highPriority)
 
     const char *actingTeam = nullptr;
     const char *otherTeam = nullptr;
-    if (actingPtr == &swos.topTeamData || (isGoalEvent && swos.lastTeamScoredNumber == 1)) {
+    if ((isGoalEvent && swos.lastTeamScoredNumber == 1) || actingPtr == team1Info) {
         actingTeam = t1;
         otherTeam = t2;
-    } else if (actingPtr == &swos.bottomTeamData || (isGoalEvent && swos.lastTeamScoredNumber == 2)) {
+    } else if ((isGoalEvent && swos.lastTeamScoredNumber == 2) || actingPtr == team2Info) {
         actingTeam = t2;
         otherTeam = t1;
     }
