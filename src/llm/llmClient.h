@@ -20,11 +20,7 @@ struct LlmFeaturesConfig {
 };
 
 struct LlmConfig {
-#ifdef SWOS_TEST
     bool enabled = false;
-#else
-    bool enabled = true;
-#endif
     LlmProvider provider = LlmProvider::kOllama;
     std::string endpoint = "http://localhost:11434/api/chat";
     std::string model = "gemma4:latest";

@@ -27,6 +27,7 @@ namespace {
 
 uint64_t s_postMatchRequestId = 0;
 bool s_postMatchTriggered = false;
+bool s_handledMatchInGameLoop = false;
 uint64_t s_preMatchRequestId = 0;
 uint64_t s_punditRequestId = 0;
 int s_punditCooldownFrames = 0;
@@ -389,6 +390,71 @@ void onCareerMatchCompletedLlm(int topGoals, int botGoals)
     std::string reply;
     if (waitForLlmWithIndicator(reqId, cfg.timeoutMs, "DRESSING ROOM", reply)) {
         showWrappedSwosPrompt("DRESSING ROOM VOICE", reply);
+    }
+}
+
+void markMatchHandledInGameLoop()
+{
+    s_handledMatchInGameLoop = true;
+}
+
+void onViewResultMatchCompletedLlm()
+{
+    if (s_handledMatchInGameLoop) {
+        s_handledMatchInGameLoop = false;
+        return;
+    }
+    if (swos.g_trainingGame)
+        return;
+
+    const auto& cfg = getLlmConfig();
+    if (!cfg.enabled)
+        return;
+
+    const auto *t1File = swos.playMatchTeam1Ptr.asAligned();
+    const auto *t2File = swos.playMatchTeam2Ptr.asAligned();
+    if (!t1File || !t2File)
+        return;
+
+    const char *t1 = t1File->teamName[0] ? t1File->teamName : "HOME";
+    const char *t2 = t2File->teamName[0] ? t2File->teamName : "AWAY";
+    int g1 = static_cast<int>(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[379094]));
+    int g2 = static_cast<int>(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[379096]));
+    bool topHuman = (t1File->teamControls == kPlayerCoach || t1File->teamControls == kCoach);
+    bool botHuman = (t2File->teamControls == kPlayerCoach || t2File->teamControls == kCoach);
+
+    if (cfg.features.postMatchNewspaper) {
+        std::string prompt = buildMatchPerspectiveContext(t1, t2, g1, g2, topHuman, botHuman);
+        prompt += "\nScoreline: " + std::string(t1) + " " + std::to_string(g1) + "-" + std::to_string(g2) + " " + t2;
+        prompt += "\nCompetition: " + std::string(gameModeName()) + " (VIEW RESULT).";
+        prompt += "\nWrite a punchy 1990s British sports newspaper blurb:\n"
+                  "Line 1: Tabloid headline (max 38 chars)\n"
+                  "Line 2-3: 1-2 short match sentences (max 75 chars total)\n"
+                  "Line 4: CHAIRMAN: short board reaction matching the exact WIN/LOSS/DRAW outcome (max 70 chars). No markdown.";
+
+        uint64_t reqId = enqueueLlmRequest(
+            "You are a 1995 British football tabloid editor and club chairman. Be concise, punchy, plain ASCII text, no markdown, no bullets.",
+            prompt);
+        std::string reply;
+        if (waitForLlmWithIndicator(reqId, cfg.timeoutMs, "PRINTING DAILY ECHO", reply)) {
+            showWrappedSwosPrompt("DAILY SOCCER ECHO", reply);
+        }
+    }
+
+    if (swos.g_gameType == kGameTypeCareer && cfg.features.dressingRoomVoices) {
+        std::string club, player, role;
+        if (!pickCareerSquadVoice(club, player, role).empty()) {
+            std::string prompt = buildMatchPerspectiveContext(t1, t2, g1, g2, topHuman, botHuman) +
+                " Speaker's club: " + club + ". Player speaking: " + player + " (" + role + "). "
+                "Give a 1-2 sentence 1990s dressing room reaction matching that exact result (max 110 chars). Prefix with player name.";
+            uint64_t reqId = enqueueLlmRequest(
+                "You are a 1995 football player in the dressing room after a match. Plain ASCII, max 110 chars, no markdown.",
+                prompt);
+            std::string reply;
+            if (waitForLlmWithIndicator(reqId, cfg.timeoutMs, "DRESSING ROOM", reply)) {
+                showWrappedSwosPrompt("DRESSING ROOM VOICE", reply);
+            }
+        }
     }
 }
 

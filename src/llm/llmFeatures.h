@@ -16,6 +16,8 @@ void showPreMatchScoutingIfReady();
 std::string fetchTransferNegotiationVoice(const char *buyerClub, const char *sellerClub,
     const char *playerName, const char *offerTerms, bool isCounterOffer);
 void onCareerMatchCompletedLlm(int topGoals, int botGoals);
+void markMatchHandledInGameLoop();
+void onViewResultMatchCompletedLlm();
 void onCareerWeeklyTickLlm();
 void checkCareerSquadTransfersLlm();
 void resetCareerLlmSnapshots();

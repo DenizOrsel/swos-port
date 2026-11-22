@@ -70,7 +70,7 @@ Menu llmOptionsMenu
 
     Entry provider {
         text: @kAlloc
-        onSelect: cycleLlmProvider
+        onSelect: editLlmProvider
         upEntry: <
         downEntry: >
     }
@@ -97,14 +97,14 @@ Menu llmOptionsMenu
     }
 
     Entry timeout {
-        number: 0
+        text: @kAlloc
         onSelect: editLlmTimeout
         upEntry: <
         downEntry: >
     }
 
     Entry maxTokens {
-        number: 0
+        text: @kAlloc
         onSelect: editLlmMaxTokens
         upEntry: <
         downEntry: >
@@ -112,7 +112,7 @@ Menu llmOptionsMenu
 
     Entry temperature {
         text: @kAlloc
-        onSelect: cycleLlmTemperature
+        onSelect: editLlmTemperature
         upEntry: <
         downEntry: >
     }
@@ -153,6 +153,7 @@ Menu llmOptionsMenu
     }
 
     Entry cpuTactics {
+        color: @kGray
         text: @kAlloc
         onSelect: toggleFeatureCpuTactics
         upEntry: <

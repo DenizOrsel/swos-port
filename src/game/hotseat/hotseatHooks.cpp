@@ -106,6 +106,7 @@ void Hotseat_OnAfterProcessCareerFile()
 void Hotseat_OnAfterPlayMatch()
 {
     HotseatCareerManager::get().onAfterPlayMatch();
+    onViewResultMatchCompletedLlm();
 }
 
 void InitializeNewSeason_OnEnter()

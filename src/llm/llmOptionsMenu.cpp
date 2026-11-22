@@ -5,7 +5,9 @@
 #include "llmOptions.mnu.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
+#include <cstdlib>
 
 using namespace LlmOptionsMenu;
 
@@ -49,19 +51,21 @@ static void refreshLlmOptionsMenu()
     endpointEntry.copyString(elideDisplay(cfg.endpoint, 20).c_str());
     modelEntry.copyString(elideDisplay(cfg.model, 20).c_str());
     apiKeyEntry.copyString(cfg.apiKey.empty() ? "(NONE)" : "********");
-    timeoutEntry.setNumber(cfg.timeoutMs);
-    maxTokensEntry.setNumber(cfg.maxTokens);
 
-    char tempBuf[16];
-    std::snprintf(tempBuf, sizeof(tempBuf), "%.1f", cfg.temperature);
-    temperatureEntry.copyString(tempBuf);
+    char numBuf[32];
+    std::snprintf(numBuf, sizeof(numBuf), "%d", cfg.timeoutMs);
+    timeoutEntry.copyString(numBuf);
+    std::snprintf(numBuf, sizeof(numBuf), "%d", cfg.maxTokens);
+    maxTokensEntry.copyString(numBuf);
+    std::snprintf(numBuf, sizeof(numBuf), "%.2f", cfg.temperature);
+    temperatureEntry.copyString(numBuf);
 
     newspaperEntry.copyString(cfg.features.postMatchNewspaper ? "ON" : "OFF");
     preMatchEntry.copyString(cfg.features.preMatchScouting ? "ON" : "OFF");
     transfersEntry.copyString(cfg.features.transferNegotiations ? "ON" : "OFF");
     dressingRoomEntry.copyString(cfg.features.dressingRoomVoices ? "ON" : "OFF");
     punditEntry.copyString(cfg.features.livePunditTicker ? "ON" : "OFF");
-    cpuTacticsEntry.copyString(cfg.features.cpuTacticalManager ? "ON" : "OFF");
+    cpuTacticsEntry.copyString("OFF");
 }
 
 static void toggleLlmEnabled()
@@ -72,16 +76,25 @@ static void toggleLlmEnabled()
     refreshLlmOptionsMenu();
 }
 
-static void cycleLlmProvider()
+static LlmProvider parseProviderText(std::string text)
+{
+    for (char& c : text)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (text == "openai")
+        return LlmProvider::kOpenAi;
+    if (text == "custom")
+        return LlmProvider::kCustom;
+    return LlmProvider::kOllama;
+}
+
+static void editLlmProvider()
 {
     LlmConfig cfg = getLlmConfig();
-    switch (cfg.provider) {
-    case LlmProvider::kOllama: cfg.provider = LlmProvider::kOpenAi; break;
-    case LlmProvider::kOpenAi: cfg.provider = LlmProvider::kCustom; break;
-    case LlmProvider::kCustom:
-    default: cfg.provider = LlmProvider::kOllama; break;
+    providerEntry.copyString(providerLabel(cfg.provider));
+    if (inputText(providerEntry, 24, kFullCharset)) {
+        cfg.provider = parseProviderText(providerEntry.fg.string.asPtr());
+        updateLlmConfig(cfg);
     }
-    updateLlmConfig(cfg);
     refreshLlmOptionsMenu();
 }
 
@@ -120,40 +133,47 @@ static void editLlmApiKey()
 
 static void editLlmTimeout()
 {
-    auto entry = A5.as<MenuEntry *>();
-    if (inputNumber(*entry, 5, 250, 30000)) {
-        LlmConfig cfg = getLlmConfig();
-        cfg.timeoutMs = std::clamp(static_cast<int>(entry->fg.number), 250, 30000);
-        updateLlmConfig(cfg);
+    LlmConfig cfg = getLlmConfig();
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%d", cfg.timeoutMs);
+    timeoutEntry.copyString(buf);
+    if (inputText(timeoutEntry, 8, kFullCharset)) {
+        int val = std::atoi(timeoutEntry.fg.string);
+        if (val > 0) {
+            cfg.timeoutMs = std::clamp(val, 250, 30000);
+            updateLlmConfig(cfg);
+        }
     }
     refreshLlmOptionsMenu();
 }
 
 static void editLlmMaxTokens()
 {
-    auto entry = A5.as<MenuEntry *>();
-    if (inputNumber(*entry, 4, 16, 8192)) {
-        LlmConfig cfg = getLlmConfig();
-        cfg.maxTokens = std::clamp(static_cast<int>(entry->fg.number), 16, 8192);
-        updateLlmConfig(cfg);
+    LlmConfig cfg = getLlmConfig();
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%d", cfg.maxTokens);
+    maxTokensEntry.copyString(buf);
+    if (inputText(maxTokensEntry, 8, kFullCharset)) {
+        int val = std::atoi(maxTokensEntry.fg.string);
+        if (val > 0) {
+            cfg.maxTokens = std::clamp(val, 16, 8192);
+            updateLlmConfig(cfg);
+        }
     }
     refreshLlmOptionsMenu();
 }
 
-static void cycleLlmTemperature()
+static void editLlmTemperature()
 {
-    static constexpr float kTemps[] = { 0.1f, 0.3f, 0.5f, 0.7f, 0.9f, 1.0f, 1.2f };
     LlmConfig cfg = getLlmConfig();
-    int nextIdx = 0;
-    for (int i = 0; i < static_cast<int>(std::size(kTemps)); ++i) {
-        if (cfg.temperature < kTemps[i] - 0.05f) {
-            nextIdx = i;
-            break;
-        }
-        nextIdx = (i + 1) % static_cast<int>(std::size(kTemps));
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%.2f", cfg.temperature);
+    temperatureEntry.copyString(buf);
+    if (inputText(temperatureEntry, 8, kFullCharset)) {
+        float val = static_cast<float>(std::atof(temperatureEntry.fg.string));
+        cfg.temperature = std::clamp(val, 0.0f, 2.0f);
+        updateLlmConfig(cfg);
     }
-    cfg.temperature = kTemps[nextIdx];
-    updateLlmConfig(cfg);
     refreshLlmOptionsMenu();
 }
 
@@ -199,9 +219,12 @@ static void toggleFeatureLivePundit()
 
 static void toggleFeatureCpuTactics()
 {
+    // Disabled feature: keep cpuTacticalManager off
     LlmConfig cfg = getLlmConfig();
-    cfg.features.cpuTacticalManager = !cfg.features.cpuTacticalManager;
-    updateLlmConfig(cfg);
+    if (cfg.features.cpuTacticalManager) {
+        cfg.features.cpuTacticalManager = false;
+        updateLlmConfig(cfg);
+    }
     refreshLlmOptionsMenu();
 }
 

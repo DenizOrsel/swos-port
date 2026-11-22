@@ -384,8 +384,6 @@ bool loadLlmConfig(const char *iniPath /* = nullptr */)
     s_config = LlmConfig{};
 
     if (!fileExists(resolvedPath.c_str())) {
-        if (!iniPath)
-            writeAiIni(resolvedPath, s_config);
         return false;
     }
 

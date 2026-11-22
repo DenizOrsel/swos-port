@@ -376,6 +376,25 @@ contains the currently required original-data subset selected by the packager.
             for item in entries:
                 archive.write(item.source, str(root / item.destination))
             archive.writestr(str(root / "README.txt"), zipBytes(instructions))
+            defaultAiIni = """[llm]
+enabled = false
+provider = ollama
+endpoint = http://localhost:11434/api/chat
+model = gemma4:latest
+apiKey =
+timeoutMs = 10000
+maxTokens = 1200
+temperature = 0.700000
+
+[features]
+postMatchNewspaper = true
+preMatchScouting = true
+transferNegotiations = true
+dressingRoomVoices = true
+livePunditTicker = true
+cpuTacticalManager = false
+"""
+            archive.writestr(str(root / "ai.ini"), zipBytes(defaultAiIni))
             archive.writestr(
                 str(root / "DEMO-NOTICE.txt"),
                 zipBytes(

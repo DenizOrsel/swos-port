@@ -143,6 +143,7 @@ void gameLoop(TeamGame *topTeam, TeamGame *bottomTeam)
     m_playingMatch = false;
     if (!swos.gameCanceled) {
         HotseatCareerManager::get().onMatchCompleted();
+        markMatchHandledInGameLoop();
         beginPostMatchNewspaperRequest();
         showPostMatchNewspaperIfReady();
         onCareerMatchCompletedLlm(swos.statsTeam1Goals, swos.statsTeam2Goals);
