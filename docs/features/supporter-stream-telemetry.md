@@ -26,7 +26,13 @@ flowchart LR
 All telemetry fields are read directly from existing C++ / SWOS VM state with zero gameplay mutation:
 
 ### A. Live Match Telemetry *(updated every ~30 frames & on major events)*
-- **Match Clock & Phase:** Minute (`swos.gameTime`), half (`swos.halfNumber`), extra time / penalties, scoreline (`statsTeam1Goals` – `statsTeam2Goals`), and resolved pitch condition (`getPitchType()` when `isPitchTypeResolved()`).
+- **Match Clock, Exact Minute & Time-Pressure Phase:**
+  - Exact current match minute (`0'–90'+` / `120'+` derived from `swos.gameTime`), current half (`swos.halfNumber`), extra time / penalties, and an explicit **time-pressure tag** computed from `(minute, goalDiff)`:
+    - `0'–15'`: Early exchanges / settling in
+    - `40'–45'+`: Approaching halftime
+    - `75'–84'`: Closing stages (tension rising if margin <= 1)
+    - `85'–90'+` / stoppage time: **Final minutes / "Squeaky Bum Time"** — leading fans beg the referee to blow the full-time whistle (*"Ref, blow the whistle already! Look at your watch!"*), while trailing fans plead for one last attack / late equalizer.
+- **Scoreline & Pitch:** Current score (`statsTeam1Goals` – `statsTeam2Goals`) and resolved pitch condition (`getPitchType()` when `isPitchTypeResolved()`).
 - **Live Statistics (`getStats()`):** Possession %, total shots (`goalAttempts`), shots on target, corners, fouls, yellow/red cards, and recent momentum (shots/territory in the last 10 match minutes).
 - **Ball & Territory Tracking (`swos.ballSprite`):** Rolling 10-second pitch-zone ratio (`attacking third` / `midfield` / `defending third` for Team 1 vs Team 2) so fans know *who is dominating* even at `0–0`.
 - **Key Events Ring Buffer (last 5 events):** Timestamped entries (`GOAL`, `OWN_GOAL`, `POST/BAR`, `SAVE`, `PENALTY`, `RED_CARD`, `YELLOW_CARD`, `INJURY`, `SUBSTITUTION`) with exact team & scorer/player name.
