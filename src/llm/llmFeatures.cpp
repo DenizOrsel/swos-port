@@ -34,8 +34,61 @@ uint64_t s_punditRequestId = 0;
 int s_punditCooldownFrames = 0;
 int s_punditDisplayFrames = 0;
 std::vector<std::string> s_punditLines;
+struct SquadPlayerSnapshot {
+    std::string name;
+    std::string position;
+    std::string marketValue;
+};
+
 int s_weeklyTickCounter = 0;
-std::unordered_map<int16_t, std::vector<std::string>> s_squadSnapshots;
+std::unordered_map<int16_t, std::vector<SquadPlayerSnapshot>> s_squadSnapshots;
+
+const char *playerPositionName(byte positionAndFace)
+{
+    int pos = (positionAndFace >> 5) & 0x07;
+    switch (pos) {
+    case 0: return "GOALKEEPER";
+    case 1: return "RIGHT BACK";
+    case 2: return "LEFT BACK";
+    case 3: return "DEFENDER";
+    case 4: return "RIGHT WINGER";
+    case 5: return "LEFT WINGER";
+    case 6: return "MIDFIELDER";
+    case 7: return "ATTACKER";
+    default: return "OUTFIELD PLAYER";
+    }
+}
+
+std::string formatPlayerMarketValue(byte priceIdx)
+{
+    static constexpr uint16_t kValueBases[] = {
+        0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85,
+        90, 95, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200, 225,
+        250, 275, 300, 350, 400, 450, 500, 550, 600, 650, 700, 750, 800, 850,
+        900, 950, 1000, 1100, 1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900,
+        2000, 2250, 2500, 2750, 3000, 3500, 4000, 4500, 5000, 6000, 7000, 8000,
+        9000, 10000, 11000, 12000, 13000, 14000, 15000
+    };
+    static constexpr uint8_t kPriceToBaseIdx[50] = {
+        5, 5, 6, 8, 10, 13, 15, 17, 20, 21, 23, 25, 26, 28, 30, 32, 34, 35,
+        37, 38, 39, 40, 41, 42, 43, 44, 45, 47, 48, 49, 51, 53, 54, 56, 57,
+        58, 59, 61, 62, 63, 65, 66, 67, 68, 69, 70, 71, 73, 76, 76
+    };
+    size_t idx = std::min<size_t>(priceIdx, 49);
+    uint16_t thousands = kValueBases[kPriceToBaseIdx[idx]];
+    char buf[32];
+    if (thousands >= 1000) {
+        if (thousands % 1000 == 0)
+            std::snprintf(buf, sizeof(buf), "GBP %uM", thousands / 1000);
+        else if (thousands % 100 == 0)
+            std::snprintf(buf, sizeof(buf), "GBP %u.%uM", thousands / 1000, (thousands % 1000) / 100);
+        else
+            std::snprintf(buf, sizeof(buf), "GBP %u.%02uM", thousands / 1000, (thousands % 1000) / 10);
+    } else {
+        std::snprintf(buf, sizeof(buf), "GBP %uK", thousands);
+    }
+    return buf;
+}
 
 const char *pitchConditionName(int pitchType)
 {
@@ -166,13 +219,7 @@ std::string pickCareerSquadVoice(std::string& outClubName, std::string& outPlaye
         const auto *pf = reinterpret_cast<const PlayerFile *>(&SwosVM::g_memByte[ofs]);
         if (pf->playerName[0] == '\0')
             continue;
-        int pos = (pf->positionAndFace >> 5) & 0x07;
-        const char *role = "MIDFIELDER";
-        if (pos == 0) role = "GOALKEEPER";
-        else if (pos == 1 || pos == 2) role = "DEFENDER";
-        else if (pos == 6 || pos == 7) role = "STRIKER";
-        else if (pos == 3 || pos == 4) role = "WINGER";
-        candidates.emplace_back(pf->playerName, role);
+        candidates.emplace_back(pf->playerName, playerPositionName(pf->positionAndFace));
     }
     if (candidates.empty())
         return {};
@@ -439,13 +486,13 @@ void beginPostMatchNewspaperRequest()
     if (!s2.empty()) prompt += "\n" + ctx.team2 + " scorers: " + s2;
     prompt += "\nStats: Shots " + std::to_string(stats.team1.goalAttempts) + "-" + std::to_string(stats.team2.goalAttempts);
     prompt += ", Possession " + std::to_string(stats.team1.ballPossession) + "%-" + std::to_string(stats.team2.ballPossession) + "%.";
-    prompt += "\nWrite an authentic, lively 1995 football back-page newspaper report + board reaction:\n"
+    prompt += "\nWrite an authentic, lively 1997 football back-page newspaper report + board reaction:\n"
               "Line 1: Punchy tabloid headline (all caps style, witty, referencing the actual result)\n"
               "Paragraph 2: 3 vivid sentences summarizing how the match unfolded using the real scorers, shots, possession, and pitch condition (only if listed above). Do NOT invent players, goals, or weather.\n"
               "Final paragraph starting with 'CHAIRMAN: ': 2 expressive sentences in character from the human club's chairman reacting strictly to the actual WIN/LOSS/DRAW.\n"
               "Plain text only, no markdown, no bullet points.";
 
-    const std::string sys = "You are a witty, atmospheric 1995 British football back-page journalist and expressive club chairman. "
+    const std::string sys = "You are a witty, atmospheric 1997 British football back-page journalist and expressive club chairman. "
                             "Write vivid, natural sports prose grounded strictly in the provided match facts. "
                             "Never confuse who won or lost. Never invent weather or scorers not given. Plain text only.";
     s_postMatchRequestId = enqueueLlmRequest(sys, prompt);
@@ -477,10 +524,10 @@ std::string fetchTransferNegotiationVoice(const char *buyerClub, const char *sel
     std::string userPrompt = isCounterOffer
         ? (std::string(sellerClub) + " manager responds to " + buyerClub + " over " + playerName + " (" + offerTerms + ").")
         : (std::string(buyerClub) + " manager pitches a bid to " + sellerClub + " for " + playerName + " (" + offerTerms + ").");
-    userPrompt += " Reply with ONE sharp, authentic 1995 football manager negotiation line (plain text, no quotation marks).";
+    userPrompt += " Reply with ONE sharp, authentic 1997 football manager negotiation line (plain text, no quotation marks).";
 
     uint64_t reqId = enqueueLlmRequest(
-        "You are a shrewd 1995 football manager negotiating a transfer on the phone. Speak naturally with character in one short sentence. Plain text only.",
+        "You are a shrewd 1997 football manager negotiating a transfer on the phone. Speak naturally with character in one short sentence. Plain text only.",
         userPrompt);
     if (reqId == 0)
         return {};
@@ -519,11 +566,11 @@ void onCareerMatchCompletedLlm(int topGoals, int botGoals)
 
     std::string prompt = buildMatchPerspectiveContext(t1, t2, topGoals, botGoals, topHuman, botHuman) +
         "\nSpeaker's club: " + club + ". Player speaking: " + player + " (" + role + "). "
-        "Write an expressive 2-3 sentence 1995 post-match dressing room quote from " + player +
+        "Write an expressive 2-3 sentence 1997 post-match dressing room quote from " + player +
         " reacting honestly to this exact result and looking ahead to the next fixture. Start with '" + player + ": '. Plain text only.";
 
     uint64_t reqId = enqueueLlmRequest(
-        "You are a passionate 1995 footballer speaking candidly in the dressing room right after full-time. "
+        "You are a passionate 1997 footballer speaking candidly in the dressing room right after full-time. "
         "Sound like a real player, never generic or robotic, and strictly match the actual win/loss/draw. Plain text only.",
         prompt);
     if (reqId == 0)
@@ -569,13 +616,13 @@ void onViewResultMatchCompletedLlm()
         std::string prompt = buildMatchPerspectiveContext(t1, t2, g1, g2, topHuman, botHuman);
         prompt += "\nScoreline: " + std::string(t1) + " " + std::to_string(g1) + "-" + std::to_string(g2) + " " + t2;
         prompt += "\nCompetition: " + std::string(gameModeName()) + ".";
-        prompt += "\nWrite an authentic, lively 1995 football back-page newspaper report + board reaction:\n"
+        prompt += "\nWrite an authentic, lively 1997 football back-page newspaper report + board reaction:\n"
                   "Line 1: Punchy tabloid headline referencing the real result\n"
                   "Paragraph 2: 2-3 vivid sentences summarizing the outcome without inventing scorers or weather.\n"
                   "Final paragraph starting with 'CHAIRMAN: ': 2 expressive sentences from the human club's chairman reacting strictly to the actual WIN/LOSS/DRAW. Plain text only.";
 
         uint64_t reqId = enqueueLlmRequest(
-            "You are a witty 1995 British football back-page journalist and expressive club chairman. "
+            "You are a witty 1997 British football back-page journalist and expressive club chairman. "
             "Never confuse who won or lost. Never invent scorers or weather. Plain text only.",
             prompt);
         std::string reply;
@@ -589,10 +636,10 @@ void onViewResultMatchCompletedLlm()
         if (!pickCareerSquadVoice(club, player, role).empty()) {
             std::string prompt = buildMatchPerspectiveContext(t1, t2, g1, g2, topHuman, botHuman) +
                 "\nSpeaker's club: " + club + ". Player speaking: " + player + " (" + role + "). "
-                "Write an expressive 2-3 sentence 1995 dressing room quote from " + player +
+                "Write an expressive 2-3 sentence 1997 dressing room quote from " + player +
                 " reacting honestly to this exact result. Start with '" + player + ": '. Plain text only.";
             uint64_t reqId = enqueueLlmRequest(
-                "You are a passionate 1995 footballer speaking in the dressing room after full-time. Sound authentic and match the exact result. Plain text only.",
+                "You are a passionate 1997 footballer speaking in the dressing room after full-time. Sound authentic and match the exact result. Plain text only.",
                 prompt);
             std::string reply;
             if (waitForLlmWithIndicator(reqId, cfg.timeoutMs, "DRESSING ROOM", reply)) {
@@ -635,41 +682,48 @@ void checkCareerSquadTransfersLlm()
     int16_t teamId = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kSelTeamNumber]);
     std::string clubName = hdr->teamName[0] ? std::string(hdr->teamName) : std::string("THE CLUB");
 
-    std::vector<std::string> currentNames;
-    currentNames.reserve(numPlayers);
+    std::vector<SquadPlayerSnapshot> currentSquad;
+    currentSquad.reserve(numPlayers);
     for (uint16_t i = 0; i < numPlayers; ++i) {
         size_t ofs = CareerOffsets::kCareerTeam +
                      HotseatInternal::kTeamFileHeaderSize +
                      static_cast<size_t>(i) * HotseatInternal::kPlayerFileSize;
         const auto *pf = reinterpret_cast<const PlayerFile *>(&SwosVM::g_memByte[ofs]);
-        if (pf->playerName[0] != '\0')
-            currentNames.emplace_back(pf->playerName);
+        if (pf->playerName[0] != '\0') {
+            currentSquad.push_back({
+                pf->playerName,
+                playerPositionName(pf->positionAndFace),
+                formatPlayerMarketValue(pf->price)
+            });
+        }
     }
-    if (currentNames.empty())
+    if (currentSquad.empty())
         return;
 
     auto it = s_squadSnapshots.find(teamId);
     if (it == s_squadSnapshots.end()) {
-        s_squadSnapshots[teamId] = std::move(currentNames);
+        s_squadSnapshots[teamId] = std::move(currentSquad);
         return;
     }
 
-    const auto& prevNames = it->second;
-    std::unordered_set<std::string> prevSet(prevNames.begin(), prevNames.end());
-    std::unordered_set<std::string> currSet(currentNames.begin(), currentNames.end());
+    const auto& prevSquad = it->second;
+    std::unordered_set<std::string> prevSet;
+    for (const auto& p : prevSquad) prevSet.insert(p.name);
+    std::unordered_set<std::string> currSet;
+    for (const auto& p : currentSquad) currSet.insert(p.name);
 
-    std::vector<std::string> added;
-    std::vector<std::string> removed;
-    for (const auto& name : currentNames) {
-        if (prevSet.find(name) == prevSet.end())
-            added.push_back(name);
+    std::vector<SquadPlayerSnapshot> added;
+    std::vector<SquadPlayerSnapshot> removed;
+    for (const auto& p : currentSquad) {
+        if (prevSet.find(p.name) == prevSet.end())
+            added.push_back(p);
     }
-    for (const auto& name : prevNames) {
-        if (currSet.find(name) == currSet.end())
-            removed.push_back(name);
+    for (const auto& p : prevSquad) {
+        if (currSet.find(p.name) == currSet.end())
+            removed.push_back(p);
     }
 
-    s_squadSnapshots[teamId] = std::move(currentNames);
+    s_squadSnapshots[teamId] = std::move(currentSquad);
 
     // Ignore bulk resets / season-init squad rebuilds
     if (added.empty() && removed.empty())
@@ -679,17 +733,24 @@ void checkCareerSquadTransfersLlm()
 
     std::string prompt;
     if (!added.empty()) {
-        prompt = clubName + " just completed the signing of " + added.front() + ".";
-        if (!removed.empty())
-            prompt += " " + removed.front() + " has departed the club.";
-        prompt += " Write a lively 2-3 sentence 1995 transfer desk bulletin including a brief quote from the new signing or rival manager. Plain text only.";
+        const auto& signedP = added.front();
+        prompt = clubName + " just completed the signing of " + signedP.name +
+                 " (Position: " + signedP.position + ", Market Value: " + signedP.marketValue + ").";
+        if (!removed.empty()) {
+            const auto& leftP = removed.front();
+            prompt += " " + leftP.name + " (Position: " + leftP.position + ", Market Value: " + leftP.marketValue + ") has departed the club.";
+        }
+        prompt += " Write a lively 2-3 sentence 1997 transfer desk bulletin referencing the exact position (" + signedP.position +
+                  ") and market value (" + signedP.marketValue + "), including a brief quote from the new signing or rival manager. Plain text only.";
     } else {
-        prompt = removed.front() + " has just left " + clubName + ". "
-                 "Write a lively 2-3 sentence 1995 transfer desk bulletin with a brief reaction from the fans or dressing room. Plain text only.";
+        const auto& leftP = removed.front();
+        prompt = leftP.name + " (Position: " + leftP.position + ", Market Value: " + leftP.marketValue + ") has just left " + clubName + ". "
+                 "Write a lively 2-3 sentence 1997 transfer desk bulletin referencing their exact position (" + leftP.position +
+                 ") and market value (" + leftP.marketValue + ") with a brief reaction from the fans or dressing room. Plain text only.";
     }
 
     uint64_t reqId = enqueueLlmRequest(
-        "You are a sharp 1995 football transfer desk journalist covering deadline moves and squad shake-ups. Sound vivid and authentic. Plain text only.",
+        "You are a sharp 1997 football transfer desk journalist covering deadline moves and squad shake-ups. Always use the exact player position and market value provided. Plain text only.",
         prompt);
     if (reqId == 0)
         return;
@@ -716,7 +777,7 @@ void beginPreMatchScoutingRequest(const TeamGame *topTeam, const TeamGame *botto
               "Only mention the pitch condition if Pitch is explicitly listed above; never invent weather. Plain text only.";
 
     s_preMatchRequestId = enqueueLlmRequest(
-        "You are an experienced 1995 football assistant manager speaking to the boss in the tunnel before kickoff. "
+        "You are an experienced 1997 football assistant manager speaking to the boss in the tunnel before kickoff. "
         "Be specific, tactical, and atmospheric using only the real club/player/pitch facts given. Plain text only.",
         prompt);
 }
@@ -813,10 +874,10 @@ void triggerLivePunditEvent(const char *eventLabel, bool highPriority)
             }
         }
     }
-    prompt += " React with ONE spontaneous, excited 1995 TV co-commentator sentence (short enough for a broadcast banner, plain text, no quotes).";
+    prompt += " React with ONE spontaneous, excited 1997 TV co-commentator sentence (short enough for a broadcast banner, plain text, no quotes).";
 
     s_punditRequestId = enqueueLlmRequest(
-        "You are an excited 1995 live football TV co-commentator like Barry Davies or Andy Gray. "
+        "You are an excited 1997 live football TV co-commentator like Barry Davies or Andy Gray. "
         "Always credit the exact scoring/acting team accurately in one vivid, punchy broadcast sentence. Plain text only.",
         prompt);
     s_punditCooldownFrames = 360; // ~6 seconds cooldown between non-goal events
@@ -880,8 +941,8 @@ void onCareerWeeklyTickLlm()
 
     bool isMarket = cfg.features.transferNegotiations && ((s_weeklyTickCounter % 6) == 0);
     std::string sys = isMarket
-        ? "You are a well-connected 1995 football transfer agent whispering inside gossip. Write naturally in 2 sentences. Plain text only."
-        : "You are a candid 1995 squad footballer chatting at the training ground. Write naturally in 2 sentences. Plain text only.";
+        ? "You are a well-connected 1997 football transfer agent whispering inside gossip. Write naturally in 2 sentences. Plain text only."
+        : "You are a candid 1997 squad footballer chatting at the training ground. Write naturally in 2 sentences. Plain text only.";
     std::string prompt = isMarket
         ? ("Club: " + club + ". Write a lively 2-sentence transfer market whisper mentioning " + player + " (" + role + ") and rival interest. Plain text only.")
         : ("Club: " + club + ". Write a candid 2-sentence training-ground quote from " + player + " (" + role + ") about squad morale, form, or fighting for a starting shirt. Start with '" + player + ": '. Plain text only.");

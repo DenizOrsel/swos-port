@@ -26,7 +26,7 @@ struct LlmConfig {
     std::string model = "gemma4:latest";
     std::string apiKey;
     std::string language = "English";
-    std::string systemInstruction = "Only describe facts explicitly provided in the prompt. Never invent or guess unstated details such as headers, volleys, free kicks, assists, injuries, or weather.";
+    std::string systemInstruction = "The year is 1997 and you are generating immersive in-game football world content for Sensible World of Soccer 96/97. Only describe facts explicitly provided in the prompt. Never invent or guess unstated details such as player positions, headers, volleys, free kicks, assists, injuries, or weather.";
     int timeoutMs = 10000;
     int maxTokens = 1200;
     float temperature = 0.85f;

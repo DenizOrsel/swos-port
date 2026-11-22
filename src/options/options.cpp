@@ -145,6 +145,8 @@ void loadOptions()
     setDefaultOptions();
 
     loadOptions(ini, kStandardOptions, kStandardSection);
+    if (swos.g_pitchType == -2)
+        swos.pitchTypeOrSeason = 1;
     loadWindowOptions(ini);
     loadControlOptions(ini);
 
@@ -206,6 +208,7 @@ static void setDefaultOptions()
     swos.g_autoReplays = 1;
     swos.g_autoSaveHighlights = 1;
     swos.g_pitchType = -2;
+    swos.pitchTypeOrSeason = 1;
     m_showPreMatchMenus = 1;
 }
 

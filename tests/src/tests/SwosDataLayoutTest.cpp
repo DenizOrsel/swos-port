@@ -245,6 +245,7 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
     assertTrue(ollamaPayload.find("\"stream\":false") != std::string::npos);
     assertTrue(ollamaPayload.find("\"think\":false") != std::string::npos);
     assertTrue(ollamaPayload.find("\"num_predict\":1200") != std::string::npos);
+    assertTrue(ollamaPayload.find("The year is 1997") != std::string::npos);
     assertTrue(ollamaPayload.find("Only describe facts explicitly provided") != std::string::npos);
     assertTrue(ollamaPayload.find("Always reply strictly in Turkish.") != std::string::npos);
     assertTrue(ollamaPayload.find("Sys \\\"role\\\"") != std::string::npos);
