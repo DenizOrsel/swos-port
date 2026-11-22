@@ -385,7 +385,8 @@ apiKey =
 language = English
 timeoutMs = 10000
 maxTokens = 1200
-temperature = 0.700000
+temperature = 0.850000
+think = false
 
 [features]
 postMatchNewspaper = true

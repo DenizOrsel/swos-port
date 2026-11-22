@@ -28,7 +28,8 @@ struct LlmConfig {
     std::string language = "English";
     int timeoutMs = 10000;
     int maxTokens = 1200;
-    float temperature = 0.7f;
+    float temperature = 0.85f;
+    bool think = false;
     LlmFeaturesConfig features;
 };
 

@@ -89,6 +89,8 @@ std::string sanitizeAsciiUpper(const std::string& in)
             pushChar(' ');
             continue;
         }
+        if (ch == '*' || ch == '#' || ch == '`')
+            continue;
         if (ch >= 0x20 && ch <= 0x7E) {
             pushChar(static_cast<char>(std::toupper(ch)));
             continue;
@@ -437,13 +439,15 @@ void beginPostMatchNewspaperRequest()
     if (!s2.empty()) prompt += "\n" + ctx.team2 + " scorers: " + s2;
     prompt += "\nStats: Shots " + std::to_string(stats.team1.goalAttempts) + "-" + std::to_string(stats.team2.goalAttempts);
     prompt += ", Possession " + std::to_string(stats.team1.ballPossession) + "%-" + std::to_string(stats.team2.ballPossession) + "%.";
-    prompt += "\nWrite a punchy 1990s British sports newspaper blurb:\n"
-              "Line 1: Tabloid headline (max 38 chars)\n"
-              "Line 2-3: 1-2 short match sentences (max 75 chars total)\n"
-              "Line 4: CHAIRMAN: short board reaction matching the exact WIN/LOSS/DRAW outcome (max 70 chars). No markdown.";
+    prompt += "\nWrite an authentic, lively 1995 football back-page newspaper report + board reaction:\n"
+              "Line 1: Punchy tabloid headline (all caps style, witty, referencing the actual result)\n"
+              "Paragraph 2: 3 vivid sentences summarizing how the match unfolded using the real scorers, shots, possession, and pitch condition (only if listed above). Do NOT invent players, goals, or weather.\n"
+              "Final paragraph starting with 'CHAIRMAN: ': 2 expressive sentences in character from the human club's chairman reacting strictly to the actual WIN/LOSS/DRAW.\n"
+              "Plain text only, no markdown, no bullet points.";
 
-    const std::string sys = "You are a 1995 British football tabloid editor and club chairman. "
-                            "Be concise, punchy, plain ASCII text, no markdown, no bullets.";
+    const std::string sys = "You are a witty, atmospheric 1995 British football back-page journalist and expressive club chairman. "
+                            "Write vivid, natural sports prose grounded strictly in the provided match facts. "
+                            "Never confuse who won or lost. Never invent weather or scorers not given. Plain text only.";
     s_postMatchRequestId = enqueueLlmRequest(sys, prompt);
 }
 
@@ -473,10 +477,10 @@ std::string fetchTransferNegotiationVoice(const char *buyerClub, const char *sel
     std::string userPrompt = isCounterOffer
         ? (std::string(sellerClub) + " manager responds to " + buyerClub + " over " + playerName + " (" + offerTerms + ").")
         : (std::string(buyerClub) + " manager pitches a bid to " + sellerClub + " for " + playerName + " (" + offerTerms + ").");
-    userPrompt += " Reply with ONE short in-character 1990s football manager quote (max 72 chars), plain ASCII, no quotes.";
+    userPrompt += " Reply with ONE sharp, authentic 1995 football manager negotiation line (plain text, no quotation marks).";
 
     uint64_t reqId = enqueueLlmRequest(
-        "You are a 1995 football manager negotiating a transfer. One punchy sentence, max 72 chars, plain ASCII.",
+        "You are a shrewd 1995 football manager negotiating a transfer on the phone. Speak naturally with character in one short sentence. Plain text only.",
         userPrompt);
     if (reqId == 0)
         return {};
@@ -514,11 +518,13 @@ void onCareerMatchCompletedLlm(int topGoals, int botGoals)
     bool botHuman = (team2Info->playerNumber != 0 || team2Info->playerCoachNumber != 0);
 
     std::string prompt = buildMatchPerspectiveContext(t1, t2, topGoals, botGoals, topHuman, botHuman) +
-        " Speaker's club: " + club + ". Player speaking: " + player + " (" + role + "). "
-        "Give a 1-2 sentence 1990s dressing room reaction matching that exact result (max 110 chars). Prefix with player name.";
+        "\nSpeaker's club: " + club + ". Player speaking: " + player + " (" + role + "). "
+        "Write an expressive 2-3 sentence 1995 post-match dressing room quote from " + player +
+        " reacting honestly to this exact result and looking ahead to the next fixture. Start with '" + player + ": '. Plain text only.";
 
     uint64_t reqId = enqueueLlmRequest(
-        "You are a 1995 football player in the dressing room after a match. Plain ASCII, max 110 chars, no markdown.",
+        "You are a passionate 1995 footballer speaking candidly in the dressing room right after full-time. "
+        "Sound like a real player, never generic or robotic, and strictly match the actual win/loss/draw. Plain text only.",
         prompt);
     if (reqId == 0)
         return;
@@ -562,14 +568,15 @@ void onViewResultMatchCompletedLlm()
     if (cfg.features.postMatchNewspaper) {
         std::string prompt = buildMatchPerspectiveContext(t1, t2, g1, g2, topHuman, botHuman);
         prompt += "\nScoreline: " + std::string(t1) + " " + std::to_string(g1) + "-" + std::to_string(g2) + " " + t2;
-        prompt += "\nCompetition: " + std::string(gameModeName()) + " (VIEW RESULT).";
-        prompt += "\nWrite a punchy 1990s British sports newspaper blurb:\n"
-                  "Line 1: Tabloid headline (max 38 chars)\n"
-                  "Line 2-3: 1-2 short match sentences (max 75 chars total)\n"
-                  "Line 4: CHAIRMAN: short board reaction matching the exact WIN/LOSS/DRAW outcome (max 70 chars). No markdown.";
+        prompt += "\nCompetition: " + std::string(gameModeName()) + ".";
+        prompt += "\nWrite an authentic, lively 1995 football back-page newspaper report + board reaction:\n"
+                  "Line 1: Punchy tabloid headline referencing the real result\n"
+                  "Paragraph 2: 2-3 vivid sentences summarizing the outcome without inventing scorers or weather.\n"
+                  "Final paragraph starting with 'CHAIRMAN: ': 2 expressive sentences from the human club's chairman reacting strictly to the actual WIN/LOSS/DRAW. Plain text only.";
 
         uint64_t reqId = enqueueLlmRequest(
-            "You are a 1995 British football tabloid editor and club chairman. Be concise, punchy, plain ASCII text, no markdown, no bullets.",
+            "You are a witty 1995 British football back-page journalist and expressive club chairman. "
+            "Never confuse who won or lost. Never invent scorers or weather. Plain text only.",
             prompt);
         std::string reply;
         if (waitForLlmWithIndicator(reqId, cfg.timeoutMs, "PRINTING DAILY ECHO", reply)) {
@@ -581,10 +588,11 @@ void onViewResultMatchCompletedLlm()
         std::string club, player, role;
         if (!pickCareerSquadVoice(club, player, role).empty()) {
             std::string prompt = buildMatchPerspectiveContext(t1, t2, g1, g2, topHuman, botHuman) +
-                " Speaker's club: " + club + ". Player speaking: " + player + " (" + role + "). "
-                "Give a 1-2 sentence 1990s dressing room reaction matching that exact result (max 110 chars). Prefix with player name.";
+                "\nSpeaker's club: " + club + ". Player speaking: " + player + " (" + role + "). "
+                "Write an expressive 2-3 sentence 1995 dressing room quote from " + player +
+                " reacting honestly to this exact result. Start with '" + player + ": '. Plain text only.";
             uint64_t reqId = enqueueLlmRequest(
-                "You are a 1995 football player in the dressing room after a match. Plain ASCII, max 110 chars, no markdown.",
+                "You are a passionate 1995 footballer speaking in the dressing room after full-time. Sound authentic and match the exact result. Plain text only.",
                 prompt);
             std::string reply;
             if (waitForLlmWithIndicator(reqId, cfg.timeoutMs, "DRESSING ROOM", reply)) {
@@ -671,17 +679,17 @@ void checkCareerSquadTransfersLlm()
 
     std::string prompt;
     if (!added.empty()) {
-        prompt = clubName + " just signed " + added.front() + ".";
+        prompt = clubName + " just completed the signing of " + added.front() + ".";
         if (!removed.empty())
-            prompt += " " + removed.front() + " departed.";
-        prompt += " Give a punchy 1-2 sentence 1995 transfer desk reaction from the player or rival manager (max 115 chars).";
+            prompt += " " + removed.front() + " has departed the club.";
+        prompt += " Write a lively 2-3 sentence 1995 transfer desk bulletin including a brief quote from the new signing or rival manager. Plain text only.";
     } else {
-        prompt = removed.front() + " just left " + clubName + ". "
-                 "Give a punchy 1-2 sentence 1995 transfer desk reaction from the manager or dressing room (max 115 chars).";
+        prompt = removed.front() + " has just left " + clubName + ". "
+                 "Write a lively 2-3 sentence 1995 transfer desk bulletin with a brief reaction from the fans or dressing room. Plain text only.";
     }
 
     uint64_t reqId = enqueueLlmRequest(
-        "You are a 1995 football transfer reporter and dressing room insider. Plain ASCII, max 115 chars, no markdown.",
+        "You are a sharp 1995 football transfer desk journalist covering deadline moves and squad shake-ups. Sound vivid and authentic. Plain text only.",
         prompt);
     if (reqId == 0)
         return;
@@ -703,11 +711,13 @@ void beginPreMatchScoutingRequest(const TeamGame *topTeam, const TeamGame *botto
         return;
 
     LlmMatchContext ctx = buildLlmMatchContext(topTeam, bottomTeam);
-    std::string prompt = "Pre-match briefing:\n" + formatLlmMatchInfoBase(ctx);
-    prompt += "\nGive a 2-sentence assistant manager scout & pitch briefing (max 150 chars total). Plain ASCII, no markdown.";
+    std::string prompt = "Pre-match tunnel briefing:\n" + formatLlmMatchInfoBase(ctx);
+    prompt += "\nGive a sharp, authentic 3-sentence assistant manager pre-match briefing naming key opposition threats and tactical focus. "
+              "Only mention the pitch condition if Pitch is explicitly listed above; never invent weather. Plain text only.";
 
     s_preMatchRequestId = enqueueLlmRequest(
-        "You are a 1995 football assistant manager giving a concise pre-match tactical & pitch briefing. Plain ASCII, no markdown.",
+        "You are an experienced 1995 football assistant manager speaking to the boss in the tunnel before kickoff. "
+        "Be specific, tactical, and atmospheric using only the real club/player/pitch facts given. Plain text only.",
         prompt);
 }
 
@@ -783,10 +793,11 @@ void triggerLivePunditEvent(const char *eventLabel, bool highPriority)
         prompt += " Team that just acted/scored: " + std::string(actingTeam) +
                   " (NOT " + otherTeam + "). Credit " + actingTeam + " accurately.";
     }
-    prompt += " Give ONE punchy 1995 TV pundit line (max 76 chars, plain ASCII, no quotes).";
+    prompt += " React with ONE spontaneous, excited 1995 TV co-commentator sentence (short enough for a broadcast banner, plain text, no quotes).";
 
     s_punditRequestId = enqueueLlmRequest(
-        "You are a 1995 live football TV pundit. Always credit the exact scoring/acting team accurately. One short sentence, max 76 chars, plain ASCII.",
+        "You are an excited 1995 live football TV co-commentator like Barry Davies or Andy Gray. "
+        "Always credit the exact scoring/acting team accurately in one vivid, punchy broadcast sentence. Plain text only.",
         prompt);
     s_punditCooldownFrames = 360; // ~6 seconds cooldown between non-goal events
 }
@@ -849,11 +860,11 @@ void onCareerWeeklyTickLlm()
 
     bool isMarket = cfg.features.transferNegotiations && ((s_weeklyTickCounter % 6) == 0);
     std::string sys = isMarket
-        ? "You are a 1995 football transfer agent whispering a short rumour. Plain ASCII, max 110 chars."
-        : "You are a 1995 squad player speaking at training. Plain ASCII, max 110 chars.";
+        ? "You are a well-connected 1995 football transfer agent whispering inside gossip. Write naturally in 2 sentences. Plain text only."
+        : "You are a candid 1995 squad footballer chatting at the training ground. Write naturally in 2 sentences. Plain text only.";
     std::string prompt = isMarket
-        ? ("Club: " + club + ". Mention " + player + " (" + role + ") in a short transfer market whisper (max 110 chars).")
-        : ("Club: " + club + ". " + player + " (" + role + ") gives a short training-ground quote about form or selection (max 110 chars).");
+        ? ("Club: " + club + ". Write a lively 2-sentence transfer market whisper mentioning " + player + " (" + role + ") and rival interest. Plain text only.")
+        : ("Club: " + club + ". Write a candid 2-sentence training-ground quote from " + player + " (" + role + ") about squad morale, form, or fighting for a starting shirt. Start with '" + player + ": '. Plain text only.");
 
     uint64_t reqId = enqueueLlmRequest(sys, prompt);
     if (reqId == 0)

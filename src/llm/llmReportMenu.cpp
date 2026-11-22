@@ -51,6 +51,8 @@ std::string sanitizeReportLine(const std::string& in)
             pushChar(' ');
             continue;
         }
+        if (ch == '*' || ch == '#' || ch == '`')
+            continue;
         if (ch >= 0x20 && ch <= 0x7E) {
             pushChar(static_cast<char>(std::toupper(ch)));
             continue;

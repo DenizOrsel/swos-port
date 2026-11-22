@@ -105,6 +105,7 @@ void writeAiIni(const std::string& path, const LlmConfig& cfg)
     ini.SetLongValue("llm", "timeoutMs", cfg.timeoutMs);
     ini.SetLongValue("llm", "maxTokens", cfg.maxTokens);
     ini.SetDoubleValue("llm", "temperature", cfg.temperature);
+    ini.SetBoolValue("llm", "think", cfg.think);
 
     ini.SetBoolValue("features", "postMatchNewspaper", cfg.features.postMatchNewspaper);
     ini.SetBoolValue("features", "preMatchScouting", cfg.features.preMatchScouting);
@@ -406,6 +407,7 @@ bool loadLlmConfig(const char *iniPath /* = nullptr */)
     s_config.timeoutMs = std::clamp(static_cast<int>(ini.GetLongValue("llm", "timeoutMs", s_config.timeoutMs)), 250, 30000);
     s_config.maxTokens = std::clamp(static_cast<int>(ini.GetLongValue("llm", "maxTokens", s_config.maxTokens)), 16, 8192);
     s_config.temperature = static_cast<float>(std::clamp(ini.GetDoubleValue("llm", "temperature", s_config.temperature), 0.0, 2.0));
+    s_config.think = ini.GetBoolValue("llm", "think", s_config.think);
 
     s_config.features.postMatchNewspaper = ini.GetBoolValue("features", "postMatchNewspaper", s_config.features.postMatchNewspaper);
     s_config.features.preMatchScouting = ini.GetBoolValue("features", "preMatchScouting", s_config.features.preMatchScouting);
@@ -552,6 +554,7 @@ std::string buildLlmChatPayload(const LlmConfig& cfg, const std::string& systemP
     std::string json = "{\"model\":\"" + escapeLlmJson(cfg.model) + "\",";
     if (cfg.provider == LlmProvider::kOllama) {
         json += "\"stream\":false,";
+        json += std::string("\"think\":") + (cfg.think ? "true," : "false,");
         json += "\"options\":{\"num_predict\":" + std::to_string(cfg.maxTokens) + ",\"temperature\":" + numBuf + "},";
     } else {
         json += "\"max_tokens\":" + std::to_string(cfg.maxTokens) + ",\"temperature\":" + numBuf + ",";
