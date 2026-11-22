@@ -666,6 +666,11 @@ void recordTelemetryMatchEvent(const char *eventType, bool isGoalEvent /* = fals
     s_allMatchEvents.push_back(std::move(ev));
 }
 
+std::pair<int, int> getHalfTimeTelemetryGoals()
+{
+    return { s_htGoals1, s_htGoals2 };
+}
+
 MatchTelemetrySnapshot captureMatchTelemetrySnapshot()
 {
     MatchTelemetrySnapshot snap;

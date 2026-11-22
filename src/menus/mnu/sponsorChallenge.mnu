@@ -1,5 +1,5 @@
 //
-// Pre-match Sponsor Challenge selection menu
+// Pre-match Sponsor Challenge multi-select menu
 //
 
 #include "common.mh"
@@ -29,7 +29,7 @@ Menu sponsorChallengeMenu
         color: @kDarkBlue
         text: @kAlloc
         downEntry: challenge2
-        onSelect: selectSponsorChallenge1
+        onSelect: toggleSponsorChallenge1
     }
 
     Entry challenge2 {
@@ -42,7 +42,7 @@ Menu sponsorChallengeMenu
         text: @kAlloc
         upEntry: challenge1
         downEntry: challenge3
-        onSelect: selectSponsorChallenge2
+        onSelect: toggleSponsorChallenge2
     }
 
     Entry challenge3 {
@@ -54,19 +54,33 @@ Menu sponsorChallengeMenu
         color: @kDarkBlue
         text: @kAlloc
         upEntry: challenge2
-        downEntry: declineBtn
-        onSelect: selectSponsorChallenge3
+        downEntry: confirmBtn
+        onSelect: toggleSponsorChallenge3
+    }
+
+    Entry confirmBtn {
+        x: 8
+        y: 178
+        width: 176
+        height: 17
+
+        color: @kGreen
+        text: @kAlloc
+        upEntry: challenge3
+        rightEntry: declineBtn
+        onSelect: confirmSponsorChallenges
     }
 
     Entry declineBtn {
-        x: 68
+        x: 192
         y: 178
-        width: 168
+        width: 104
         height: 17
 
         color: kExitColor
-        text: "DECLINE ALL CHALLENGES"
+        text: "DECLINE ALL"
         upEntry: challenge3
+        leftEntry: confirmBtn
         onSelect: declineSponsorChallenges
     }
 }

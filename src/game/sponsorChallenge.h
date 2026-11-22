@@ -30,23 +30,39 @@ struct SponsorChallenge {
     int16_t thresholdValue = 0;
 };
 
+struct SponsorChallengeOutcome {
+    std::string title;
+    std::string description;
+    int32_t rewardAmount = 0;
+    bool completed = false;
+    int32_t deltaCash = 0; // +rewardAmount if completed, -rewardAmount if failed
+};
+
+struct SponsorBatchEvaluation {
+    std::vector<SponsorChallengeOutcome> outcomes;
+    int completedCount = 0;
+    int failedCount = 0;
+    bool allInJackpotTriggered = false;
+    int32_t baseNetDelta = 0;
+    int32_t jackpotBonus = 0;  // +50% of matchday bonus when all offered challenges taken & completed
+    int32_t totalNetDelta = 0; // baseNetDelta + jackpotBonus
+};
+
 struct CareerChallengeState {
     SponsorChallenge offered[3];
+    bool selectedOffer[3] = { false, false, false };
     bool offersReady = false;
-    SponsorChallenge activeChallenge;
+    std::vector<SponsorChallenge> activeChallenges;
 
     // Last match outcome for Post-Match Report rendering
     bool lastMatchHadChallenge = false;
-    bool lastMatchCompleted = false;
-    std::string lastMatchTitle;
-    std::string lastMatchDescription;
-    int32_t lastMatchPayout = 0;
+    SponsorBatchEvaluation lastMatchEval;
     int32_t lastMatchNewBalance = 0;
 
     // Persistent career totals
     uint16_t challengesCompleted = 0;
     uint16_t challengesFailed = 0;
-    int64_t totalBonusEarned = 0;
+    int64_t totalBonusEarned = 0; // cumulative net sponsor profit/loss
 };
 
 struct SponsorMatchResult {
@@ -72,6 +88,10 @@ struct SponsorStarterInfo {
 int32_t clampSponsorRewardForDivision(int32_t rawReward, int divisionTier);
 int16_t clampSponsorThreshold(SponsorChallengeType type, int16_t rawThreshold);
 bool evaluateSponsorChallenge(const SponsorChallenge& challenge, const SponsorMatchResult& result);
+SponsorBatchEvaluation evaluateSponsorChallengeBatch(
+    const std::vector<SponsorChallenge>& activeChallenges,
+    int totalOfferedCount,
+    const SponsorMatchResult& result);
 std::vector<SponsorChallenge> generateOfflineSponsorChallenges(
     const std::string& clubName, const std::string& opponentName,
     int divisionTier, const std::vector<SponsorStarterInfo>& starters, uint32_t seed);
@@ -90,7 +110,7 @@ void showPostMatchSponsorPayoutIfNeeded();
 // Live telemetry, supporter stream & post-match newspaper integration
 bool hasActiveSponsorChallenge();
 std::string formatActiveSponsorChallengeForTelemetry();
-std::string formatActiveSponsorChallengeHudLine(int& outStatusColorMode);
+std::vector<std::pair<std::string, int>> formatActiveSponsorChallengeHudLines();
 std::string formatLastSponsorChallengeOutcomeForNewspaper();
 
 // Persistence (single-player sidecar .sch + Hotseat sync)

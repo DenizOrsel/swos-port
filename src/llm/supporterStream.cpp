@@ -783,23 +783,39 @@ void drawSupporterStreamOverlay()
     SDL_RenderSetScale(renderer, 1.0f, 1.0f);
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
-    // Optional compact 1-line active Sponsor Challenge status pill tucked cleanly at top-right
+    // Optional compact active Sponsor Challenge status card tucked cleanly at top-right (supports 1-3 challenges + all-in jackpot line)
     if (showSponsorHud) {
-        int statusMode = 0;
-        std::string hudLine = formatActiveSponsorChallengeHudLine(statusMode);
-        if (!hudLine.empty()) {
-            float pillH = 13.0f * px;
+        auto hudLines = formatActiveSponsorChallengeHudLines();
+        if (!hudLines.empty()) {
+            float lineH = 10.0f * px;
+            float pillH = (4.0f * px) + static_cast<float>(hudLines.size()) * lineH;
             SDL_SetRenderDrawColor(renderer, 14, 18, 16, 168);
             SDL_FRect pillRect{ panelX, panelY, panelW, pillH };
             SDL_RenderFillRectF(renderer, &pillRect);
 
-            SDL_Color accent = (statusMode == 1) ? SDL_Color{ 92, 232, 128, 255 } :
-                               (statusMode == 2) ? SDL_Color{ 240, 92, 92, 255 } :
-                                                   SDL_Color{ 255, 214, 74, 255 };
-            SDL_SetRenderDrawColor(renderer, accent.r, accent.g, accent.b, 170);
+            int overallMode = 0;
+            bool allAchieved = true;
+            for (const auto& hl : hudLines) {
+                if (hl.second == 2) overallMode = 2;
+                if (hl.second != 1) allAchieved = false;
+            }
+            if (overallMode != 2 && allAchieved)
+                overallMode = 1;
+
+            SDL_Color borderCol = (overallMode == 1) ? SDL_Color{ 92, 232, 128, 255 } :
+                                  (overallMode == 2) ? SDL_Color{ 240, 92, 92, 255 } :
+                                                       SDL_Color{ 255, 214, 74, 255 };
+            SDL_SetRenderDrawColor(renderer, borderCol.r, borderCol.g, borderCol.b, 165);
             SDL_RenderDrawRectF(renderer, &pillRect);
-            drawMiniText(renderer, atlas, panelX + 4.0f * px, panelY + 3.0f * px, px,
-                hudLine, accent, 255, true);
+
+            float ly = panelY + 2.5f * px;
+            for (const auto& hl : hudLines) {
+                SDL_Color col = (hl.second == 1) ? SDL_Color{ 92, 232, 128, 255 } :
+                                (hl.second == 2) ? SDL_Color{ 240, 92, 92, 255 } :
+                                                   SDL_Color{ 255, 214, 74, 255 };
+                drawMiniText(renderer, atlas, panelX + 4.0f * px, ly, px, hl.first, col, 255, true);
+                ly += lineH;
+            }
 
             panelY += pillH + 3.0f * px;
         }

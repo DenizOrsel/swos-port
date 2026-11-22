@@ -411,6 +411,46 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
         assertEqual(parsed[1].targetShirtNumber, int16_t{ 9 });
         assertEqual(parsed[2].thresholdValue, int16_t{ 61 });
 
+        // Multi-select batch evaluation: symmetric fail penalty + All-In +50% Clean Sweep Jackpot
+        SponsorChallenge b1{ true, SponsorChallengeType::kCleanSheetWin, "SHUTOUT", "", 15000, -1, "", 0 };
+        SponsorChallenge b2{ true, SponsorChallengeType::kPlayerGoals, "STRIKER", "", 25000, 9, "MARSCHALL", 2 };
+        SponsorChallenge b3{ true, SponsorChallengeType::kPossessionWin, "DOMINATE", "", 40000, -1, "", 60 };
+
+        // Case A: All 3 taken & all 3 completed -> 80,000 base + 40,000 (50% jackpot) = +120,000
+        res.opponentGoals = 0;
+        auto evalAllInWin = evaluateSponsorChallengeBatch({ b1, b2, b3 }, 3, res);
+        assertTrue(evalAllInWin.allInJackpotTriggered);
+        assertEqual(evalAllInWin.completedCount, 3);
+        assertEqual(evalAllInWin.failedCount, 0);
+        assertEqual(evalAllInWin.baseNetDelta, 80000);
+        assertEqual(evalAllInWin.jackpotBonus, 40000);
+        assertEqual(evalAllInWin.totalNetDelta, 120000);
+
+        // Case B: Only 2 of 3 taken & both completed -> +40,000, NO jackpot
+        auto evalTwoWin = evaluateSponsorChallengeBatch({ b1, b2 }, 3, res);
+        assertFalse(evalTwoWin.allInJackpotTriggered);
+        assertEqual(evalTwoWin.jackpotBonus, 0);
+        assertEqual(evalTwoWin.totalNetDelta, 40000);
+
+        // Case C: All 3 taken, 1 failed (conceded 1 goal -> b1 fails: -15,000; b2+b3 pass: +65,000) -> +50,000, NO jackpot
+        res.opponentGoals = 1;
+        auto evalMixed = evaluateSponsorChallengeBatch({ b1, b2, b3 }, 3, res);
+        assertFalse(evalMixed.allInJackpotTriggered);
+        assertEqual(evalMixed.completedCount, 2);
+        assertEqual(evalMixed.failedCount, 1);
+        assertEqual(evalMixed.jackpotBonus, 0);
+        assertEqual(evalMixed.totalNetDelta, 50000);
+
+        // Case D: Both taken fail -> full negative penalty deduction (-40,000)
+        SponsorMatchResult badRes;
+        badRes.clubGoals = 0;
+        badRes.opponentGoals = 2;
+        auto evalAllFail = evaluateSponsorChallengeBatch({ b1, b2 }, 3, badRes);
+        assertFalse(evalAllFail.allInJackpotTriggered);
+        assertEqual(evalAllFail.completedCount, 0);
+        assertEqual(evalAllFail.failedCount, 2);
+        assertEqual(evalAllFail.totalNetDelta, -40000);
+
         resetSponsorChallengeState();
         setSponsorCareerTotals(4, 2, 115000);
         const char *tmpSch = "tmp_test_sponsor.sch";

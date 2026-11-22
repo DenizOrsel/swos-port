@@ -30,6 +30,8 @@ using namespace SponsorChallengeMenu;
 
 namespace {
 
+constexpr int kOfferedChallengeCount = 3;
+
 CareerChallengeState s_state;
 uint64_t s_pendingRequestId = 0;
 bool s_matchEligible = false;
@@ -39,6 +41,7 @@ std::string s_matchOpponentName;
 int s_matchDivisionTier = 0;
 std::vector<SponsorStarterInfo> s_matchStarters;
 uint32_t s_matchSeed = 1;
+bool s_prevKeyDown[4] = { false, false, false, false };
 
 std::string trimCopy(const std::string& s)
 {
@@ -100,21 +103,21 @@ int32_t readCurrentClubBalance()
     return *reinterpret_cast<const int32_t *>(&SwosVM::g_memByte[CareerOffsets::kNewBalance]);
 }
 
-void creditClubBalance(int32_t amount)
+void applyClubBalanceDelta(int32_t delta)
 {
-    if (amount <= 0)
+    if (delta == 0)
         return;
 
     auto *vmBal = reinterpret_cast<int32_t *>(&SwosVM::g_memByte[CareerOffsets::kNewBalance]);
     auto *vmSpon = reinterpret_cast<int32_t *>(&SwosVM::g_memByte[CareerOffsets::kSensisoftPlcSponsorship]);
-    *vmBal += amount;
-    *vmSpon += amount;
+    *vmBal += delta;
+    *vmSpon += delta;
 
     auto& mgr = HotseatCareerManager::get();
     if (mgr.isActive() && mgr.activePlayerIndex() >= 0 && mgr.activePlayerIndex() < mgr.numPlayers()) {
         auto& p = mgr.activePlayer();
-        p.newBalance += amount;
-        p.sensisoftPlcSponsorship += amount;
+        p.newBalance += delta;
+        p.sensisoftPlcSponsorship += delta;
     }
 }
 
@@ -248,7 +251,6 @@ std::vector<SponsorStarterInfo> extractStartingXi(const TeamGame *team)
     if (!team)
         return starters;
 
-    // Gather season goals from CareerOffsets::kCareerTeam by matching player names
     std::vector<std::pair<std::string, int>> careerSeasonGoals;
     if (swos.g_gameType == kGameTypeCareer) {
         uint16_t numPlayers = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]);
@@ -267,7 +269,6 @@ std::vector<SponsorStarterInfo> extractStartingXi(const TeamGame *team)
         }
     }
 
-    // Outfield starting XI: indices 1..10 (index 0 is GK)
     for (int i = 1; i < kNumPlayersInLineup; ++i) {
         const auto& pl = team->players[i];
         if (pl.shortName[0] == '\0')
@@ -321,7 +322,6 @@ bool resolveHumanCareerSide(const TeamGame *topTeam, const TeamGame *bottomTeam,
     if (tf2 && !t2Human)
         t2Human = (tf2->teamControls == kPlayerCoach || tf2->teamControls == kCoach);
 
-    // Skip CPU-vs-CPU or 2-human head-to-head matches for unambiguous single-club payout
     if (t1Human == t2Human)
         return false;
 
@@ -329,19 +329,65 @@ bool resolveHumanCareerSide(const TeamGame *topTeam, const TeamGame *bottomTeam,
     return true;
 }
 
-void finalizeSelection(int index)
+void refreshSponsorChallengeButtons()
 {
-    if (index >= 0 && index < 3 && s_state.offersReady) {
-        s_state.activeChallenge = s_state.offered[index];
-        s_state.activeChallenge.isActive = true;
-        logInfo("Sponsor challenge accepted: %s (+%s)",
-            s_state.activeChallenge.title.c_str(),
-            formatSponsorPounds(s_state.activeChallenge.rewardAmount).c_str());
+    MenuEntry *entries[3] = { &challenge1Entry, &challenge2Entry, &challenge3Entry };
+    int selectedCount = 0;
+    int32_t totalStake = 0;
+
+    for (int i = 0; i < 3; ++i) {
+        const auto& c = s_state.offered[i];
+        bool checked = s_state.selectedOffer[i];
+        if (checked) {
+            ++selectedCount;
+            totalStake += c.rewardAmount;
+        }
+        entries[i]->setBackgroundColor(checked ? kGreen : kDarkBlue);
+        std::string mark = checked ? "[X] " : "[ ] ";
+        std::string label = mark + toUpperAscii(c.title) + "  +/-" + formatSponsorPounds(c.rewardAmount);
+        entries[i]->copyString(label.c_str());
+    }
+
+    if (selectedCount == 0) {
+        confirmBtnEntry.copyString("START (0 SELECTED)");
+    } else if (selectedCount == kOfferedChallengeCount) {
+        int32_t maxPayout = totalStake + (totalStake / 2);
+        std::string lbl = "ALL-IN! MAX +" + formatSponsorPounds(maxPayout);
+        confirmBtnEntry.copyString(lbl.c_str());
     } else {
-        s_state.activeChallenge = SponsorChallenge{};
+        std::string lbl = "ACCEPT " + std::to_string(selectedCount) + " (+/-" + formatSponsorPounds(totalStake) + ")";
+        confirmBtnEntry.copyString(lbl.c_str());
+    }
+}
+
+void commitSelectedChallenges(bool declineAll)
+{
+    s_state.activeChallenges.clear();
+    if (!declineAll && s_state.offersReady) {
+        for (int i = 0; i < kOfferedChallengeCount; ++i) {
+            if (s_state.selectedOffer[i]) {
+                SponsorChallenge c = s_state.offered[i];
+                c.isActive = true;
+                s_state.activeChallenges.push_back(std::move(c));
+            }
+        }
+    }
+
+    if (s_state.activeChallenges.empty()) {
         logInfo("Sponsor challenges declined for this match.");
+    } else {
+        logInfo("Accepted %zu sponsor challenge(s) (all-in=%s).",
+            s_state.activeChallenges.size(),
+            s_state.activeChallenges.size() == kOfferedChallengeCount ? "YES (+50% jackpot)" : "NO");
     }
     SetExitMenuFlag();
+}
+
+std::string formatSignedPounds(int64_t delta)
+{
+    if (delta > 0)
+        return "+" + formatSponsorPounds(delta);
+    return formatSponsorPounds(delta);
 }
 
 } // namespace
@@ -350,27 +396,38 @@ void finalizeSelection(int index)
 
 static void initSponsorChallengeMenu()
 {
-    MenuEntry *entries[3] = { &challenge1Entry, &challenge2Entry, &challenge3Entry };
-    for (int i = 0; i < 3; ++i) {
-        const auto& c = s_state.offered[i];
-        std::string label = "[" + std::to_string(i + 1) + "] " + toUpperAscii(c.title) +
-                            "   [+" + formatSponsorPounds(c.rewardAmount) + "]";
-        entries[i]->copyString(label.c_str());
-    }
+    s_state.selectedOffer[0] = false;
+    s_state.selectedOffer[1] = false;
+    s_state.selectedOffer[2] = false;
+    std::memset(s_prevKeyDown, 0, sizeof(s_prevKeyDown));
+    refreshSponsorChallengeButtons();
     setCurrentEntry(challenge1);
 }
 
 static void drawSponsorChallengeMenu()
 {
-    // Bank & match subtitle strip (y=17..34)
-    drawDarkRectangle({ 16.0f, 17.0f, 288.0f, 17.0f }, true);
-    std::string oppLine = "VS " + toUpperAscii(s_matchOpponentName);
-    if (oppLine.size() > 22)
-        oppLine.resize(22);
-    drawText(22, 22, oppLine.c_str(), 150, kWhiteText2, false);
+    int selectedCount = 0;
+    int32_t totalStake = 0;
+    for (int i = 0; i < 3; ++i) {
+        if (s_state.selectedOffer[i]) {
+            ++selectedCount;
+            totalStake += s_state.offered[i].rewardAmount;
+        }
+    }
 
+    // Bank & stake/jackpot strip (y=16..34)
+    drawDarkRectangle({ 16.0f, 16.0f, 288.0f, 19.0f }, true);
+    if (selectedCount == kOfferedChallengeCount) {
+        int32_t jackpot = totalStake / 2;
+        std::string jp = "ALL 3! +" + formatSponsorPounds(jackpot) + " SWEEP BONUS!";
+        drawText(22, 18, jp.c_str(), 178, kYellowText, false);
+    } else {
+        std::string oppLine = "VS " + toUpperAscii(s_matchOpponentName) + " (FAIL = PENALTY!)";
+        drawText(22, 18, oppLine.c_str(), 182, kWhiteText2, false);
+    }
     std::string bankStr = "BANK: " + formatSponsorPounds(readCurrentClubBalance());
-    drawTextRightAligned(298, 22, bankStr.c_str(), 130, kYellowText, false);
+    drawTextRightAligned(298, 18, bankStr.c_str(), 116, kYellowText, false);
+    drawText(22, 27, "CLICK TO TOGGLE 1-3. ALL 3 WON = +50% EXTRA BONUS!", 276, kWhiteText, false);
 
     // Description panels directly under each of the 3 clickable challenge buttons
     static constexpr int kCardYs[3] = { 54, 100, 146 };
@@ -380,29 +437,55 @@ static void drawSponsorChallengeMenu()
         auto lines = wrapLlmReportLines(s_state.offered[i].description, 274);
         int lineY = y + 4;
         for (size_t li = 0; li < lines.size() && li < 2; ++li) {
-            drawText(22, lineY, lines[li].c_str(), 274, kWhiteText2, false);
+            int color = s_state.selectedOffer[i] ? kYellowText : kWhiteText2;
+            drawText(22, lineY, lines[li].c_str(), 274, color, false);
             lineY += 9;
         }
     }
 
-    // Quick keyboard shortcuts 1 / 2 / 3 / 0
+    // Edge-triggered keyboard shortcuts: 1/2/3 toggle challenges, 0 declines all
     const Uint8 *keys = SDL_GetKeyboardState(nullptr);
     if (keys) {
-        if (keys[SDL_SCANCODE_1] || keys[SDL_SCANCODE_KP_1])
-            finalizeSelection(0);
-        else if (keys[SDL_SCANCODE_2] || keys[SDL_SCANCODE_KP_2])
-            finalizeSelection(1);
-        else if (keys[SDL_SCANCODE_3] || keys[SDL_SCANCODE_KP_3])
-            finalizeSelection(2);
-        else if (keys[SDL_SCANCODE_0] || keys[SDL_SCANCODE_KP_0])
-            finalizeSelection(-1);
+        bool down[4] = {
+            keys[SDL_SCANCODE_1] || keys[SDL_SCANCODE_KP_1],
+            keys[SDL_SCANCODE_2] || keys[SDL_SCANCODE_KP_2],
+            keys[SDL_SCANCODE_3] || keys[SDL_SCANCODE_KP_3],
+            keys[SDL_SCANCODE_0] || keys[SDL_SCANCODE_KP_0],
+        };
+        for (int i = 0; i < 3; ++i) {
+            if (down[i] && !s_prevKeyDown[i]) {
+                s_state.selectedOffer[i] = !s_state.selectedOffer[i];
+                refreshSponsorChallengeButtons();
+            }
+        }
+        if (down[3] && !s_prevKeyDown[3]) {
+            commitSelectedChallenges(true);
+        }
+        for (int i = 0; i < 4; ++i)
+            s_prevKeyDown[i] = down[i];
     }
 }
 
-static void selectSponsorChallenge1() { finalizeSelection(0); }
-static void selectSponsorChallenge2() { finalizeSelection(1); }
-static void selectSponsorChallenge3() { finalizeSelection(2); }
-static void declineSponsorChallenges() { finalizeSelection(-1); }
+static void toggleSponsorChallenge1()
+{
+    s_state.selectedOffer[0] = !s_state.selectedOffer[0];
+    refreshSponsorChallengeButtons();
+}
+
+static void toggleSponsorChallenge2()
+{
+    s_state.selectedOffer[1] = !s_state.selectedOffer[1];
+    refreshSponsorChallengeButtons();
+}
+
+static void toggleSponsorChallenge3()
+{
+    s_state.selectedOffer[2] = !s_state.selectedOffer[2];
+    refreshSponsorChallengeButtons();
+}
+
+static void confirmSponsorChallenges() { commitSelectedChallenges(false); }
+static void declineSponsorChallenges() { commitSelectedChallenges(true); }
 
 // --- Public Pure Deterministic Logic ---
 
@@ -435,7 +518,6 @@ int32_t clampSponsorRewardForDivision(int32_t rawReward, int divisionTier)
         maxR = 30000;
     }
     int32_t clamped = std::clamp(rawReward, minR, maxR);
-    // Round cleanly to nearest £1,000
     return ((clamped + 500) / 1000) * 1000;
 }
 
@@ -499,6 +581,39 @@ bool evaluateSponsorChallenge(const SponsorChallenge& challenge, const SponsorMa
     }
 }
 
+SponsorBatchEvaluation evaluateSponsorChallengeBatch(
+    const std::vector<SponsorChallenge>& activeChallenges,
+    int totalOfferedCount,
+    const SponsorMatchResult& result)
+{
+    SponsorBatchEvaluation eval;
+    for (const auto& c : activeChallenges) {
+        if (!c.isActive || c.type == SponsorChallengeType::kNone)
+            continue;
+        bool ok = evaluateSponsorChallenge(c, result);
+        int32_t delta = ok ? c.rewardAmount : -c.rewardAmount;
+        eval.outcomes.push_back({ c.title, c.description, c.rewardAmount, ok, delta });
+        eval.baseNetDelta += delta;
+        if (ok)
+            ++eval.completedCount;
+        else
+            ++eval.failedCount;
+    }
+
+    // All-in clean sweep jackpot: ALL offered challenges taken AND ALL completed -> +50% extra bonus!
+    if (totalOfferedCount > 0 &&
+        static_cast<int>(eval.outcomes.size()) == totalOfferedCount &&
+        eval.failedCount == 0 &&
+        eval.completedCount == totalOfferedCount &&
+        eval.baseNetDelta > 0) {
+        eval.allInJackpotTriggered = true;
+        eval.jackpotBonus = eval.baseNetDelta / 2;
+    }
+
+    eval.totalNetDelta = eval.baseNetDelta + eval.jackpotBonus;
+    return eval;
+}
+
 std::vector<SponsorChallenge> generateOfflineSponsorChallenges(
     const std::string& clubName, const std::string& opponentName,
     int divisionTier, const std::vector<SponsorStarterInfo>& starters, uint32_t seed)
@@ -510,7 +625,6 @@ std::vector<SponsorChallenge> generateOfflineSponsorChallenges(
 
     std::vector<SponsorChallenge> out;
 
-    // Slot 1: Defensive or early-attack objective
     SponsorChallenge c1;
     if ((seed % 2u) == 0u) {
         c1.type = SponsorChallengeType::kCleanSheetWin;
@@ -527,7 +641,6 @@ std::vector<SponsorChallenge> generateOfflineSponsorChallenges(
     }
     out.push_back(std::move(c1));
 
-    // Slot 2: Star Striker player-goals challenge (if we have starters) or Shots on Target
     const SponsorStarterInfo *star = pickBestScorerStarter(starters);
     SponsorChallenge c2;
     if (star) {
@@ -548,7 +661,6 @@ std::vector<SponsorChallenge> generateOfflineSponsorChallenges(
     }
     out.push_back(std::move(c2));
 
-    // Slot 3: High-reward dominance objective (Possession Win, Win by Margin, or Shots on Target)
     SponsorChallenge c3;
     uint32_t pick3 = (seed / 3u) % 3u;
     if (pick3 == 0u) {
@@ -597,7 +709,6 @@ std::vector<SponsorChallenge> parseLlmSponsorChallenges(
         if (line.find('|') == std::string::npos)
             continue;
 
-        // Expected: TYPE|TITLE|DESCRIPTION|PLAYER_NAME|THRESHOLD|REWARD
         std::vector<std::string> parts;
         size_t pos = 0;
         while (pos <= line.size()) {
@@ -616,7 +727,7 @@ std::vector<SponsorChallenge> parseLlmSponsorChallenges(
 
         SponsorChallenge c;
         c.type = type;
-        c.title = sanitizePlain(parts[1], 26);
+        c.title = sanitizePlain(parts[1], 24);
         if (c.title.empty())
             c.title = defaultTitleForType(type);
         c.description = sanitizePlain(parts[2], 78);
@@ -624,7 +735,6 @@ std::vector<SponsorChallenge> parseLlmSponsorChallenges(
         int rawThresh = std::atoi(parts[4].c_str());
         c.thresholdValue = clampSponsorThreshold(type, static_cast<int16_t>(rawThresh));
 
-        // Strip currency symbols/commas from reward before parsing
         std::string digitsOnly;
         for (char ch : parts[5]) {
             if (std::isdigit(static_cast<unsigned char>(ch)))
@@ -641,7 +751,6 @@ std::vector<SponsorChallenge> parseLlmSponsorChallenges(
                 continue;
             c.targetShirtNumber = static_cast<int16_t>(matched->shirtNumber);
             c.targetPlayerName = matched->shortName;
-            // Ensure description actually names the validated real player
             if (toUpperAscii(c.description).find(toUpperAscii(c.targetPlayerName)) == std::string::npos)
                 c.description = defaultDescriptionForChallenge(c);
         }
@@ -652,7 +761,6 @@ std::vector<SponsorChallenge> parseLlmSponsorChallenges(
         parsed.push_back(std::move(c));
     }
 
-    // Backfill any missing slots deterministically so we ALWAYS have 3 distinct valid challenges
     if (parsed.size() < 3) {
         auto fallback = generateOfflineSponsorChallenges(clubName, opponentName, divisionTier, starters, seed);
         for (auto& fb : fallback) {
@@ -661,7 +769,6 @@ std::vector<SponsorChallenge> parseLlmSponsorChallenges(
             if (!hasType(fb.type))
                 parsed.push_back(std::move(fb));
         }
-        // Extra safety if seed's 3 fallback types all collided with parsed
         static constexpr SponsorChallengeType kAllTypes[] = {
             SponsorChallengeType::kCleanSheetWin,
             SponsorChallengeType::kFirstHalfGoals,
@@ -703,8 +810,9 @@ void beginSponsorChallengeGeneration(const TeamGame *topTeam, const TeamGame *bo
     s_pendingRequestId = 0;
     s_matchEligible = false;
     s_state.offersReady = false;
-    s_state.activeChallenge = SponsorChallenge{};
+    s_state.activeChallenges.clear();
     s_state.lastMatchHadChallenge = false;
+    s_state.lastMatchEval = SponsorBatchEvaluation{};
 
     const auto& cfg = getLlmConfig();
     if (!cfg.features.sponsorChallenges)
@@ -727,7 +835,6 @@ void beginSponsorChallengeGeneration(const TeamGame *topTeam, const TeamGame *bo
     s_matchStarters = extractStartingXi(humanTeam);
     s_matchSeed = static_cast<uint32_t>(SDL_GetTicks() ^ (s_state.challengesCompleted * 31u + s_state.challengesFailed * 17u + 7u));
 
-    // Pre-populate instant offline fallback offers so UI never blocks if LLM is off/slow
     auto offline = generateOfflineSponsorChallenges(
         s_matchClubName, s_matchOpponentName, s_matchDivisionTier, s_matchStarters, s_matchSeed);
     for (size_t i = 0; i < 3 && i < offline.size(); ++i)
@@ -764,7 +871,7 @@ void beginSponsorChallengeGeneration(const TeamGame *topTeam, const TeamGame *bo
                          "Scale REWARD between " + std::to_string(minR) + " and " + std::to_string(maxR) + " (integer pounds).\n" +
                          "Format STRICTLY one challenge per line as:\n" +
                          "TYPE|TITLE|DESCRIPTION|PLAYER_NAME|THRESHOLD|REWARD\n" +
-                         "- TITLE: punchy 2-3 word 1997 sponsor challenge name (max 24 chars)\n" +
+                         "- TITLE: punchy 2-3 word 1997 sponsor challenge name (max 22 chars)\n" +
                          "- DESCRIPTION: crisp 1-sentence objective matching the exact threshold/player (max 70 chars)\n" +
                          "- PLAYER_NAME: exact player surname for CHALLENGE_PLAYER_GOALS, otherwise NONE\n" +
                          "Output ONLY the 3 lines. No intro, no markdown, no numbering.";
@@ -784,7 +891,6 @@ void showPreMatchSponsorChallengeMenuIfReady()
     if (!cfg.features.sponsorChallenges)
         return;
 
-    // Give an in-flight LLM request a brief non-intrusive chance to finish (already ran during stadium/scouting!)
     if (s_pendingRequestId != 0) {
         std::string reply;
         if (!tryTakeLlmResponse(s_pendingRequestId, reply)) {
@@ -810,7 +916,7 @@ void showPreMatchSponsorChallengeMenuIfReady()
 void onMatchFinishedSponsorChallenge()
 {
     s_state.lastMatchHadChallenge = false;
-    if (!s_matchEligible || !s_state.activeChallenge.isActive || swos.gameCanceled || swos.g_trainingGame)
+    if (!s_matchEligible || s_state.activeChallenges.empty() || swos.gameCanceled || swos.g_trainingGame)
         return;
 
     MatchTelemetrySnapshot snap = captureMatchTelemetrySnapshot();
@@ -831,33 +937,27 @@ void onMatchFinishedSponsorChallenge()
         }
     }
 
-    bool completed = evaluateSponsorChallenge(s_state.activeChallenge, result);
+    SponsorBatchEvaluation eval = evaluateSponsorChallengeBatch(
+        s_state.activeChallenges, kOfferedChallengeCount, result);
 
     syncTotalsFromHotseatIfActive();
-    s_state.lastMatchHadChallenge = true;
-    s_state.lastMatchCompleted = completed;
-    s_state.lastMatchTitle = s_state.activeChallenge.title;
-    s_state.lastMatchDescription = s_state.activeChallenge.description;
-    s_state.lastMatchPayout = completed ? s_state.activeChallenge.rewardAmount : 0;
+    s_state.lastMatchHadChallenge = !eval.outcomes.empty();
+    s_state.lastMatchEval = eval;
 
-    if (completed) {
-        creditClubBalance(s_state.activeChallenge.rewardAmount);
-        ++s_state.challengesCompleted;
-        s_state.totalBonusEarned += s_state.activeChallenge.rewardAmount;
-    } else {
-        ++s_state.challengesFailed;
-    }
-
+    applyClubBalanceDelta(eval.totalNetDelta);
+    s_state.challengesCompleted = static_cast<uint16_t>(s_state.challengesCompleted + eval.completedCount);
+    s_state.challengesFailed = static_cast<uint16_t>(s_state.challengesFailed + eval.failedCount);
+    s_state.totalBonusEarned += eval.totalNetDelta;
     s_state.lastMatchNewBalance = readCurrentClubBalance();
     syncTotalsToHotseatIfActive();
 
-    logInfo("Sponsor challenge '%s' %s (payout: %s, new balance: %s)",
-        s_state.lastMatchTitle.c_str(),
-        completed ? "COMPLETED" : "FAILED",
-        formatSponsorPounds(s_state.lastMatchPayout).c_str(),
+    logInfo("Sponsor challenges resolved: %d won, %d failed, jackpot=%s, net=%s, new balance=%s",
+        eval.completedCount, eval.failedCount,
+        eval.allInJackpotTriggered ? "YES" : "NO",
+        formatSignedPounds(eval.totalNetDelta).c_str(),
         formatSponsorPounds(s_state.lastMatchNewBalance).c_str());
 
-    s_state.activeChallenge = SponsorChallenge{};
+    s_state.activeChallenges.clear();
 }
 
 void showPostMatchSponsorPayoutIfNeeded()
@@ -866,17 +966,32 @@ void showPostMatchSponsorPayoutIfNeeded()
         return;
 
 #ifndef SWOS_TEST
-    std::string body;
-    body += "SPONSOR CHALLENGE: " + toUpperAscii(s_state.lastMatchTitle) +
-            (s_state.lastMatchCompleted ? " (COMPLETED!)" : " (FAILED)") + "\n\n";
-    body += "OBJECTIVE:\n" + s_state.lastMatchDescription + "\n\n";
-    body += "SPONSOR BONUS PAID: " +
-            (s_state.lastMatchCompleted ? ("+" + formatSponsorPounds(s_state.lastMatchPayout)) : std::string("GBP 0")) + "\n";
+    const auto& eval = s_state.lastMatchEval;
+    std::string headline;
+    if (eval.allInJackpotTriggered) {
+        headline = "ALL-IN CLEAN SWEEP! +50% JACKPOT WON!";
+    } else if (eval.totalNetDelta > 0) {
+        headline = "SPONSOR CHALLENGES: NET PROFIT " + formatSignedPounds(eval.totalNetDelta);
+    } else if (eval.totalNetDelta < 0) {
+        headline = "SPONSOR CHALLENGES: NET PENALTY " + formatSignedPounds(eval.totalNetDelta);
+    } else {
+        headline = "SPONSOR CHALLENGES: BROKE EVEN (GBP 0)";
+    }
+
+    std::string body = headline + "\n\n";
+    for (const auto& o : eval.outcomes) {
+        body += std::string(o.completed ? "[WON] " : "[FAILED] ") +
+                toUpperAscii(o.title) + ": " + formatSignedPounds(o.deltaCash) + "\n";
+        body += "  " + o.description + "\n";
+    }
+    if (eval.allInJackpotTriggered) {
+        body += "\nALL-IN CLEAN SWEEP BONUS (+50%): " + formatSignedPounds(eval.jackpotBonus) + "\n";
+    }
+    body += "\nNET MATCHDAY SPONSOR P/L: " + formatSignedPounds(eval.totalNetDelta) + "\n";
     body += "UPDATED BANK BALANCE: " + formatSponsorPounds(s_state.lastMatchNewBalance) + "\n\n";
-    body += "CAREER SPONSOR RECORD:\n";
-    body += "COMPLETED: " + std::to_string(s_state.challengesCompleted) +
-            "   FAILED: " + std::to_string(s_state.challengesFailed) +
-            "   TOTAL BONUS: " + formatSponsorPounds(s_state.totalBonusEarned);
+    body += "CAREER SPONSOR RECORD: " + std::to_string(s_state.challengesCompleted) + " WON / " +
+            std::to_string(s_state.challengesFailed) + " FAILED  (NET: " +
+            formatSignedPounds(s_state.totalBonusEarned) + ")";
 
     setStandardMenuBackgroundImage();
     menuFadeIn();
@@ -889,7 +1004,75 @@ void showPostMatchSponsorPayoutIfNeeded()
 
 bool hasActiveSponsorChallenge()
 {
-    return s_matchEligible && s_state.activeChallenge.isActive && !swos.g_trainingGame;
+    return s_matchEligible && !s_state.activeChallenges.empty() && !swos.g_trainingGame;
+}
+
+static std::string describeSingleChallengeProgress(const SponsorChallenge& c, int& outColorMode)
+{
+    outColorMode = 0; // 0 = gold/live, 1 = green/achieved, 2 = red/failed
+    const auto stats = getStats();
+    int clubG = s_humanIsTeam1 ? swos.statsTeam1Goals : swos.statsTeam2Goals;
+    int oppG = s_humanIsTeam1 ? swos.statsTeam2Goals : swos.statsTeam1Goals;
+    int poss = s_humanIsTeam1 ? stats.team1.ballPossession : stats.team2.ballPossession;
+    int sot = s_humanIsTeam1 ? stats.team1.onTarget : stats.team2.onTarget;
+
+    switch (c.type) {
+    case SponsorChallengeType::kCleanSheetWin:
+        if (oppG > 0) {
+            outColorMode = 2;
+            return "LOST";
+        }
+        if (clubG > oppG) {
+            outColorMode = 1;
+            return "ON TRACK";
+        }
+        return "0-0";
+    case SponsorChallengeType::kPlayerGoals: {
+        const TeamGame& tg = s_humanIsTeam1 ? swos.topTeamInGame : swos.bottomTeamInGame;
+        int scored = 0;
+        std::string targetUpper = toUpperAscii(c.targetPlayerName);
+        for (int i = 0; i < kNumPlayersInTeam; ++i) {
+            if ((c.targetShirtNumber > 0 && tg.players[i].shirtNumber == c.targetShirtNumber) ||
+                (!targetUpper.empty() && toUpperAscii(tg.players[i].shortName) == targetUpper)) {
+                scored += tg.players[i].goalsScored;
+            }
+        }
+        if (scored >= c.thresholdValue)
+            outColorMode = 1;
+        return std::to_string(scored) + "/" + std::to_string(c.thresholdValue);
+    }
+    case SponsorChallengeType::kFirstHalfGoals:
+        if (swos.halfNumber <= 1) {
+            if (clubG >= c.thresholdValue)
+                outColorMode = 1;
+            return "HT " + std::to_string(clubG) + "/" + std::to_string(c.thresholdValue);
+        } else {
+            auto [ht1, ht2] = getHalfTimeTelemetryGoals();
+            int htG = s_humanIsTeam1 ? ht1 : ht2;
+            if (htG >= c.thresholdValue) {
+                outColorMode = 1;
+                return "HT WON";
+            }
+            outColorMode = 2;
+            return "HT LOST";
+        }
+    case SponsorChallengeType::kPossessionWin:
+        if (clubG > oppG && poss >= c.thresholdValue)
+            outColorMode = 1;
+        return std::to_string(poss) + "%/" + std::to_string(c.thresholdValue) + "%";
+    case SponsorChallengeType::kShotsOnTarget:
+        if (sot >= c.thresholdValue)
+            outColorMode = 1;
+        return std::to_string(sot) + "/" + std::to_string(c.thresholdValue) + " SOT";
+    case SponsorChallengeType::kWinByMargin: {
+        int diff = clubG - oppG;
+        if (diff >= c.thresholdValue)
+            outColorMode = 1;
+        return (diff >= 0 ? "+" : "") + std::to_string(diff) + "/+" + std::to_string(c.thresholdValue);
+    }
+    default:
+        return "ACTIVE";
+    }
 }
 
 std::string formatActiveSponsorChallengeForTelemetry()
@@ -897,144 +1080,65 @@ std::string formatActiveSponsorChallengeForTelemetry()
     if (!hasActiveSponsorChallenge())
         return {};
 
-    const auto& c = s_state.activeChallenge;
-    const auto stats = getStats();
-    int clubG = s_humanIsTeam1 ? swos.statsTeam1Goals : swos.statsTeam2Goals;
-    int oppG = s_humanIsTeam1 ? swos.statsTeam2Goals : swos.statsTeam1Goals;
-    int poss = s_humanIsTeam1 ? stats.team1.ballPossession : stats.team2.ballPossession;
-    int sot = s_humanIsTeam1 ? stats.team1.onTarget : stats.team2.onTarget;
+    bool allIn = (static_cast<int>(s_state.activeChallenges.size()) == kOfferedChallengeCount);
+    std::string out = "Active Sponsor Challenges for " + s_matchClubName + " (failing deducts the stake";
+    if (allIn)
+        out += "; ALL 3 TAKEN - winning all 3 pays a +50% CLEAN SWEEP JACKPOT!";
+    out += "):";
 
-    std::string progress;
-    switch (c.type) {
-    case SponsorChallengeType::kCleanSheetWin:
-        if (oppG > 0) progress = "CLEAN SHEET LOST (conceded " + std::to_string(oppG) + ")";
-        else if (clubG > oppG) progress = "ON TRACK (winning with clean sheet!)";
-        else progress = "Clean sheet intact, need a goal to win";
-        break;
-    case SponsorChallengeType::kPlayerGoals: {
-        const TeamGame& tg = s_humanIsTeam1 ? swos.topTeamInGame : swos.bottomTeamInGame;
-        int scored = 0;
-        std::string targetUpper = toUpperAscii(c.targetPlayerName);
-        for (int i = 0; i < kNumPlayersInTeam; ++i) {
-            if ((c.targetShirtNumber > 0 && tg.players[i].shirtNumber == c.targetShirtNumber) ||
-                (!targetUpper.empty() && toUpperAscii(tg.players[i].shortName) == targetUpper)) {
-                scored += tg.players[i].goalsScored;
-            }
-        }
-        progress = c.targetPlayerName + " has " + std::to_string(scored) + "/" + std::to_string(c.thresholdValue) + " goals" +
-                   (scored >= c.thresholdValue ? " (TARGET ACHIEVED!)" : "");
-        break;
+    for (const auto& c : s_state.activeChallenges) {
+        int mode = 0;
+        std::string status = describeSingleChallengeProgress(c, mode);
+        out += " [" + c.title + ": " + c.description + " Stake +/-" + formatSponsorPounds(c.rewardAmount) +
+               " -> " + status + "]";
     }
-    case SponsorChallengeType::kFirstHalfGoals:
-        progress = (swos.halfNumber <= 1)
-            ? ("1st half goals: " + std::to_string(clubG) + "/" + std::to_string(c.thresholdValue))
-            : "1st half finished";
-        break;
-    case SponsorChallengeType::kPossessionWin:
-        progress = "Possession " + std::to_string(poss) + "% (need " + std::to_string(c.thresholdValue) + "%+ and win)";
-        break;
-    case SponsorChallengeType::kShotsOnTarget:
-        progress = "Shots on target " + std::to_string(sot) + "/" + std::to_string(c.thresholdValue) +
-                   (sot >= c.thresholdValue ? " (TARGET ACHIEVED!)" : "");
-        break;
-    case SponsorChallengeType::kWinByMargin:
-        progress = "Current goal margin: " + std::to_string(clubG - oppG) + " (need +" + std::to_string(c.thresholdValue) + ")";
-        break;
-    default:
-        break;
-    }
-
-    return "Active Sponsor Challenge for " + s_matchClubName + ": " + c.title +
-           " (" + c.description + " Bonus: " + formatSponsorPounds(c.rewardAmount) + ") -> Status: " + progress;
+    return out;
 }
 
-std::string formatActiveSponsorChallengeHudLine(int& outStatusColorMode)
+std::vector<std::pair<std::string, int>> formatActiveSponsorChallengeHudLines()
 {
-    outStatusColorMode = 0; // 0 = gold/active, 1 = green/achieved, 2 = red/failed
+    std::vector<std::pair<std::string, int>> lines;
     if (!hasActiveSponsorChallenge())
-        return {};
+        return lines;
 
-    const auto& c = s_state.activeChallenge;
-    const auto stats = getStats();
-    int clubG = s_humanIsTeam1 ? swos.statsTeam1Goals : swos.statsTeam2Goals;
-    int oppG = s_humanIsTeam1 ? swos.statsTeam2Goals : swos.statsTeam1Goals;
-    int poss = s_humanIsTeam1 ? stats.team1.ballPossession : stats.team2.ballPossession;
-    int sot = s_humanIsTeam1 ? stats.team1.onTarget : stats.team2.onTarget;
+    bool allIn = (static_cast<int>(s_state.activeChallenges.size()) == kOfferedChallengeCount);
+    int allGreen = 0;
+    bool anyRed = false;
 
-    std::string status;
-    switch (c.type) {
-    case SponsorChallengeType::kCleanSheetWin:
-        if (oppG > 0) {
-            status = "LOST";
-            outStatusColorMode = 2;
-        } else if (clubG > oppG) {
-            status = "ON TRACK";
-            outStatusColorMode = 1;
-        } else {
-            status = "0-0";
-        }
-        break;
-    case SponsorChallengeType::kPlayerGoals: {
-        const TeamGame& tg = s_humanIsTeam1 ? swos.topTeamInGame : swos.bottomTeamInGame;
-        int scored = 0;
-        std::string targetUpper = toUpperAscii(c.targetPlayerName);
-        for (int i = 0; i < kNumPlayersInTeam; ++i) {
-            if ((c.targetShirtNumber > 0 && tg.players[i].shirtNumber == c.targetShirtNumber) ||
-                (!targetUpper.empty() && toUpperAscii(tg.players[i].shortName) == targetUpper)) {
-                scored += tg.players[i].goalsScored;
-            }
-        }
-        status = std::to_string(scored) + "/" + std::to_string(c.thresholdValue);
-        if (scored >= c.thresholdValue)
-            outStatusColorMode = 1;
-        break;
-    }
-    case SponsorChallengeType::kFirstHalfGoals:
-        if (swos.halfNumber <= 1) {
-            status = "HT " + std::to_string(clubG) + "/" + std::to_string(c.thresholdValue);
-            if (clubG >= c.thresholdValue)
-                outStatusColorMode = 1;
-        } else {
-            status = "HT DONE";
-        }
-        break;
-    case SponsorChallengeType::kPossessionWin:
-        status = std::to_string(poss) + "%/" + std::to_string(c.thresholdValue) + "%";
-        if (clubG > oppG && poss >= c.thresholdValue)
-            outStatusColorMode = 1;
-        break;
-    case SponsorChallengeType::kShotsOnTarget:
-        status = std::to_string(sot) + "/" + std::to_string(c.thresholdValue) + " SOT";
-        if (sot >= c.thresholdValue)
-            outStatusColorMode = 1;
-        break;
-    case SponsorChallengeType::kWinByMargin: {
-        int diff = clubG - oppG;
-        status = (diff >= 0 ? "+" : "") + std::to_string(diff) + "/+" + std::to_string(c.thresholdValue);
-        if (diff >= c.thresholdValue)
-            outStatusColorMode = 1;
-        break;
-    }
-    default:
-        break;
+    for (const auto& c : s_state.activeChallenges) {
+        int mode = 0;
+        std::string status = describeSingleChallengeProgress(c, mode);
+        if (mode == 1) ++allGreen;
+        if (mode == 2) anyRed = true;
+        int32_t kStake = c.rewardAmount / 1000;
+        std::string titleShort = c.title.size() > 13 ? c.title.substr(0, 13) : c.title;
+        std::string text = titleShort + " [" + status + "] +/-" + std::to_string(kStake) + "K";
+        lines.emplace_back(std::move(text), mode);
     }
 
-    int32_t kBonus = c.rewardAmount / 1000;
-    std::string titleShort = c.title.size() > 14 ? c.title.substr(0, 14) : c.title;
-    return "BONUS: " + titleShort + " [" + status + "] +" + std::to_string(kBonus) + "K";
+    if (allIn) {
+        int jpMode = anyRed ? 2 : (allGreen == kOfferedChallengeCount ? 1 : 0);
+        std::string jpText = anyRed ? "ALL-IN +50% JACKPOT: LOST" :
+                             (allGreen == kOfferedChallengeCount ? "ALL-IN +50% JACKPOT: ON TRACK!" : "ALL-IN +50% JACKPOT ACTIVE");
+        lines.emplace_back(std::move(jpText), jpMode);
+    }
+    return lines;
 }
 
 std::string formatLastSponsorChallengeOutcomeForNewspaper()
 {
     if (!s_state.lastMatchHadChallenge)
         return {};
-    if (s_state.lastMatchCompleted) {
-        return "Sponsor Challenge Outcome: " + s_matchClubName + " COMPLETED '" + s_state.lastMatchTitle +
-               "' (" + s_state.lastMatchDescription + ") and earned a " +
-               formatSponsorPounds(s_state.lastMatchPayout) + " cash bonus!";
+    const auto& eval = s_state.lastMatchEval;
+    std::string out = "Sponsor Challenges Outcome for " + s_matchClubName + ": " +
+                      std::to_string(eval.completedCount) + " completed, " +
+                      std::to_string(eval.failedCount) + " failed";
+    if (eval.allInJackpotTriggered) {
+        out += " — ALL-IN CLEAN SWEEP! Won an extra +50% jackpot bonus (" +
+               formatSignedPounds(eval.jackpotBonus) + ")";
     }
-    return "Sponsor Challenge Outcome: " + s_matchClubName + " FAILED '" + s_state.lastMatchTitle +
-           "' (" + s_state.lastMatchDescription + ") and missed out on the sponsor bonus.";
+    out += ". Net financial impact: " + formatSignedPounds(eval.totalNetDelta) + ".";
+    return out;
 }
 
 // --- Persistence (Single-player sidecar .sch + Hotseat getters/setters) ---

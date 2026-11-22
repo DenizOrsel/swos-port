@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 struct MatchTelemetryEvent {
@@ -70,5 +71,6 @@ void recordTelemetryMatchEvent(const char *eventType, bool isGoalEvent = false);
 void finalizeMatchTelemetry();
 
 MatchTelemetrySnapshot captureMatchTelemetrySnapshot();
+std::pair<int, int> getHalfTimeTelemetryGoals();
 std::string formatTelemetryPromptBlock(const MatchTelemetrySnapshot& snap);
 std::string computeTimePressureTag(int minute, int goals1, int goals2, bool playingPenalties);
