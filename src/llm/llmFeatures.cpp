@@ -1,6 +1,7 @@
 #include "llmFeatures.h"
 #include "llmClient.h"
 #include "continueAbortMenu.h"
+#include "controls.h"
 #include "darkRectangle.h"
 #include "drawMenu.h"
 #include "gameFieldMapping.h"
@@ -149,6 +150,84 @@ void showWrappedSwosPrompt(const char *header, const std::string& body)
     showContinueAbortPrompt(header, "CONTINUE", nullptr, ptrs, false);
 }
 
+bool waitForLlmWithIndicator(uint64_t requestId, int maxWaitMs, const char *statusLabel, std::string& outText)
+{
+    if (requestId == 0)
+        return false;
+    if (tryTakeLlmResponse(requestId, outText))
+        return true;
+
+#ifdef SWOS_TEST
+    return waitForLlmResponse(requestId, maxWaitMs, outText);
+#else
+    static const char kSpinnerChars[4] = { '|', '/', '-', '\\' };
+    Uint32 startTicks = SDL_GetTicks();
+    Uint32 deadline = startTicks + static_cast<Uint32>(std::max(0, maxWaitMs));
+    int frame = 0;
+
+    setStandardMenuBackgroundImage();
+    while (SDL_GetTicks() < deadline) {
+        if (tryTakeLlmResponse(requestId, outText))
+            return true;
+
+        drawMenuBackground();
+        drawDarkRectangle({ 30.0f, 76.0f, 260.0f, 48.0f }, true);
+
+        int spinIdx = (frame / 3) & 3;
+        int dotsCount = (frame / 6) & 3;
+        std::string dots(static_cast<size_t>(dotsCount), '.');
+        std::string line1 = std::string("[") + kSpinnerChars[spinIdx] + "] " + statusLabel + dots;
+
+        drawTextCentered(kVgaWidth / 2, 84, line1.c_str(), 248, kWhiteText2, false);
+        drawTextCentered(kVgaWidth / 2, 97, "AI THINKING (WARMUP MAY TAKE A MOMENT)", 248, kWhiteText2, false);
+        drawTextCentered(kVgaWidth / 2, 110, "PRESS ESC TO SKIP", 248, kWhiteText, false);
+
+        updateScreen(false);
+        SDL_Delay(33);
+        processControlEvents();
+
+        if (SDL_GetTicks() - startTicks > 250) {
+            const Uint8 *keys = SDL_GetKeyboardState(nullptr);
+            if (keys && keys[SDL_SCANCODE_ESCAPE])
+                return false;
+        }
+        ++frame;
+    }
+    return tryTakeLlmResponse(requestId, outText);
+#endif
+}
+
+std::string buildMatchPerspectiveContext(const char *t1, const char *t2, int g1, int g2,
+    bool topHuman, bool botHuman)
+{
+    if (topHuman && botHuman) {
+        return "TWO-PLAYER HEAD-TO-HEAD MATCH: " + std::string(t1) + " (PLAYER 1) " +
+            std::to_string(g1) + "-" + std::to_string(g2) + " " + t2 + " (PLAYER 2). " +
+            "Comment on both human players fairly.";
+    }
+
+    if (topHuman || botHuman) {
+        const char *humanTeam = topHuman ? t1 : t2;
+        const char *cpuTeam = topHuman ? t2 : t1;
+        int humanGoals = topHuman ? g1 : g2;
+        int cpuGoals = topHuman ? g2 : g1;
+        int humanPen = topHuman ? swos.team1PenaltyGoals : swos.team2PenaltyGoals;
+        int cpuPen = topHuman ? swos.team2PenaltyGoals : swos.team1PenaltyGoals;
+
+        std::string outcome = "DREW";
+        if (humanGoals > cpuGoals || (humanGoals == cpuGoals && swos.playingPenalties && humanPen > cpuPen))
+            outcome = "WON";
+        else if (humanGoals < cpuGoals || (humanGoals == cpuGoals && swos.playingPenalties && humanPen < cpuPen))
+            outcome = "LOST";
+
+        return "HUMAN PLAYER'S CLUB: " + std::string(humanTeam) + " " + outcome + " " +
+            std::to_string(humanGoals) + "-" + std::to_string(cpuGoals) + " against CPU club " + cpuTeam + ". " +
+            "IMPORTANT: Write strictly from " + humanTeam + "'s perspective reacting to this " + outcome + ".";
+    }
+
+    return "Match: " + std::string(t1) + " " + std::to_string(g1) + "-" + std::to_string(g2) + " " + t2 + ".";
+}
+
 } // namespace
 
 std::vector<std::string> wrapTextForSwosPrompt(const std::string& text, size_t maxLineLen, size_t maxLines)
@@ -206,11 +285,14 @@ void beginPostMatchNewspaperRequest()
         ? swos.bottomTeamData.inGameTeamPtr->teamName : "AWAY";
     int g1 = swos.statsTeam1Goals;
     int g2 = swos.statsTeam2Goals;
+    bool topHuman = (swos.topTeamData.playerNumber != 0 || swos.topTeamData.playerCoachNumber != 0);
+    bool botHuman = (swos.bottomTeamData.playerNumber != 0 || swos.bottomTeamData.playerCoachNumber != 0);
     const auto stats = getStats();
     std::string s1 = getMatchScorersSummary(1);
     std::string s2 = getMatchScorersSummary(2);
 
-    std::string prompt = "Match: " + std::string(t1) + " " + std::to_string(g1) + "-" + std::to_string(g2) + " " + t2;
+    std::string prompt = buildMatchPerspectiveContext(t1, t2, g1, g2, topHuman, botHuman);
+    prompt += "\nScoreline: " + std::string(t1) + " " + std::to_string(g1) + "-" + std::to_string(g2) + " " + t2;
     if (swos.playingPenalties) {
         prompt += " (PENS " + std::to_string(swos.team1PenaltyGoals) + "-" + std::to_string(swos.team2PenaltyGoals) + ")";
     }
@@ -223,7 +305,7 @@ void beginPostMatchNewspaperRequest()
     prompt += "\nWrite a punchy 1990s British sports newspaper blurb:\n"
               "Line 1: Tabloid headline (max 38 chars)\n"
               "Line 2-3: 1-2 short match sentences (max 75 chars total)\n"
-              "Line 4: CHAIRMAN: short board reaction (max 70 chars). No markdown.";
+              "Line 4: CHAIRMAN: short board reaction matching the exact WIN/LOSS/DRAW outcome (max 70 chars). No markdown.";
 
     const std::string sys = "You are a 1995 British football tabloid editor and club chairman. "
                             "Be concise, punchy, plain ASCII text, no markdown, no bullets.";
@@ -240,7 +322,7 @@ void showPostMatchNewspaperIfReady()
         return;
 
     std::string reply;
-    if (waitForLlmResponse(s_postMatchRequestId, cfg.timeoutMs, reply)) {
+    if (waitForLlmWithIndicator(s_postMatchRequestId, cfg.timeoutMs, "PRINTING DAILY ECHO", reply)) {
         showWrappedSwosPrompt("DAILY SOCCER ECHO", reply);
     }
     s_postMatchRequestId = 0;
@@ -265,7 +347,7 @@ std::string fetchTransferNegotiationVoice(const char *buyerClub, const char *sel
         return {};
 
     std::string reply;
-    if (!waitForLlmResponse(reqId, cfg.timeoutMs, reply))
+    if (!waitForLlmWithIndicator(reqId, cfg.timeoutMs, "CONTACTING AGENT", reply))
         return {};
 
     std::string clean = sanitizeAsciiUpper(reply);
@@ -287,9 +369,16 @@ void onCareerMatchCompletedLlm(int topGoals, int botGoals)
     if (pickCareerSquadVoice(club, player, role).empty())
         return;
 
-    std::string prompt = "Club: " + club + ". Score: " + std::to_string(topGoals) + "-" + std::to_string(botGoals) +
-        ". Player speaking: " + player + " (" + role + "). "
-        "Give a 1-2 sentence 1990s dressing room reaction (max 110 chars). Prefix with player name.";
+    const char *t1 = (swos.topTeamData.inGameTeamPtr && swos.topTeamData.inGameTeamPtr->teamName[0])
+        ? swos.topTeamData.inGameTeamPtr->teamName : "HOME";
+    const char *t2 = (swos.bottomTeamData.inGameTeamPtr && swos.bottomTeamData.inGameTeamPtr->teamName[0])
+        ? swos.bottomTeamData.inGameTeamPtr->teamName : "AWAY";
+    bool topHuman = (swos.topTeamData.playerNumber != 0 || swos.topTeamData.playerCoachNumber != 0);
+    bool botHuman = (swos.bottomTeamData.playerNumber != 0 || swos.bottomTeamData.playerCoachNumber != 0);
+
+    std::string prompt = buildMatchPerspectiveContext(t1, t2, topGoals, botGoals, topHuman, botHuman) +
+        " Speaker's club: " + club + ". Player speaking: " + player + " (" + role + "). "
+        "Give a 1-2 sentence 1990s dressing room reaction matching that exact result (max 110 chars). Prefix with player name.";
 
     uint64_t reqId = enqueueLlmRequest(
         "You are a 1995 football player in the dressing room after a match. Plain ASCII, max 110 chars, no markdown.",
@@ -298,7 +387,7 @@ void onCareerMatchCompletedLlm(int topGoals, int botGoals)
         return;
 
     std::string reply;
-    if (waitForLlmResponse(reqId, cfg.timeoutMs, reply)) {
+    if (waitForLlmWithIndicator(reqId, cfg.timeoutMs, "DRESSING ROOM", reply)) {
         showWrappedSwosPrompt("DRESSING ROOM VOICE", reply);
     }
 }
@@ -396,7 +485,7 @@ void checkCareerSquadTransfersLlm()
         return;
 
     std::string reply;
-    if (waitForLlmResponse(reqId, cfg.timeoutMs, reply)) {
+    if (waitForLlmWithIndicator(reqId, cfg.timeoutMs, "CHECKING TRANSFER DESK", reply)) {
         showWrappedSwosPrompt("TRANSFER DESK", reply);
     }
 }
@@ -452,12 +541,12 @@ void showPreMatchScoutingIfReady()
         return;
 
     std::string reply;
-    if (waitForLlmResponse(s_preMatchRequestId, cfg.timeoutMs, reply)) {
-        setStandardMenuBackgroundImage();
-        menuFadeIn();
+    setStandardMenuBackgroundImage();
+    menuFadeIn();
+    if (waitForLlmWithIndicator(s_preMatchRequestId, cfg.timeoutMs, "SCOUTING REPORT", reply)) {
         showWrappedSwosPrompt("ASSISTANT MANAGER", reply);
-        menuFadeOut();
     }
+    menuFadeOut();
     s_preMatchRequestId = 0;
 }
 
@@ -565,7 +654,7 @@ void onCareerWeeklyTickLlm()
         return;
 
     std::string reply;
-    if (waitForLlmResponse(reqId, cfg.timeoutMs, reply)) {
+    if (waitForLlmWithIndicator(reqId, cfg.timeoutMs, isMarket ? "TRANSFER RUMOURS" : "DRESSING ROOM", reply)) {
         showWrappedSwosPrompt(isMarket ? "TRANSFER WHISPER" : "DRESSING ROOM", reply);
     }
 }
