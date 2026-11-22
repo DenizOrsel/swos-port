@@ -63,97 +63,97 @@ Menu llmOptionsMenu
 
     Entry enabled {
         y: kLlmStartY
-        text: ""
+        text: @kAlloc
         onSelect: toggleLlmEnabled
         downEntry: >
     }
 
     Entry provider {
-        text: ""
+        text: @kAlloc
         onSelect: cycleLlmProvider
         upEntry: <
         downEntry: >
     }
 
     Entry endpoint {
-        text: ""
+        text: @kAlloc
         onSelect: editLlmEndpoint
         upEntry: <
         downEntry: >
     }
 
     Entry model {
-        text: ""
+        text: @kAlloc
         onSelect: editLlmModel
         upEntry: <
         downEntry: >
     }
 
     Entry apiKey {
-        text: ""
+        text: @kAlloc
         onSelect: editLlmApiKey
         upEntry: <
         downEntry: >
     }
 
     Entry timeout {
-        text: ""
+        number: 0
         onSelect: editLlmTimeout
         upEntry: <
         downEntry: >
     }
 
     Entry maxTokens {
-        text: ""
+        number: 0
         onSelect: editLlmMaxTokens
         upEntry: <
         downEntry: >
     }
 
     Entry temperature {
-        text: ""
+        text: @kAlloc
         onSelect: cycleLlmTemperature
         upEntry: <
         downEntry: >
     }
 
     Entry newspaper {
-        text: ""
+        text: @kAlloc
         onSelect: toggleFeatureNewspaper
         upEntry: <
         downEntry: >
     }
 
     Entry preMatch {
-        text: ""
+        text: @kAlloc
         onSelect: toggleFeaturePreMatch
         upEntry: <
         downEntry: >
     }
 
     Entry transfers {
-        text: ""
+        text: @kAlloc
         onSelect: toggleFeatureTransfers
         upEntry: <
         downEntry: >
     }
 
     Entry dressingRoom {
-        text: ""
+        text: @kAlloc
         onSelect: toggleFeatureDressingRoom
         upEntry: <
         downEntry: >
     }
 
     Entry pundit {
-        text: ""
+        text: @kAlloc
         onSelect: toggleFeatureLivePundit
         upEntry: <
         downEntry: >
     }
 
     Entry cpuTactics {
-        text: ""
+        text: @kAlloc
         onSelect: toggleFeatureCpuTactics
         upEntry: <
         downEntry: exit

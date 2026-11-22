@@ -88,8 +88,8 @@ static void cycleLlmProvider()
 static void editLlmEndpoint()
 {
     LlmConfig cfg = getLlmConfig();
-    endpointEntry.copyString(cfg.endpoint.c_str());
-    if (inputText(endpointEntry, 128, kFullCharset)) {
+    endpointEntry.copyString(cfg.endpoint.empty() ? "" : elideDisplay(cfg.endpoint, 60).c_str());
+    if (inputText(endpointEntry, 60, kFullCharset)) {
         cfg.endpoint = endpointEntry.fg.string;
         updateLlmConfig(cfg);
     }
@@ -99,8 +99,8 @@ static void editLlmEndpoint()
 static void editLlmModel()
 {
     LlmConfig cfg = getLlmConfig();
-    modelEntry.copyString(cfg.model.c_str());
-    if (inputText(modelEntry, 64, kFullCharset)) {
+    modelEntry.copyString(cfg.model.empty() ? "" : elideDisplay(cfg.model, 60).c_str());
+    if (inputText(modelEntry, 60, kFullCharset)) {
         cfg.model = modelEntry.fg.string;
         updateLlmConfig(cfg);
     }
@@ -110,8 +110,8 @@ static void editLlmModel()
 static void editLlmApiKey()
 {
     LlmConfig cfg = getLlmConfig();
-    apiKeyEntry.copyString(cfg.apiKey.c_str());
-    if (inputText(apiKeyEntry, 128, kFullCharset)) {
+    apiKeyEntry.copyString(cfg.apiKey.empty() ? "" : elideDisplay(cfg.apiKey, 60).c_str());
+    if (inputText(apiKeyEntry, 60, kFullCharset)) {
         cfg.apiKey = apiKeyEntry.fg.string;
         updateLlmConfig(cfg);
     }
