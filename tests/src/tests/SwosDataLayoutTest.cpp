@@ -5,6 +5,7 @@
 #include "freeKickAim.h"
 #include "llmClient.h"
 #include "llmFeatures.h"
+#include "llmReportMenu.h"
 
 static SwosDataLayoutTest t;
 
@@ -260,6 +261,14 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
     assertTrue(!wrapped.empty() && wrapped.size() <= 6);
     for (const auto& line : wrapped)
         assertTrue(line.size() <= 38);
+
+    // Full-width multi-page report wrapping preserves long content without cropping
+    auto reportLines = wrapLlmReportLines(
+        "HEADLINE: AMAZING COMEBACK!\n"
+        "A long match report with plenty of detail about goals, saves, tactics, and weather so that nothing gets cropped.\n"
+        "CHAIRMAN: Fantastic spirit from the lads tonight!",
+        180);
+    assertTrue(reportLines.size() >= 3);
 
     // 3. Async worker queue with mock transport
     auto prevCfg = getLlmConfig();

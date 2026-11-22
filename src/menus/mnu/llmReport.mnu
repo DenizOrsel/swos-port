@@ -1,0 +1,59 @@
+//
+// Full-width multi-page LLM report viewer menu
+//
+
+#include "common.mh"
+
+Menu llmReportMenu
+{
+    onInit: initLlmReportMenu
+    onDraw: drawLlmReportMenu
+    initialEntry: continueBtn
+
+    Entry header {
+        x: 62
+        y: 0
+        width: 180
+        height: 15
+
+        color: kHeaderColor
+        text: @kAlloc
+    }
+
+    Entry prevPage {
+        x: 4
+        y: kExitY
+        width: 76
+        height: kBigButtonHeight
+
+        color: @kDarkBlue
+        text: "PREV PAGE"
+        rightEntry: continueBtn
+        onSelect: llmReportPrevPage
+    }
+
+    Entry continueBtn {
+        x: 102
+        y: kExitY
+        width: 100
+        height: kBigButtonHeight
+
+        color: @kGreen
+        text: "CONTINUE"
+        leftEntry: prevPage
+        rightEntry: nextPage
+        onSelect: llmReportClose
+    }
+
+    Entry nextPage {
+        x: 224
+        y: kExitY
+        width: 76
+        height: kBigButtonHeight
+
+        color: @kDarkBlue
+        text: "NEXT PAGE"
+        leftEntry: continueBtn
+        onSelect: llmReportNextPage
+    }
+}

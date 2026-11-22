@@ -1,5 +1,6 @@
 #include "llmFeatures.h"
 #include "llmClient.h"
+#include "llmReportMenu.h"
 #include "continueAbortMenu.h"
 #include "controls.h"
 #include "darkRectangle.h"
@@ -182,16 +183,7 @@ std::string pickCareerSquadVoice(std::string& outClubName, std::string& outPlaye
 
 void showWrappedSwosPrompt(const char *header, const std::string& body)
 {
-    auto wrapped = wrapTextForSwosPrompt(body, 40, 6);
-    if (wrapped.empty())
-        return;
-
-    std::vector<const char *> ptrs;
-    ptrs.reserve(wrapped.size());
-    for (const auto& line : wrapped)
-        ptrs.push_back(line.c_str());
-
-    showContinueAbortPrompt(header, "CONTINUE", nullptr, ptrs, false);
+    showLlmReportDialog(header, body);
 }
 
 bool waitForLlmWithIndicator(uint64_t requestId, int maxWaitMs, const char *statusLabel, std::string& outText)
