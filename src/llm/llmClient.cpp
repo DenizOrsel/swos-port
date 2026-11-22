@@ -101,6 +101,7 @@ void writeAiIni(const std::string& path, const LlmConfig& cfg)
     ini.SetValue("llm", "endpoint", cfg.endpoint.c_str());
     ini.SetValue("llm", "model", cfg.model.c_str());
     ini.SetValue("llm", "apiKey", cfg.apiKey.c_str());
+    ini.SetValue("llm", "language", cfg.language.empty() ? "English" : cfg.language.c_str());
     ini.SetLongValue("llm", "timeoutMs", cfg.timeoutMs);
     ini.SetLongValue("llm", "maxTokens", cfg.maxTokens);
     ini.SetDoubleValue("llm", "temperature", cfg.temperature);
@@ -399,6 +400,9 @@ bool loadLlmConfig(const char *iniPath /* = nullptr */)
     s_config.endpoint = trimCopy(ini.GetValue("llm", "endpoint", s_config.endpoint.c_str()));
     s_config.model = trimCopy(ini.GetValue("llm", "model", s_config.model.c_str()));
     s_config.apiKey = trimCopy(ini.GetValue("llm", "apiKey", ""));
+    s_config.language = trimCopy(ini.GetValue("llm", "language", "English"));
+    if (s_config.language.empty())
+        s_config.language = "English";
     s_config.timeoutMs = std::clamp(static_cast<int>(ini.GetLongValue("llm", "timeoutMs", s_config.timeoutMs)), 250, 30000);
     s_config.maxTokens = std::clamp(static_cast<int>(ini.GetLongValue("llm", "maxTokens", s_config.maxTokens)), 16, 8192);
     s_config.temperature = static_cast<float>(std::clamp(ini.GetDoubleValue("llm", "temperature", s_config.temperature), 0.0, 2.0));
@@ -552,8 +556,10 @@ std::string buildLlmChatPayload(const LlmConfig& cfg, const std::string& systemP
     } else {
         json += "\"max_tokens\":" + std::to_string(cfg.maxTokens) + ",\"temperature\":" + numBuf + ",";
     }
+    std::string effectiveLang = cfg.language.empty() ? "English" : cfg.language;
+    std::string effectiveSystem = systemPrompt + " Always reply strictly in " + effectiveLang + ".";
     json += "\"messages\":[";
-    json += "{\"role\":\"system\",\"content\":\"" + escapeLlmJson(systemPrompt) + "\"},";
+    json += "{\"role\":\"system\",\"content\":\"" + escapeLlmJson(effectiveSystem) + "\"},";
     json += "{\"role\":\"user\",\"content\":\"" + escapeLlmJson(userPrompt) + "\"}";
     json += "]}";
     return json;

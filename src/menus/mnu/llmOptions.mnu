@@ -6,7 +6,7 @@
 
 Menu llmOptionsMenu
 {
-    kLlmStartY = 24
+    kLlmStartY = 21
     kLlmRowHeight = 9
     kLlmRowGap = 1
 
@@ -44,6 +44,7 @@ Menu llmOptionsMenu
     Entry { text: "ENDPOINT" }
     Entry { text: "MODEL" }
     Entry { text: "API KEY" }
+    Entry { text: "LANGUAGE" }
     Entry { text: "TIMEOUT (MS)" }
     Entry { text: "MAX TOKENS" }
     Entry { text: "TEMPERATURE" }
@@ -92,6 +93,13 @@ Menu llmOptionsMenu
     Entry apiKey {
         text: @kAlloc
         onSelect: editLlmApiKey
+        upEntry: <
+        downEntry: >
+    }
+
+    Entry language {
+        text: @kAlloc
+        onSelect: editLlmLanguage
         upEntry: <
         downEntry: >
     }

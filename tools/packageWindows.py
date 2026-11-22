@@ -382,6 +382,7 @@ provider = ollama
 endpoint = http://localhost:11434/api/chat
 model = gemma4:latest
 apiKey =
+language = English
 timeoutMs = 10000
 maxTokens = 1200
 temperature = 0.700000

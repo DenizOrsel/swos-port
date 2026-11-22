@@ -239,9 +239,11 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
     ollamaCfg.enabled = true;
     ollamaCfg.provider = LlmProvider::kOllama;
     ollamaCfg.model = "gemma4:latest";
+    ollamaCfg.language = "Turkish";
     std::string ollamaPayload = buildLlmChatPayload(ollamaCfg, "Sys \"role\"", "Line1\nLine2");
     assertTrue(ollamaPayload.find("\"stream\":false") != std::string::npos);
     assertTrue(ollamaPayload.find("\"num_predict\":1200") != std::string::npos);
+    assertTrue(ollamaPayload.find("Always reply strictly in Turkish.") != std::string::npos);
     assertTrue(ollamaPayload.find("Sys \\\"role\\\"") != std::string::npos);
     assertTrue(ollamaPayload.find("Line1\\nLine2") != std::string::npos);
 

@@ -51,6 +51,7 @@ static void refreshLlmOptionsMenu()
     endpointEntry.copyString(elideDisplay(cfg.endpoint, 20).c_str());
     modelEntry.copyString(elideDisplay(cfg.model, 20).c_str());
     apiKeyEntry.copyString(cfg.apiKey.empty() ? "(NONE)" : "********");
+    languageEntry.copyString(elideDisplay(cfg.language.empty() ? "English" : cfg.language, 20).c_str());
 
     char numBuf[32];
     std::snprintf(numBuf, sizeof(numBuf), "%d", cfg.timeoutMs);
@@ -126,6 +127,25 @@ static void editLlmApiKey()
     apiKeyEntry.copyString(cfg.apiKey.empty() ? "" : elideDisplay(cfg.apiKey, 60).c_str());
     if (inputText(apiKeyEntry, 60, kFullCharset)) {
         cfg.apiKey = apiKeyEntry.fg.string;
+        updateLlmConfig(cfg);
+    }
+    refreshLlmOptionsMenu();
+}
+
+static void editLlmLanguage()
+{
+    LlmConfig cfg = getLlmConfig();
+    std::string cur = cfg.language.empty() ? "English" : cfg.language;
+    languageEntry.copyString(cur.c_str());
+    if (inputText(languageEntry, 32, kFullCharset)) {
+        std::string entered = languageEntry.fg.string.asPtr();
+        size_t first = entered.find_first_not_of(" \t");
+        if (first == std::string::npos) {
+            cfg.language = "English";
+        } else {
+            size_t last = entered.find_last_not_of(" \t");
+            cfg.language = entered.substr(first, last - first + 1);
+        }
         updateLlmConfig(cfg);
     }
     refreshLlmOptionsMenu();
