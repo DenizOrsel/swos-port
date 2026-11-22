@@ -26,6 +26,7 @@ struct LlmConfig {
     std::string model = "gemma4:latest";
     std::string apiKey;
     std::string language = "English";
+    std::string systemInstruction = "Only describe facts explicitly provided in the prompt. Never invent or guess unstated details such as headers, volleys, free kicks, assists, injuries, or weather.";
     int timeoutMs = 10000;
     int maxTokens = 1200;
     float temperature = 0.85f;

@@ -383,6 +383,7 @@ endpoint = http://localhost:11434/api/chat
 model = gemma4:latest
 apiKey =
 language = English
+systemInstruction = Only describe facts explicitly provided in the prompt. Never invent or guess unstated details such as headers, volleys, free kicks, assists, injuries, or weather.
 timeoutMs = 10000
 maxTokens = 1200
 temperature = 0.850000

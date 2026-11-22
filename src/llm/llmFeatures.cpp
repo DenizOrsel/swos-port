@@ -793,6 +793,26 @@ void triggerLivePunditEvent(const char *eventLabel, bool highPriority)
         prompt += " Team that just acted/scored: " + std::string(actingTeam) +
                   " (NOT " + otherTeam + "). Credit " + actingTeam + " accurately.";
     }
+    if (isGoalEvent) {
+        const Sprite *scorerSprite = swos.currentScorer.asAligned();
+        if (scorerSprite && scorerSprite->playerOrdinal >= 1 && scorerSprite->playerOrdinal <= kNumPlayersInTeam) {
+            const TeamGame *scorerTeam = (scorerSprite->teamNumber == 1) ? &swos.topTeamInGame : &swos.bottomTeamInGame;
+            const char *scorerName = scorerTeam->players[scorerSprite->playerOrdinal - 1].shortName;
+            if (scorerName && scorerName[0] != '\0') {
+                prompt += " Scorer: " + std::string(scorerName) + ".";
+            }
+            if (swos.goalTypeScored == static_cast<int>(GoalType::kOwnGoal)) {
+                prompt += " Finish type: own goal.";
+            } else if (swos.penalty || std::strstr(eventLabel, "PENALTY") != nullptr) {
+                prompt += " Finish type: penalty kick.";
+            } else if (scorerSprite->state == PlayerState::kStaticHeader ||
+                       scorerSprite->state == PlayerState::kJumpHeader) {
+                prompt += " Finish type: header.";
+            } else {
+                prompt += " Finish type: footed shot (NOT a header).";
+            }
+        }
+    }
     prompt += " React with ONE spontaneous, excited 1995 TV co-commentator sentence (short enough for a broadcast banner, plain text, no quotes).";
 
     s_punditRequestId = enqueueLlmRequest(

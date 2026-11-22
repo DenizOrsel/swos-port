@@ -36,6 +36,10 @@ All telemetry fields are read directly from existing C++ / SWOS VM state with ze
 - **Live Statistics (`getStats()`):** Possession %, total shots (`goalAttempts`), shots on target, corners, fouls, yellow/red cards, and recent momentum (shots/territory in the last 10 match minutes).
 - **Ball & Territory Tracking (`swos.ballSprite`):** Rolling 10-second pitch-zone ratio (`attacking third` / `midfield` / `defending third` for Team 1 vs Team 2) so fans know *who is dominating* even at `0–0`.
 - **Key Events Ring Buffer (last 5 events):** Timestamped entries (`GOAL`, `OWN_GOAL`, `POST/BAR`, `SAVE`, `PENALTY`, `RED_CARD`, `YELLOW_CARD`, `INJURY`, `SUBSTITUTION`) with exact team & scorer/player name.
+- **Goal Mechanics & Assist Attribution *(exact, zero-hallucination goal telemetry)*:**
+  - **Assister Tracking:** Maintain a 2-slot ball-touch ring buffer (`lastTouchPlayer`, `prevTouchPlayer` with team, pitch coordinates, and timestamp) updated when a player kicks/contacts the ball. When `goalScored()` fires, if `prevTouchPlayer` is a different teammate within ~5 seconds, attribute the exact assist (plus detect **cross / wing / corner / free-kick assist** from `prevTouch` coordinates and prior stoppage state).
+  - **Finish Type:** Read `swos.currentScorer->state` (`PlayerState::kStaticHeader` / `kJumpHeader` = header vs normal foot strike), `swos.penalty` (penalty kick), `swos.goalTypeScored` (own goal), and recent keeper/woodwork touch (rebound tap-in).
+  - **Shot Distance, Placement & Speed:** Capture ball `(x, y, z)` and velocity `(deltaX, deltaY)` at shot release and goal-line crossing to classify **6-yard tap-in**, **penalty-box finish**, or **long-range screamer from outside the box**, as well as **top corner** (`ball.z` high near post) vs **low driven finish**.
 
 ### B. Club, Squad & Career Context *(captured once at kickoff)*
 - **Teams & Roles:** Team 1 & Team 2 names, `[HUMAN]` vs `[CPU]` flags (resolved via `resolveTeam1AndTeam2` so halftime side-swaps never invert sides), coach names (`TeamFileHeader::coachName`), and starting XI / star players.

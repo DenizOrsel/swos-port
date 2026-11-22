@@ -102,6 +102,7 @@ void writeAiIni(const std::string& path, const LlmConfig& cfg)
     ini.SetValue("llm", "model", cfg.model.c_str());
     ini.SetValue("llm", "apiKey", cfg.apiKey.c_str());
     ini.SetValue("llm", "language", cfg.language.empty() ? "English" : cfg.language.c_str());
+    ini.SetValue("llm", "systemInstruction", cfg.systemInstruction.c_str());
     ini.SetLongValue("llm", "timeoutMs", cfg.timeoutMs);
     ini.SetLongValue("llm", "maxTokens", cfg.maxTokens);
     ini.SetDoubleValue("llm", "temperature", cfg.temperature);
@@ -404,6 +405,7 @@ bool loadLlmConfig(const char *iniPath /* = nullptr */)
     s_config.language = trimCopy(ini.GetValue("llm", "language", "English"));
     if (s_config.language.empty())
         s_config.language = "English";
+    s_config.systemInstruction = trimCopy(ini.GetValue("llm", "systemInstruction", s_config.systemInstruction.c_str()));
     s_config.timeoutMs = std::clamp(static_cast<int>(ini.GetLongValue("llm", "timeoutMs", s_config.timeoutMs)), 250, 30000);
     s_config.maxTokens = std::clamp(static_cast<int>(ini.GetLongValue("llm", "maxTokens", s_config.maxTokens)), 16, 8192);
     s_config.temperature = static_cast<float>(std::clamp(ini.GetDoubleValue("llm", "temperature", s_config.temperature), 0.0, 2.0));
@@ -560,7 +562,10 @@ std::string buildLlmChatPayload(const LlmConfig& cfg, const std::string& systemP
         json += "\"max_tokens\":" + std::to_string(cfg.maxTokens) + ",\"temperature\":" + numBuf + ",";
     }
     std::string effectiveLang = cfg.language.empty() ? "English" : cfg.language;
-    std::string effectiveSystem = systemPrompt + " Always reply strictly in " + effectiveLang + ".";
+    std::string effectiveSystem = systemPrompt;
+    if (!cfg.systemInstruction.empty())
+        effectiveSystem += " " + cfg.systemInstruction;
+    effectiveSystem += " Always reply strictly in " + effectiveLang + ".";
     json += "\"messages\":[";
     json += "{\"role\":\"system\",\"content\":\"" + escapeLlmJson(effectiveSystem) + "\"},";
     json += "{\"role\":\"user\",\"content\":\"" + escapeLlmJson(userPrompt) + "\"}";
