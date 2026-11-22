@@ -241,7 +241,7 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
     ollamaCfg.model = "gemma4:latest";
     std::string ollamaPayload = buildLlmChatPayload(ollamaCfg, "Sys \"role\"", "Line1\nLine2");
     assertTrue(ollamaPayload.find("\"stream\":false") != std::string::npos);
-    assertTrue(ollamaPayload.find("\"num_predict\":120") != std::string::npos);
+    assertTrue(ollamaPayload.find("\"num_predict\":1200") != std::string::npos);
     assertTrue(ollamaPayload.find("Sys \\\"role\\\"") != std::string::npos);
     assertTrue(ollamaPayload.find("Line1\\nLine2") != std::string::npos);
 

@@ -402,7 +402,7 @@ bool loadLlmConfig(const char *iniPath /* = nullptr */)
     s_config.model = trimCopy(ini.GetValue("llm", "model", s_config.model.c_str()));
     s_config.apiKey = trimCopy(ini.GetValue("llm", "apiKey", ""));
     s_config.timeoutMs = std::clamp(static_cast<int>(ini.GetLongValue("llm", "timeoutMs", s_config.timeoutMs)), 250, 30000);
-    s_config.maxTokens = std::clamp(static_cast<int>(ini.GetLongValue("llm", "maxTokens", s_config.maxTokens)), 16, 1024);
+    s_config.maxTokens = std::clamp(static_cast<int>(ini.GetLongValue("llm", "maxTokens", s_config.maxTokens)), 16, 8192);
     s_config.temperature = static_cast<float>(std::clamp(ini.GetDoubleValue("llm", "temperature", s_config.temperature), 0.0, 2.0));
 
     s_config.features.postMatchNewspaper = ini.GetBoolValue("features", "postMatchNewspaper", s_config.features.postMatchNewspaper);

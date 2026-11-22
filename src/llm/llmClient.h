@@ -29,8 +29,8 @@ struct LlmConfig {
     std::string endpoint = "http://localhost:11434/api/chat";
     std::string model = "gemma4:latest";
     std::string apiKey;
-    int timeoutMs = 3000;
-    int maxTokens = 120;
+    int timeoutMs = 10000;
+    int maxTokens = 1200;
     float temperature = 0.7f;
     LlmFeaturesConfig features;
 };
