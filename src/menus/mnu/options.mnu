@@ -6,8 +6,8 @@
 
 Menu optionsMenu
 {
-    kEntryVerticalDistance = 12
-    kBaseY = 48
+    kEntryVerticalDistance = 8
+    kBaseY = 42
 
     defaultX: kBaseX
     defaultWidth: kBigButtonWidth
@@ -49,6 +49,13 @@ Menu optionsMenu
         upEntry: <
         downEntry: >
         onSelect: showGameplayOptions
+    }
+
+    Entry llm {
+        text: "LLM"
+        upEntry: <
+        downEntry: >
+        onSelect: doShowLlmOptionsMenu
     }
 
     Entry exit {

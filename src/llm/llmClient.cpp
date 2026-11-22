@@ -92,31 +92,31 @@ const char *providerToString(LlmProvider p)
     }
 }
 
-void writeDefaultAiIni(const std::string& path)
+void writeAiIni(const std::string& path, const LlmConfig& cfg)
 {
     CSimpleIniA ini;
     ini.SetUnicode();
-    ini.SetBoolValue("llm", "enabled", s_config.enabled);
-    ini.SetValue("llm", "provider", providerToString(s_config.provider));
-    ini.SetValue("llm", "endpoint", s_config.endpoint.c_str());
-    ini.SetValue("llm", "model", s_config.model.c_str());
-    ini.SetValue("llm", "apiKey", s_config.apiKey.c_str());
-    ini.SetLongValue("llm", "timeoutMs", s_config.timeoutMs);
-    ini.SetLongValue("llm", "maxTokens", s_config.maxTokens);
-    ini.SetDoubleValue("llm", "temperature", s_config.temperature);
+    ini.SetBoolValue("llm", "enabled", cfg.enabled);
+    ini.SetValue("llm", "provider", providerToString(cfg.provider));
+    ini.SetValue("llm", "endpoint", cfg.endpoint.c_str());
+    ini.SetValue("llm", "model", cfg.model.c_str());
+    ini.SetValue("llm", "apiKey", cfg.apiKey.c_str());
+    ini.SetLongValue("llm", "timeoutMs", cfg.timeoutMs);
+    ini.SetLongValue("llm", "maxTokens", cfg.maxTokens);
+    ini.SetDoubleValue("llm", "temperature", cfg.temperature);
 
-    ini.SetBoolValue("features", "postMatchNewspaper", s_config.features.postMatchNewspaper);
-    ini.SetBoolValue("features", "preMatchScouting", s_config.features.preMatchScouting);
-    ini.SetBoolValue("features", "transferNegotiations", s_config.features.transferNegotiations);
-    ini.SetBoolValue("features", "dressingRoomVoices", s_config.features.dressingRoomVoices);
-    ini.SetBoolValue("features", "livePunditTicker", s_config.features.livePunditTicker);
-    ini.SetBoolValue("features", "cpuTacticalManager", s_config.features.cpuTacticalManager);
+    ini.SetBoolValue("features", "postMatchNewspaper", cfg.features.postMatchNewspaper);
+    ini.SetBoolValue("features", "preMatchScouting", cfg.features.preMatchScouting);
+    ini.SetBoolValue("features", "transferNegotiations", cfg.features.transferNegotiations);
+    ini.SetBoolValue("features", "dressingRoomVoices", cfg.features.dressingRoomVoices);
+    ini.SetBoolValue("features", "livePunditTicker", cfg.features.livePunditTicker);
+    ini.SetBoolValue("features", "cpuTacticalManager", cfg.features.cpuTacticalManager);
 
     SI_Error rc = ini.SaveFile(path.c_str());
     if (rc < 0)
-        logWarn("Failed to write default %s", path.c_str());
+        logWarn("Failed to write %s", path.c_str());
     else
-        logInfo("Created default LLM configuration at %s", path.c_str());
+        logInfo("Saved LLM configuration to %s", path.c_str());
 }
 
 std::wstring utf8ToWide(const std::string& str)
@@ -385,7 +385,7 @@ bool loadLlmConfig(const char *iniPath /* = nullptr */)
 
     if (!fileExists(resolvedPath.c_str())) {
         if (!iniPath)
-            writeDefaultAiIni(resolvedPath);
+            writeAiIni(resolvedPath, s_config);
         return false;
     }
 
@@ -416,6 +416,27 @@ bool loadLlmConfig(const char *iniPath /* = nullptr */)
         resolvedPath.c_str(), providerToString(s_config.provider), s_config.model.c_str(),
         s_config.enabled ? "true" : "false");
     return true;
+}
+
+bool saveLlmConfig(const char *iniPath /* = nullptr */)
+{
+    std::string resolvedPath = iniPath ? std::string(iniPath) : pathInRootDir(kAiIniFilename);
+    LlmConfig copy;
+    {
+        std::lock_guard<std::mutex> lock(s_configMutex);
+        copy = s_config;
+    }
+    writeAiIni(resolvedPath, copy);
+    return true;
+}
+
+void updateLlmConfig(const LlmConfig& cfg)
+{
+    {
+        std::lock_guard<std::mutex> lock(s_configMutex);
+        s_config = cfg;
+    }
+    saveLlmConfig();
 }
 
 const LlmConfig& getLlmConfig()

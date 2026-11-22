@@ -45,6 +45,8 @@ struct LlmHttpResult {
 void initLlmClient();
 void shutdownLlmClient();
 bool loadLlmConfig(const char *iniPath = nullptr);
+bool saveLlmConfig(const char *iniPath = nullptr);
+void updateLlmConfig(const LlmConfig& cfg);
 const LlmConfig& getLlmConfig();
 void setLlmConfigForTest(const LlmConfig& cfg);
 

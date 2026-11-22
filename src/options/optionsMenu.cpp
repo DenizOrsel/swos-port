@@ -8,6 +8,7 @@
 #include "videoOptionsMenu.h"
 #include "audioOptionsMenu.h"
 #include "controlOptionsMenu.h"
+#include "llmOptionsMenu.h"
 
 static int16_t m_gameStyle;
 
@@ -54,6 +55,11 @@ static void doShowControlOptionsMenu()
 static void showGameplayOptions()
 {
     showMenu(gameplayOptionsMenu);
+}
+
+static void doShowLlmOptionsMenu()
+{
+    showLlmOptionsMenu();
 }
 
 static void initGamePlayOptions()

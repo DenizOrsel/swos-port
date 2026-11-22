@@ -1,0 +1,174 @@
+//
+// LLM options menu (persists immediately to ai.ini)
+//
+
+#include "common.mh"
+
+Menu llmOptionsMenu
+{
+    kLlmStartY = 24
+    kLlmRowHeight = 9
+    kLlmRowGap = 1
+
+    defaultWidth: kOptionWidth
+    defaultHeight: kLlmRowHeight
+    onInit: initLlmOptionsMenu
+    onRestore: initLlmOptionsMenu
+    initialEntry: enabled
+
+    Entry header {
+        x: kBaseX
+        y: 0
+        width: kBigButtonWidth
+        height: 14
+
+        text: "LLM OPTIONS"
+        color: kHeaderColor
+    }
+
+    // Column 1: Labels
+    defaultX: kOptionsColumn1X
+
+    TemplateEntry {
+        color: kOptionsColumn1Color
+    }
+
+    Entry {
+        y: kLlmStartY
+        text: "LLM ENABLED"
+    }
+
+    defaultY: @prevEndY + kLlmRowGap
+
+    Entry { text: "PROVIDER" }
+    Entry { text: "ENDPOINT" }
+    Entry { text: "MODEL" }
+    Entry { text: "API KEY" }
+    Entry { text: "TIMEOUT (MS)" }
+    Entry { text: "MAX TOKENS" }
+    Entry { text: "TEMPERATURE" }
+    Entry { text: "NEWSPAPER" }
+    Entry { text: "PRE-MATCH" }
+    Entry { text: "TRANSFERS" }
+    Entry { text: "DRESSING ROOM" }
+    Entry { text: "LIVE PUNDIT" }
+    Entry { text: "CPU TACTICS" }
+
+    // Column 2: Interactive values
+    defaultX: kOptionsColumn2X
+
+    TemplateEntry {
+        color: kOptionsColumn2Color
+    }
+
+    Entry enabled {
+        y: kLlmStartY
+        text: ""
+        onSelect: toggleLlmEnabled
+        downEntry: >
+    }
+
+    Entry provider {
+        text: ""
+        onSelect: cycleLlmProvider
+        upEntry: <
+        downEntry: >
+    }
+
+    Entry endpoint {
+        text: ""
+        onSelect: editLlmEndpoint
+        upEntry: <
+        downEntry: >
+    }
+
+    Entry model {
+        text: ""
+        onSelect: editLlmModel
+        upEntry: <
+        downEntry: >
+    }
+
+    Entry apiKey {
+        text: ""
+        onSelect: editLlmApiKey
+        upEntry: <
+        downEntry: >
+    }
+
+    Entry timeout {
+        text: ""
+        onSelect: editLlmTimeout
+        upEntry: <
+        downEntry: >
+    }
+
+    Entry maxTokens {
+        text: ""
+        onSelect: editLlmMaxTokens
+        upEntry: <
+        downEntry: >
+    }
+
+    Entry temperature {
+        text: ""
+        onSelect: cycleLlmTemperature
+        upEntry: <
+        downEntry: >
+    }
+
+    Entry newspaper {
+        text: ""
+        onSelect: toggleFeatureNewspaper
+        upEntry: <
+        downEntry: >
+    }
+
+    Entry preMatch {
+        text: ""
+        onSelect: toggleFeaturePreMatch
+        upEntry: <
+        downEntry: >
+    }
+
+    Entry transfers {
+        text: ""
+        onSelect: toggleFeatureTransfers
+        upEntry: <
+        downEntry: >
+    }
+
+    Entry dressingRoom {
+        text: ""
+        onSelect: toggleFeatureDressingRoom
+        upEntry: <
+        downEntry: >
+    }
+
+    Entry pundit {
+        text: ""
+        onSelect: toggleFeatureLivePundit
+        upEntry: <
+        downEntry: >
+    }
+
+    Entry cpuTactics {
+        text: ""
+        onSelect: toggleFeatureCpuTactics
+        upEntry: <
+        downEntry: exit
+    }
+
+    Entry exit {
+        x: kBaseX
+        y: kExitY
+        width: kBigButtonWidth
+        height: kBigButtonHeight
+
+        text: swos.aExit
+        color: kExitColor
+        upEntry: cpuTactics
+
+        onSelect: exitLlmOptions
+    }
+}

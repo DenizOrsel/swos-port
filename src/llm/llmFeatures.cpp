@@ -574,13 +574,37 @@ void triggerLivePunditEvent(const char *eventLabel, bool highPriority)
         ? swos.topTeamData.inGameTeamPtr->teamName : "HOME";
     const char *t2 = (swos.bottomTeamData.inGameTeamPtr && swos.bottomTeamData.inGameTeamPtr->teamName[0])
         ? swos.bottomTeamData.inGameTeamPtr->teamName : "AWAY";
+    int g1 = swos.statsTeam1Goals;
+    int g2 = swos.statsTeam2Goals;
+    bool topHuman = (swos.topTeamData.playerNumber != 0 || swos.topTeamData.playerCoachNumber != 0);
+    bool botHuman = (swos.bottomTeamData.playerNumber != 0 || swos.bottomTeamData.playerCoachNumber != 0);
 
-    std::string prompt = "Live match: " + std::string(t1) + " " + std::to_string(swos.statsTeam1Goals) +
-        "-" + std::to_string(swos.statsTeam2Goals) + " " + t2 +
-        ". Event: " + eventLabel + ". Give ONE punchy 1995 TV pundit line (max 76 chars, plain ASCII, no quotes).";
+    bool isGoalEvent = (std::strstr(eventLabel, "GOAL") != nullptr);
+    const TeamGeneralInfo *actingPtr = isGoalEvent
+        ? static_cast<const TeamGeneralInfo *>(swos.lastTeamScored.asAligned())
+        : static_cast<const TeamGeneralInfo *>(swos.lastTeamPlayedBeforeBreak.asAligned());
+
+    const char *actingTeam = nullptr;
+    const char *otherTeam = nullptr;
+    if (actingPtr == &swos.topTeamData || (isGoalEvent && swos.lastTeamScoredNumber == 1)) {
+        actingTeam = t1;
+        otherTeam = t2;
+    } else if (actingPtr == &swos.bottomTeamData || (isGoalEvent && swos.lastTeamScoredNumber == 2)) {
+        actingTeam = t2;
+        otherTeam = t1;
+    }
+
+    std::string prompt = buildMatchPerspectiveContext(t1, t2, g1, g2, topHuman, botHuman);
+    prompt += "\nCurrent score: " + std::string(t1) + " " + std::to_string(g1) + "-" + std::to_string(g2) + " " + t2 + ".";
+    prompt += "\nEvent: " + std::string(eventLabel) + ".";
+    if (actingTeam) {
+        prompt += " Team that just acted/scored: " + std::string(actingTeam) +
+                  " (NOT " + otherTeam + "). Credit " + actingTeam + " accurately.";
+    }
+    prompt += " Give ONE punchy 1995 TV pundit line (max 76 chars, plain ASCII, no quotes).";
 
     s_punditRequestId = enqueueLlmRequest(
-        "You are a 1995 live football TV pundit. Reply with ONE short excited sentence, max 76 chars, plain ASCII.",
+        "You are a 1995 live football TV pundit. Always credit the exact scoring/acting team accurately. One short sentence, max 76 chars, plain ASCII.",
         prompt);
     s_punditCooldownFrames = 360; // ~6 seconds cooldown between non-goal events
 }
