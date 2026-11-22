@@ -309,6 +309,11 @@ struct HotseatPlayerContext {
     // Turn tracking
     bool matchPlayedThisTurn = false;
     bool turnCompleted = false;
+
+    // Pre-Match Sponsor Challenge career statistics (serialized in V10+)
+    uint16_t sponsorChallengesCompleted = 0;
+    uint16_t sponsorChallengesFailed = 0;
+    int64_t sponsorTotalBonusEarned = 0;
 };
 
 struct WizardPlayerInfo {

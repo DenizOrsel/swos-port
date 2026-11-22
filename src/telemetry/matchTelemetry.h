@@ -36,6 +36,8 @@ struct MatchTelemetrySnapshot {
 
     int goals1 = 0;
     int goals2 = 0;
+    int htGoals1 = 0;
+    int htGoals2 = 0;
     int penGoals1 = 0;
     int penGoals2 = 0;
 
@@ -58,6 +60,7 @@ struct MatchTelemetrySnapshot {
     std::string managerCareerSummary;
     std::string topScorersSummary;
     std::string upcomingFixturesSummary;
+    std::string activeSponsorChallengeSummary;
     std::vector<MatchTelemetryEvent> recentEvents;
 };
 

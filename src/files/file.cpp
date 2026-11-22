@@ -3,6 +3,7 @@
 #include "util.h"
 #include "dirent.h"
 #include "hotseatCareer.h"
+#include "sponsorChallenge.h"
 
 #ifdef _WIN32
 # include <direct.h>
@@ -157,6 +158,11 @@ static void loadFileImp()
                     }
                 } else {
                     HotseatCareerManager::get().reset();
+                    std::string schPath = fname.substr(0, fname.size() - 4) + ".sch";
+                    std::string fullSchPath = isAbsolutePath(schPath.c_str()) ? schPath : (m_rootDir + schPath);
+                    if (!loadSponsorChallengeSidecar(fullSchPath)) {
+                        resetSponsorChallengeState();
+                    }
                 }
             }
         }
@@ -216,8 +222,12 @@ static int writeFileImp()
                 if (HotseatCareerManager::get().isActive()) {
                     if (!HotseatCareerManager::get().saveToFile(fullHotPath))
                         ok = 0;
-                } else if (fileExists(fullHotPath.c_str())) {
-                    std::remove(fullHotPath.c_str());
+                } else {
+                    if (fileExists(fullHotPath.c_str()))
+                        std::remove(fullHotPath.c_str());
+                    std::string schPath = fname.substr(0, fname.size() - 4) + ".sch";
+                    std::string fullSchPath = isAbsolutePath(schPath.c_str()) ? schPath : (m_rootDir + schPath);
+                    saveSponsorChallengeSidecar(fullSchPath);
                 }
             }
         }

@@ -513,6 +513,19 @@ bool HotseatCareerManager::saveToFile(const std::string& path)
     if (!writeWorldsV9(out))
         return false;
 
+    static constexpr char kSponsorTrailerTag[4] = { 'S', 'P', 'N', 'S' };
+    out.write(kSponsorTrailerTag, 4);
+    if (!out.good())
+        return false;
+    for (int i = 0; i < m_numPlayers; ++i) {
+        const auto& p = m_players[i];
+        if (!writeBinary(out, p.sponsorChallengesCompleted) ||
+            !writeBinary(out, p.sponsorChallengesFailed) ||
+            !writeBinary(out, p.sponsorTotalBonusEarned)) {
+            return false;
+        }
+    }
+
     out.flush();
     if (!out.good())
         return false;
@@ -756,6 +769,21 @@ bool HotseatCareerManager::loadFromFile(const std::string& path)
             reset();
             logWarn("HotseatCareerManager: Corrupted V9 multi-world section in %s", path.c_str());
             return false;
+        }
+        char trailerTag[4] = {};
+        if (in.read(trailerTag, 4) && std::memcmp(trailerTag, "SPNS", 4) == 0) {
+            for (int i = 0; i < m_numPlayers; ++i) {
+                auto& p = m_players[i];
+                if (!readBinary(in, p.sponsorChallengesCompleted) ||
+                    !readBinary(in, p.sponsorChallengesFailed) ||
+                    !readBinary(in, p.sponsorTotalBonusEarned)) {
+                    reset();
+                    logWarn("HotseatCareerManager: Corrupted SPNS sponsor challenge trailer in %s", path.c_str());
+                    return false;
+                }
+            }
+        } else {
+            in.clear();
         }
     }
 

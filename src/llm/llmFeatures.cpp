@@ -2,6 +2,7 @@
 #include "llmClient.h"
 #include "llmReportMenu.h"
 #include "matchTelemetry.h"
+#include "sponsorChallenge.h"
 #include "supporterStream.h"
 #include "continueAbortMenu.h"
 #include "controls.h"
@@ -488,6 +489,9 @@ void beginPostMatchNewspaperRequest()
     if (!s2.empty()) prompt += "\n" + ctx.team2 + " scorers: " + s2;
     prompt += "\nStats: Shots " + std::to_string(stats.team1.goalAttempts) + "-" + std::to_string(stats.team2.goalAttempts);
     prompt += ", Possession " + std::to_string(stats.team1.ballPossession) + "%-" + std::to_string(stats.team2.ballPossession) + "%.";
+    std::string sponsorNote = formatLastSponsorChallengeOutcomeForNewspaper();
+    if (!sponsorNote.empty())
+        prompt += "\n" + sponsorNote;
     prompt += "\nWrite an authentic, lively 1997 football back-page newspaper report + board reaction:\n"
               "Line 1: Punchy tabloid headline (all caps style, witty, referencing the actual result)\n"
               "Paragraph 2: 3 vivid sentences summarizing how the match unfolded using the real scorers, shots, possession, and pitch condition (only if listed above). Do NOT invent players, goals, or weather.\n"

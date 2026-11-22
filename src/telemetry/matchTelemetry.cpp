@@ -8,6 +8,7 @@
 #include "pitch.h"
 #include "pitchConstants.h"
 #include "result.h"
+#include "sponsorChallenge.h"
 #include "stats.h"
 #include "swos.h"
 
@@ -34,6 +35,8 @@ uint32_t s_frameCounter = 0;
 uint32_t s_zoneSamplesTeam1Attack = 0;
 uint32_t s_zoneSamplesMidfield = 0;
 uint32_t s_zoneSamplesTeam2Attack = 0;
+int s_htGoals1 = 0;
+int s_htGoals2 = 0;
 
 TouchRecord s_lastTouch;
 TouchRecord s_prevTouch;
@@ -507,6 +510,8 @@ void resetMatchTelemetry()
     s_zoneSamplesTeam1Attack = 0;
     s_zoneSamplesMidfield = 0;
     s_zoneSamplesTeam2Attack = 0;
+    s_htGoals1 = 0;
+    s_htGoals2 = 0;
     s_lastTouch = {};
     s_prevTouch = {};
     s_recentEvents.clear();
@@ -519,6 +524,11 @@ void updateMatchTelemetry()
     ++s_frameCounter;
     if (swos.g_trainingGame)
         return;
+
+    if (swos.halfNumber <= 1) {
+        s_htGoals1 = swos.statsTeam1Goals;
+        s_htGoals2 = swos.statsTeam2Goals;
+    }
 
     sampleBallTouch();
     if ((s_frameCounter % 30) == 0)
@@ -694,6 +704,8 @@ MatchTelemetrySnapshot captureMatchTelemetrySnapshot()
 
     snap.goals1 = swos.statsTeam1Goals;
     snap.goals2 = swos.statsTeam2Goals;
+    snap.htGoals1 = s_htGoals1;
+    snap.htGoals2 = s_htGoals2;
     snap.penGoals1 = swos.team1PenaltyGoals;
     snap.penGoals2 = swos.team2PenaltyGoals;
     snap.timePressureTag = computeTimePressureTag(snap.minute, snap.goals1, snap.goals2, snap.playingPenalties);
@@ -721,6 +733,7 @@ MatchTelemetrySnapshot captureMatchTelemetrySnapshot()
     snap.managerCareerSummary = extractManagerCareerSummary();
     snap.topScorersSummary = extractTopScorersAndAssistsSummary();
     snap.upcomingFixturesSummary = extractUpcomingFixturesSummary();
+    snap.activeSponsorChallengeSummary = formatActiveSponsorChallengeForTelemetry();
     snap.recentEvents.assign(s_recentEvents.begin(), s_recentEvents.end());
     return snap;
 }
@@ -767,6 +780,8 @@ std::string formatTelemetryPromptBlock(const MatchTelemetrySnapshot& snap)
         out += "\n" + snap.topScorersSummary;
     if (!snap.upcomingFixturesSummary.empty())
         out += "\n" + snap.upcomingFixturesSummary;
+    if (!snap.activeSponsorChallengeSummary.empty())
+        out += "\n" + snap.activeSponsorChallengeSummary;
 
     if (!snap.recentEvents.empty()) {
         out += "\nRecent events:";

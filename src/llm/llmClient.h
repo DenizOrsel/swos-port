@@ -25,6 +25,7 @@ struct LlmFeaturesConfig {
     bool dressingRoomVoices = true;
     bool livePunditTicker = true;
     bool supporterStream = true;
+    bool sponsorChallenges = true;
     bool cpuTacticalManager = false;
 };
 

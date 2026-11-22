@@ -396,6 +396,7 @@ transferNegotiations = true
 dressingRoomVoices = true
 livePunditTicker = true
 supporterStream = true
+sponsorChallenges = true
 cpuTacticalManager = false
 
 [telemetry]

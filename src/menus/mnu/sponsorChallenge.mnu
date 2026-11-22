@@ -1,0 +1,72 @@
+//
+// Pre-match Sponsor Challenge selection menu
+//
+
+#include "common.mh"
+
+Menu sponsorChallengeMenu
+{
+    onInit: initSponsorChallengeMenu
+    onDraw: drawSponsorChallengeMenu
+    initialEntry: challenge1
+
+    Entry header {
+        x: 34
+        y: 0
+        width: 236
+        height: 14
+
+        color: kHeaderColor
+        text: "SPONSOR MATCH CHALLENGES"
+    }
+
+    Entry challenge1 {
+        x: 8
+        y: 38
+        width: 288
+        height: 16
+
+        color: @kDarkBlue
+        text: @kAlloc
+        downEntry: challenge2
+        onSelect: selectSponsorChallenge1
+    }
+
+    Entry challenge2 {
+        x: 8
+        y: 84
+        width: 288
+        height: 16
+
+        color: @kDarkBlue
+        text: @kAlloc
+        upEntry: challenge1
+        downEntry: challenge3
+        onSelect: selectSponsorChallenge2
+    }
+
+    Entry challenge3 {
+        x: 8
+        y: 130
+        width: 288
+        height: 16
+
+        color: @kDarkBlue
+        text: @kAlloc
+        upEntry: challenge2
+        downEntry: declineBtn
+        onSelect: selectSponsorChallenge3
+    }
+
+    Entry declineBtn {
+        x: 68
+        y: 178
+        width: 168
+        height: 17
+
+        color: kExitColor
+        text: "DECLINE ALL CHALLENGES"
+        upEntry: challenge3
+        onSelect: declineSponsorChallenges
+    }
+}

@@ -6,8 +6,8 @@
 
 Menu llmOptionsMenu
 {
-    kLlmStartY = 17
-    kLlmRowHeight = 9
+    kLlmStartY = 16
+    kLlmRowHeight = 8
     kLlmRowGap = 1
 
     defaultWidth: kOptionWidth
@@ -54,6 +54,7 @@ Menu llmOptionsMenu
     Entry { text: "DRESSING ROOM" }
     Entry { text: "LIVE PUNDIT" }
     Entry { text: "CHAT STREAM" }
+    Entry { text: "SPONSOR CHALLENGES" }
     Entry { text: "CPU TACTICS" }
 
     // Column 2: Interactive values
@@ -164,6 +165,13 @@ Menu llmOptionsMenu
     Entry supporterStream {
         text: @kAlloc
         onSelect: toggleFeatureSupporterStream
+        upEntry: <
+        downEntry: >
+    }
+
+    Entry sponsorChallenges {
+        text: @kAlloc
+        onSelect: toggleFeatureSponsorChallenges
         upEntry: <
         downEntry: >
     }

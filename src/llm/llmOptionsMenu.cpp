@@ -67,6 +67,7 @@ static void refreshLlmOptionsMenu()
     dressingRoomEntry.copyString(cfg.features.dressingRoomVoices ? "ON" : "OFF");
     punditEntry.copyString(cfg.features.livePunditTicker ? "ON" : "OFF");
     supporterStreamEntry.copyString(cfg.features.supporterStream ? "ON" : "OFF");
+    sponsorChallengesEntry.copyString(cfg.features.sponsorChallenges ? "ON" : "OFF");
     cpuTacticsEntry.copyString("OFF");
 }
 
@@ -242,6 +243,14 @@ static void toggleFeatureSupporterStream()
 {
     LlmConfig cfg = getLlmConfig();
     cfg.features.supporterStream = !cfg.features.supporterStream;
+    updateLlmConfig(cfg);
+    refreshLlmOptionsMenu();
+}
+
+static void toggleFeatureSponsorChallenges()
+{
+    LlmConfig cfg = getLlmConfig();
+    cfg.features.sponsorChallenges = !cfg.features.sponsorChallenges;
     updateLlmConfig(cfg);
     refreshLlmOptionsMenu();
 }

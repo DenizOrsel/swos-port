@@ -41,6 +41,7 @@
 #include "replayExitMenu.h"
 #include "llmFeatures.h"
 #include "matchTelemetry.h"
+#include "sponsorChallenge.h"
 #include "supporterStream.h"
 #include "util.h"
 #include "FixedPoint.h"
@@ -146,8 +147,10 @@ void gameLoop(TeamGame *topTeam, TeamGame *bottomTeam)
     if (!swos.gameCanceled) {
         HotseatCareerManager::get().onMatchCompleted();
         markMatchHandledInGameLoop();
+        onMatchFinishedSponsorChallenge();
         finalizeMatchTelemetry();
         beginPostMatchNewspaperRequest();
+        showPostMatchSponsorPayoutIfNeeded();
         showPostMatchNewspaperIfReady();
         onCareerMatchCompletedLlm(swos.statsTeam1Goals, swos.statsTeam2Goals);
     }
@@ -159,10 +162,14 @@ void showStadiumScreenAndFadeOutMusic(TeamGame *topTeam, TeamGame *bottomTeam, i
         showStadiumMenu(topTeam, bottomTeam, maxSubstitutes, [&]() {
             initMatch(topTeam, bottomTeam, true);
             beginPreMatchScoutingRequest(topTeam, bottomTeam);
+            beginSponsorChallengeGeneration(topTeam, bottomTeam);
         });
         showPreMatchScoutingIfReady();
+        showPreMatchSponsorChallengeMenuIfReady();
     } else {
         initMatch(topTeam, bottomTeam, true);
+        beginSponsorChallengeGeneration(topTeam, bottomTeam);
+        showPreMatchSponsorChallengeMenuIfReady();
     }
 
     waitForMusicToFadeOut();

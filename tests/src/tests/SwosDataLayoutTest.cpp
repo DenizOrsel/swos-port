@@ -7,6 +7,7 @@
 #include "llmFeatures.h"
 #include "llmReportMenu.h"
 #include "matchTelemetry.h"
+#include "sponsorChallenge.h"
 #include "supporterStream.h"
 
 static SwosDataLayoutTest t;
@@ -330,6 +331,100 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
         std::remove(tmpIni);
         pushPunditMessageToStream("Pundit: What a fingertip save by the keeper!");
         resetSupporterStream();
+    }
+
+    // 7. Sponsor Challenge deterministic evaluator, reward clamping, parser, and sidecar persistence
+    {
+        assertEqual(clampSponsorRewardForDivision(999999, 0), 50000);
+        assertEqual(clampSponsorRewardForDivision(1000, 0), 15000);
+        assertEqual(clampSponsorRewardForDivision(999999, 2), 18000);
+        assertEqual(clampSponsorRewardForDivision(1000, 2), 5000);
+
+        SponsorMatchResult res;
+        res.clubGoals = 3;
+        res.opponentGoals = 0;
+        res.clubHtGoals = 2;
+        res.opponentHtGoals = 0;
+        res.clubPossessionPct = 62;
+        res.clubShotsOnTarget = 9;
+        res.scorerEntries = { { 9, "MARSCHALL" }, { 9, "MARSCHALL" }, { 10, "KUKA" } };
+
+        SponsorChallenge c;
+        c.isActive = true;
+
+        c.type = SponsorChallengeType::kCleanSheetWin;
+        c.thresholdValue = 0;
+        assertTrue(evaluateSponsorChallenge(c, res));
+        res.opponentGoals = 1;
+        assertFalse(evaluateSponsorChallenge(c, res));
+        res.opponentGoals = 0;
+
+        c.type = SponsorChallengeType::kPlayerGoals;
+        c.targetShirtNumber = 9;
+        c.targetPlayerName = "MARSCHALL";
+        c.thresholdValue = 2;
+        assertTrue(evaluateSponsorChallenge(c, res));
+        c.thresholdValue = 3;
+        assertFalse(evaluateSponsorChallenge(c, res));
+
+        c.type = SponsorChallengeType::kFirstHalfGoals;
+        c.thresholdValue = 2;
+        assertTrue(evaluateSponsorChallenge(c, res));
+        c.thresholdValue = 3;
+        assertFalse(evaluateSponsorChallenge(c, res));
+
+        c.type = SponsorChallengeType::kPossessionWin;
+        c.thresholdValue = 60;
+        assertTrue(evaluateSponsorChallenge(c, res));
+        c.thresholdValue = 65;
+        assertFalse(evaluateSponsorChallenge(c, res));
+
+        c.type = SponsorChallengeType::kShotsOnTarget;
+        c.thresholdValue = 9;
+        assertTrue(evaluateSponsorChallenge(c, res));
+        c.thresholdValue = 10;
+        assertFalse(evaluateSponsorChallenge(c, res));
+
+        c.type = SponsorChallengeType::kWinByMargin;
+        c.thresholdValue = 3;
+        assertTrue(evaluateSponsorChallenge(c, res));
+        res.opponentGoals = 1;
+        assertFalse(evaluateSponsorChallenge(c, res));
+
+        std::vector<SponsorStarterInfo> starters = {
+            { 9, "MARSCHALL", true, false, 12 },
+            { 10, "KUKA", true, false, 7 },
+            { 8, "WAGNER", false, true, 3 },
+        };
+        auto offline = generateOfflineSponsorChallenges("KAISERSLAUTERN", "ARSENAL", 0, starters, 42);
+        assertEqual(offline.size(), size_t{ 3 });
+        assertTrue(offline[0].type != offline[1].type && offline[1].type != offline[2].type && offline[0].type != offline[2].type);
+
+        auto parsed = parseLlmSponsorChallenges(
+            "CHALLENGE_CLEAN_SHEET_WIN|IRON WALL|Win without conceding.|NONE|0|90000\n"
+            "CHALLENGE_PLAYER_GOALS|HOT STREAK|Marschall nets twice!|MARSCHALL|2|25000\n"
+            "CHALLENGE_POSSESSION_WIN|BOSS THE BALL|Win with 61% ball.|NONE|61|32000",
+            "KAISERSLAUTERN", "ARSENAL", 0, starters, 7);
+        assertEqual(parsed.size(), size_t{ 3 });
+        assertEqual(parsed[0].rewardAmount, 50000); // clamped to top-flight max
+        assertEqual(parsed[1].targetPlayerName, std::string("MARSCHALL"));
+        assertEqual(parsed[1].targetShirtNumber, int16_t{ 9 });
+        assertEqual(parsed[2].thresholdValue, int16_t{ 61 });
+
+        resetSponsorChallengeState();
+        setSponsorCareerTotals(4, 2, 115000);
+        const char *tmpSch = "tmp_test_sponsor.sch";
+        assertTrue(saveSponsorChallengeSidecar(tmpSch));
+        resetSponsorChallengeState();
+        assertTrue(loadSponsorChallengeSidecar(tmpSch));
+        uint16_t comp = 0, fail = 0;
+        int64_t bonus = 0;
+        getSponsorCareerTotals(comp, fail, bonus);
+        assertEqual(comp, uint16_t{ 4 });
+        assertEqual(fail, uint16_t{ 2 });
+        assertEqual(bonus, int64_t{ 115000 });
+        std::remove(tmpSch);
+        resetSponsorChallengeState();
     }
 
     setLlmTransportForTest(nullptr);

@@ -3,6 +3,7 @@
 #include "llmClient.h"
 #include "matchTelemetry.h"
 #include "render.h"
+#include "sponsorChallenge.h"
 #include "stats.h"
 #include "swos.h"
 
@@ -738,9 +739,8 @@ void drawSupporterStreamOverlay()
 
     const auto& cfg = getLlmConfig();
     bool anyStreamFeature = (cfg.features.supporterStream && cfg.telemetry.enabled) || cfg.features.livePunditTicker;
-    if (!cfg.enabled || !anyStreamFeature)
-        return;
-    if (s_visibleTweets.empty())
+    bool showSponsorHud = hasActiveSponsorChallenge();
+    if (!showSponsorHud && (!cfg.enabled || !anyStreamFeature || s_visibleTweets.empty()))
         return;
 
     SDL_Renderer *renderer = getRenderer();
@@ -772,6 +772,44 @@ void drawSupporterStreamOverlay()
     constexpr int kTextMaxUnits = kPanelUnitsW - kTextStartUnits - kPadX;
     constexpr int kLineStepUnits = 10;
     constexpr int kTweetGapUnits = 4;
+
+    float panelW = kPanelUnitsW * px;
+    float margin = 6.0f * px;
+    float panelX = static_cast<float>(vp.w) - panelW - margin;
+    float panelY = margin;
+
+    float origScaleX = 1.0f, origScaleY = 1.0f;
+    SDL_RenderGetScale(renderer, &origScaleX, &origScaleY);
+    SDL_RenderSetScale(renderer, 1.0f, 1.0f);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+    // Optional compact 1-line active Sponsor Challenge status pill tucked cleanly at top-right
+    if (showSponsorHud) {
+        int statusMode = 0;
+        std::string hudLine = formatActiveSponsorChallengeHudLine(statusMode);
+        if (!hudLine.empty()) {
+            float pillH = 13.0f * px;
+            SDL_SetRenderDrawColor(renderer, 14, 18, 16, 168);
+            SDL_FRect pillRect{ panelX, panelY, panelW, pillH };
+            SDL_RenderFillRectF(renderer, &pillRect);
+
+            SDL_Color accent = (statusMode == 1) ? SDL_Color{ 92, 232, 128, 255 } :
+                               (statusMode == 2) ? SDL_Color{ 240, 92, 92, 255 } :
+                                                   SDL_Color{ 255, 214, 74, 255 };
+            SDL_SetRenderDrawColor(renderer, accent.r, accent.g, accent.b, 170);
+            SDL_RenderDrawRectF(renderer, &pillRect);
+            drawMiniText(renderer, atlas, panelX + 4.0f * px, panelY + 3.0f * px, px,
+                hudLine, accent, 255, true);
+
+            panelY += pillH + 3.0f * px;
+        }
+    }
+
+    if (!cfg.enabled || !anyStreamFeature || s_visibleTweets.empty()) {
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+        SDL_RenderSetScale(renderer, origScaleX, origScaleY);
+        return;
+    }
 
     int maxPanelUnitsH = static_cast<int>((static_cast<float>(vp.h) * 0.46f) / px);
     int maxBodyBottom = maxPanelUnitsH - 4;
@@ -808,20 +846,14 @@ void drawSupporterStreamOverlay()
         curY += blockH;
     }
 
-    if (layout.empty())
+    if (layout.empty()) {
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+        SDL_RenderSetScale(renderer, origScaleX, origScaleY);
         return;
+    }
 
     int panelUnitsH = curY + 2;
-    float panelW = kPanelUnitsW * px;
     float panelH = panelUnitsH * px;
-    float margin = 6.0f * px;
-    float panelX = static_cast<float>(vp.w) - panelW - margin;
-    float panelY = margin;
-
-    float origScaleX = 1.0f, origScaleY = 1.0f;
-    SDL_RenderGetScale(renderer, &origScaleX, &origScaleY);
-    SDL_RenderSetScale(renderer, 1.0f, 1.0f);
-    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
     // 1. Sleek semi-transparent dark glass card (leaves pitch clearly visible behind/around it)
     SDL_SetRenderDrawColor(renderer, 14, 18, 16, 152);
