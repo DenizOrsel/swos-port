@@ -1,4 +1,5 @@
 #include "llmFeatures.h"
+#include "compactFont.h"
 #include "llmClient.h"
 #include "llmReportMenu.h"
 #include "matchTelemetry.h"
@@ -266,9 +267,26 @@ bool waitForLlmWithIndicator(uint64_t requestId, int maxWaitMs, const char *stat
         std::string dots(static_cast<size_t>(dotsCount), '.');
         std::string line1 = std::string("[") + kSpinnerChars[spinIdx] + "] " + statusLabel + dots;
 
-        drawTextCentered(kVgaWidth / 2, 84, line1.c_str(), 248, kWhiteText2, false);
-        drawTextCentered(kVgaWidth / 2, 97, "AI THINKING (WARMUP MAY TAKE A MOMENT)", 248, kWhiteText2, false);
-        drawTextCentered(kVgaWidth / 2, 110, "PRESS ESC TO SKIP", 248, kWhiteText, false);
+        SDL_Renderer *r = getRenderer();
+        SDL_Texture *atlas = getCompactFontAtlas(r);
+        if (r && atlas) {
+            float gameScale = getGameScale();
+            float px = computeCompactPixelScaleForVga(gameScale, 0.48f);
+            float centerX = getGameScreenOffsetX() + (static_cast<float>(kVgaWidth) * 0.5f) * gameScale;
+            float baseY = getGameScreenOffsetY() + 76.0f * gameScale;
+            float origSX = 1.0f, origSY = 1.0f;
+            SDL_RenderGetScale(r, &origSX, &origSY);
+            SDL_RenderSetScale(r, 1.0f, 1.0f);
+
+            drawCompactTextCentered(r, atlas, centerX, baseY + 10.0f * gameScale, px,
+                line1, { 255, 226, 78, 255 }, 255, true);
+            drawCompactTextCentered(r, atlas, centerX, baseY + 22.0f * gameScale, px,
+                "AI thinking (warmup may take a moment)", { 244, 246, 248, 255 }, 245, false);
+            drawCompactTextCentered(r, atlas, centerX, baseY + 34.0f * gameScale, px,
+                "Press ESC to skip", { 176, 210, 238, 255 }, 230, false);
+
+            SDL_RenderSetScale(r, origSX, origSY);
+        }
 
         updateScreen(false);
         SDL_Delay(33);

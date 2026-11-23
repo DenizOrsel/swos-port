@@ -1,7 +1,9 @@
 #include "sponsorChallenge.h"
+#include "compactFont.h"
 #include "controls.h"
 #include "darkRectangle.h"
 #include "drawMenu.h"
+#include "gameFieldMapping.h"
 #include "hotseatCareer.h"
 #include "hotseat/hotseatInternal.h"
 #include "llmClient.h"
@@ -449,32 +451,63 @@ static void drawSponsorChallengeMenu()
         }
     }
 
-    // Bank & stake/jackpot strip (y=16..34)
+    // Bank & stake/jackpot strip (y=16..35)
     drawDarkRectangle({ 16.0f, 16.0f, 288.0f, 19.0f }, true);
-    if (selectedCount == kOfferedChallengeCount) {
-        int32_t jackpot = totalStake / 2;
-        std::string jp = "ALL 3! +" + formatSponsorPounds(jackpot) + " SWEEP BONUS!";
-        drawText(22, 18, jp.c_str(), 178, kYellowText, false);
-    } else {
-        std::string oppLine = "VS " + toUpperAscii(s_matchOpponentName) + " (FAIL = PENALTY!)";
-        drawText(22, 18, oppLine.c_str(), 182, kWhiteText2, false);
-    }
-    std::string bankStr = "BANK: " + formatSponsorPounds(readCurrentClubBalance());
-    drawTextRightAligned(298, 18, bankStr.c_str(), 116, kYellowText, false);
-    drawText(22, 27, "CLICK TO TOGGLE 1-3. ALL 3 WON = +50% EXTRA BONUS!", 276, kWhiteText, false);
 
     // Description panels directly under each of the 3 clickable challenge buttons
     static constexpr int kCardYs[3] = { 54, 100, 146 };
     for (int i = 0; i < 3; ++i) {
-        int y = kCardYs[i];
-        drawDarkRectangle({ 16.0f, static_cast<float>(y), 288.0f, 25.0f }, false);
-        auto lines = wrapLlmReportLines(s_state.offered[i].description, 274);
-        int lineY = y + 4;
-        for (size_t li = 0; li < lines.size() && li < 2; ++li) {
-            int color = s_state.selectedOffer[i] ? kYellowText : kWhiteText2;
-            drawText(22, lineY, lines[li].c_str(), 274, color, false);
-            lineY += 9;
+        drawDarkRectangle({ 16.0f, static_cast<float>(kCardYs[i]), 288.0f, 25.0f }, false);
+    }
+
+    SDL_Renderer *r = getRenderer();
+    SDL_Texture *atlas = getCompactFontAtlas(r);
+    if (r && atlas) {
+        float gameScale = getGameScale();
+        float px = computeCompactPixelScaleForVga(gameScale, 0.44f);
+        float offX = getGameScreenOffsetX();
+        float offY = getGameScreenOffsetY();
+
+        float origSX = 1.0f, origSY = 1.0f;
+        SDL_RenderGetScale(r, &origSX, &origSY);
+        SDL_RenderSetScale(r, 1.0f, 1.0f);
+
+        SDL_Color whiteCol{ 244, 246, 248, 255 };
+        SDL_Color yellowCol{ 255, 226, 78, 255 };
+        SDL_Color greenCol{ 96, 236, 134, 255 };
+        SDL_Color hintCol{ 176, 212, 236, 255 };
+
+        if (selectedCount == kOfferedChallengeCount) {
+            int32_t jackpot = totalStake / 2;
+            std::string jp = "All 3 selected! +" + formatSponsorPounds(jackpot) + " Clean Sweep Bonus!";
+            drawCompactText(r, atlas, offX + 22.0f * gameScale, offY + 18.0f * gameScale, px,
+                jp, greenCol, 255, true);
+        } else {
+            std::string oppLine = "vs " + s_matchOpponentName + " (failing deducts stake!)";
+            drawCompactText(r, atlas, offX + 22.0f * gameScale, offY + 18.0f * gameScale, px,
+                oppLine, whiteCol, 255, true);
         }
+
+        std::string bankStr = "Bank: " + formatSponsorPounds(readCurrentClubBalance());
+        drawCompactTextRightAligned(r, atlas, offX + 298.0f * gameScale, offY + 18.0f * gameScale, px,
+            bankStr, yellowCol, 255, true);
+
+        drawCompactText(r, atlas, offX + 22.0f * gameScale, offY + 27.0f * gameScale, px,
+            "Click or press 1-3 to toggle. Complete all 3 for +50% extra jackpot!", hintCol, 240, false);
+
+        int maxDescUnits = std::max(80, static_cast<int>((276.0f * gameScale) / px));
+        for (int i = 0; i < 3; ++i) {
+            auto lines = wrapCompactTextUnits(s_state.offered[i].description, maxDescUnits);
+            float lineY = offY + static_cast<float>(kCardYs[i] + 4) * gameScale;
+            SDL_Color col = s_state.selectedOffer[i] ? yellowCol : whiteCol;
+            for (size_t li = 0; li < lines.size() && li < 2; ++li) {
+                drawCompactText(r, atlas, offX + 22.0f * gameScale, lineY, px,
+                    lines[li], col, 255, s_state.selectedOffer[i]);
+                lineY += 10.0f * px;
+            }
+        }
+
+        SDL_RenderSetScale(r, origSX, origSY);
     }
 
     // Edge-triggered keyboard shortcuts: 1/2/3 toggle challenges, 0 declines all

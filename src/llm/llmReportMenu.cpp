@@ -1,5 +1,7 @@
 #include "llmReportMenu.h"
+#include "compactFont.h"
 #include "darkRectangle.h"
+#include "gameFieldMapping.h"
 #include "menus.h"
 #include "render.h"
 #include "text.h"
@@ -20,13 +22,15 @@ constexpr int kPanelW = 304;
 constexpr int kPanelH = 156;
 constexpr int kTextPaddingX = 10;
 constexpr int kTextMaxPixelWidth = kPanelW - 2 * kTextPaddingX;
-constexpr int kLinesPerPage = 13;
-constexpr int kLineSpacingY = 10;
+constexpr int kCompactLineStepUnits = 11;
 
 std::string s_header;
+std::string s_rawBody;
 std::vector<std::string> s_lines;
 int s_currentPage = 0;
 int s_totalPages = 1;
+int s_linesPerPage = 16;
+int s_lastWrapUnits = 0;
 
 std::string sanitizeReportLine(const std::string& in)
 {
@@ -180,21 +184,43 @@ std::vector<std::string> wrapLlmReportLines(const std::string& rawText, int maxP
     return out;
 }
 
+void reflowCompactReportLayout(float gameScale)
+{
+    float px = computeCompactPixelScaleForVga(gameScale, 0.48f);
+    float innerW = (static_cast<float>(kPanelW) - 16.0f) * gameScale;
+    float innerH = (static_cast<float>(kPanelH) - 18.0f) * gameScale;
+    int maxUnits = std::max(80, static_cast<int>(innerW / px));
+    int linesPerPage = std::max(6, static_cast<int>(innerH / (static_cast<float>(kCompactLineStepUnits) * px)));
+
+    if (maxUnits != s_lastWrapUnits || linesPerPage != s_linesPerPage || s_lines.empty()) {
+        s_lastWrapUnits = maxUnits;
+        s_linesPerPage = linesPerPage;
+        s_lines = wrapCompactTextUnits(s_rawBody, maxUnits);
+        s_totalPages = std::max(1, static_cast<int>((s_lines.size() + static_cast<size_t>(s_linesPerPage) - 1) / static_cast<size_t>(s_linesPerPage)));
+        s_currentPage = std::clamp(s_currentPage, 0, s_totalPages - 1);
+        refreshPageButtons();
+    }
+}
+
 void showLlmReportDialog(const char *header, const std::string& body)
 {
     s_header = header ? sanitizeReportLine(header) : "REPORT";
-    s_lines = wrapLlmReportLines(body, kTextMaxPixelWidth);
+    s_rawBody = body;
+    s_lastWrapUnits = 0;
+    s_currentPage = 0;
+    s_lines = wrapCompactTextUnits(s_rawBody, 420);
     if (s_lines.empty())
         return;
 
-    s_currentPage = 0;
-    s_totalPages = std::max(1, static_cast<int>((s_lines.size() + kLinesPerPage - 1) / kLinesPerPage));
+    s_linesPerPage = 18;
+    s_totalPages = std::max(1, static_cast<int>((s_lines.size() + static_cast<size_t>(s_linesPerPage) - 1) / static_cast<size_t>(s_linesPerPage)));
     showMenu(llmReportMenu);
 }
 
 static void initLlmReportMenu()
 {
     headerEntry.copyString(s_header.c_str());
+    s_lastWrapUnits = 0;
     refreshPageButtons();
     setCurrentEntry(continueBtn);
 }
@@ -205,25 +231,70 @@ static void drawLlmReportMenu()
     drawDarkRectangle({ static_cast<float>(kPanelX), static_cast<float>(kPanelY),
                         static_cast<float>(kPanelW), static_cast<float>(kPanelH) }, true);
 
-    int startIdx = s_currentPage * kLinesPerPage;
-    int endIdx = std::min(static_cast<int>(s_lines.size()), startIdx + kLinesPerPage);
+    SDL_Renderer *renderer = getRenderer();
+    SDL_Texture *atlas = getCompactFontAtlas(renderer);
+    if (!renderer || !atlas)
+        return;
 
-    int textY = kPanelY + 8;
+    float gameScale = getGameScale();
+    reflowCompactReportLayout(gameScale);
+
+    float px = computeCompactPixelScaleForVga(gameScale, 0.48f);
+    float panelScreenX = getGameScreenOffsetX() + static_cast<float>(kPanelX) * gameScale;
+    float panelScreenY = getGameScreenOffsetY() + static_cast<float>(kPanelY) * gameScale;
+    float panelScreenW = static_cast<float>(kPanelW) * gameScale;
+    float panelScreenH = static_cast<float>(kPanelH) * gameScale;
+
+    float origScaleX = 1.0f, origScaleY = 1.0f;
+    SDL_RenderGetScale(renderer, &origScaleX, &origScaleY);
+    SDL_RenderSetScale(renderer, 1.0f, 1.0f);
+
+    int startIdx = s_currentPage * s_linesPerPage;
+    int endIdx = std::min(static_cast<int>(s_lines.size()), startIdx + s_linesPerPage);
+
+    float textX = panelScreenX + 8.0f * gameScale;
+    float textY = panelScreenY + 7.0f * gameScale;
+    float lineStepPx = static_cast<float>(kCompactLineStepUnits) * px;
+
+    SDL_Color whiteCol{ 244, 246, 248, 255 };
+    SDL_Color yellowCol{ 255, 226, 78, 255 };
+    SDL_Color greenCol{ 96, 236, 134, 255 };
+    SDL_Color redCol{ 248, 108, 108, 255 };
+    SDL_Color mentionCol{ 118, 244, 232, 255 };
+
     for (int i = startIdx; i < endIdx; ++i) {
         const auto& line = s_lines[i];
         if (!line.empty()) {
-            bool isHighlight = (i == 0) || (line.rfind("CHAIRMAN:", 0) == 0);
-            int color = isHighlight ? kYellowText : kWhiteText2;
-            drawText(kPanelX + kTextPaddingX, textY, line.c_str(), kTextMaxPixelWidth, color, false);
+            std::string upper;
+            upper.reserve(line.size());
+            for (char c : line)
+                upper.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+
+            bool isWon = (upper.rfind("[WON]", 0) == 0);
+            bool isFailed = (upper.rfind("[FAILED]", 0) == 0);
+            bool isHighlight = (i == 0) ||
+                               (upper.rfind("CHAIRMAN:", 0) == 0) ||
+                               (upper.rfind("ALL-IN", 0) == 0) ||
+                               (upper.rfind("NET MATCHDAY", 0) == 0) ||
+                               (upper.rfind("UPDATED BANK", 0) == 0) ||
+                               (upper.rfind("CAREER SPONSOR", 0) == 0) ||
+                               (upper.rfind("SPONSOR CHALLENGE", 0) == 0);
+
+            SDL_Color col = isWon ? greenCol : (isFailed ? redCol : (isHighlight ? yellowCol : whiteCol));
+            bool bold = isWon || isFailed || isHighlight;
+            drawCompactTextWithMentions(renderer, atlas, textX, textY, px, line, col, mentionCol, 255, bold);
         }
-        textY += kLineSpacingY;
+        textY += lineStepPx;
     }
 
     if (s_totalPages > 1) {
         char pageBuf[32];
-        std::snprintf(pageBuf, sizeof(pageBuf), "PAGE %d / %d", s_currentPage + 1, s_totalPages);
-        drawTextCentered(kPanelX + kPanelW / 2, kPanelY + kPanelH - 12, pageBuf, kTextMaxPixelWidth, kYellowText, false);
+        std::snprintf(pageBuf, sizeof(pageBuf), "Page %d / %d", s_currentPage + 1, s_totalPages);
+        drawCompactTextCentered(renderer, atlas, panelScreenX + panelScreenW * 0.5f,
+            panelScreenY + panelScreenH - 11.0f * px, px, pageBuf, yellowCol, 245, true);
     }
+
+    SDL_RenderSetScale(renderer, origScaleX, origScaleY);
 }
 
 static void llmReportPrevPage()
