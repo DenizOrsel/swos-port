@@ -252,7 +252,7 @@ bool waitForPressLlmWithSpinner(uint64_t reqId, int maxWaitMs, const char *label
 #else
     static const char kSpin[4] = { '|', '/', '-', '\\' };
     Uint32 start = SDL_GetTicks();
-    Uint32 deadline = start + static_cast<Uint32>(std::clamp(maxWaitMs, 250, 4000));
+    Uint32 deadline = start + static_cast<Uint32>(std::clamp(maxWaitMs, 250, 15000));
     int frame = 0;
 
     setStandardMenuBackgroundImage();
@@ -744,8 +744,6 @@ static void initPressConferenceMenu()
     MenuEntry *opts[4] = { &opt1Entry, &opt2Entry, &opt3Entry, &opt4Entry };
     for (int i = 0; i < 4; ++i) {
         opts[i]->show();
-        opts[i]->setBackgroundColor(kDarkBlue);
-        opts[i]->copyString("");
     }
 
     skipBtnEntry.show();
@@ -763,6 +761,11 @@ static void drawPressConferenceMenu()
 
     if (s_showingReaction) {
         drawDarkRectangle({ 16.0f, 72.0f, 288.0f, 104.0f }, true);
+    } else {
+        static constexpr float kCardYs[4] = { 72.0f, 99.0f, 126.0f, 153.0f };
+        for (int i = 0; i < 4; ++i) {
+            drawDarkRectangle({ 16.0f, kCardYs[i], 288.0f, 24.0f }, true);
+        }
     }
 
     SDL_Renderer *r = getRenderer();
@@ -820,15 +823,24 @@ static void drawPressConferenceMenu()
         }
 
         if (!s_showingReaction) {
-            // Render the 4 option texts directly over the 4 native clickable option buttons (y=72, 99, 126, 153)
+            // Render the 4 option texts directly inside the 4 dark glass cards (transparent clickable hitboxes in pressConference.mnu)
             static constexpr float kOptYs[4] = { 72.0f, 99.0f, 126.0f, 153.0f };
-            int optMaxUnits = std::max(80, static_cast<int>((274.0f * gameScale) / px));
+            int optMaxUnits = std::max(80, static_cast<int>((270.0f * gameScale) / px));
             for (int i = 0; i < 4; ++i) {
                 const auto& opt = s_activePrompt.options[i];
-                std::string prefix = "[" + std::to_string(i + 1) + "] [" + getManagerialStanceName(opt.stance) + "] ";
                 SDL_Color badgeCol = stanceBadgeColor(opt.stance);
-                float bx = offX + 22.0f * gameScale;
-                float by = offY + (kOptYs[i] + 3.0f) * gameScale;
+
+                // Left stance accent stripe on each option card
+                SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+                SDL_FRect accent{ offX + 16.5f * gameScale, offY + (kOptYs[i] + 1.0f) * gameScale,
+                                  2.5f * gameScale, 22.0f * gameScale };
+                SDL_SetRenderDrawColor(r, badgeCol.r, badgeCol.g, badgeCol.b, 220);
+                SDL_RenderFillRectF(r, &accent);
+                SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+
+                std::string prefix = "[" + std::to_string(i + 1) + "] [" + getManagerialStanceName(opt.stance) + "] ";
+                float bx = offX + 23.0f * gameScale;
+                float by = offY + (kOptYs[i] + 3.5f) * gameScale;
 
                 // Wrap full text with prefix on line 1, or badge + wrapped quote cleanly
                 float afterBadgeX = drawCompactText(r, atlas, bx, by, px, prefix, badgeCol, 255, true);
@@ -1245,7 +1257,7 @@ void showPreMatchPressConferenceIfReady()
 
     if (s_pendingPreRequestId != 0) {
         std::string reply;
-        if (waitForPressLlmWithSpinner(s_pendingPreRequestId, std::min(cfg.timeoutMs, 2500), "INCOMING PRESS QUESTION", reply)) {
+        if (waitForPressLlmWithSpinner(s_pendingPreRequestId, cfg.timeoutMs, "INCOMING PRESS QUESTION", reply)) {
             s_activePrompt = parseLlmPressPrompt(reply, s_lastPreContext, s_pressSeed);
         }
         s_pendingPreRequestId = 0;
@@ -1351,7 +1363,7 @@ void showPostMatchPressConferenceIfReady()
 
     if (s_pendingPostRequestId != 0) {
         std::string reply;
-        if (waitForPressLlmWithSpinner(s_pendingPostRequestId, std::min(cfg.timeoutMs, 2500), "POST-MATCH PRESS ROOM", reply)) {
+        if (waitForPressLlmWithSpinner(s_pendingPostRequestId, cfg.timeoutMs, "POST-MATCH PRESS ROOM", reply)) {
             s_activePrompt = parseLlmPressPrompt(reply, s_lastPreContext, s_pressSeed);
         }
         s_pendingPostRequestId = 0;

@@ -26,8 +26,6 @@ Menu pressConferenceMenu
         width: 288
         height: 24
 
-        color: @kDarkBlue
-        text: @kAlloc
         downEntry: opt2
         onSelect: selectPressOption1
     }
@@ -38,8 +36,6 @@ Menu pressConferenceMenu
         width: 288
         height: 24
 
-        color: @kDarkBlue
-        text: @kAlloc
         upEntry: opt1
         downEntry: opt3
         onSelect: selectPressOption2
@@ -51,8 +47,6 @@ Menu pressConferenceMenu
         width: 288
         height: 24
 
-        color: @kDarkBlue
-        text: @kAlloc
         upEntry: opt2
         downEntry: opt4
         onSelect: selectPressOption3
@@ -64,8 +58,6 @@ Menu pressConferenceMenu
         width: 288
         height: 24
 
-        color: @kDarkBlue
-        text: @kAlloc
         upEntry: opt3
         downEntry: skipBtn
         onSelect: selectPressOption4
