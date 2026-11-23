@@ -365,6 +365,10 @@ static uint16_t getCleanPitchPatternIndex(int pitchNumber, int row, int col)
 // Renders pitch at cameraX and cameraY.
 std::pair<float, float> drawPitch(FixedPoint cameraX, FixedPoint cameraY)
 {
+    // Self-heal if logical screen dimensions were not yet populated (e.g. fullscreen + maximized startup)
+    if (getFieldWidth() <= 0.f || getFieldHeight() <= 0.f)
+        updateLogicalScreenSize();
+
     // clip zoom first since the screen dimensions might have changed
     clipZoom();
 
@@ -372,6 +376,8 @@ std::pair<float, float> drawPitch(FixedPoint cameraX, FixedPoint cameraY)
 
     auto width = getFieldWidth();
     auto height = getFieldHeight();
+    if (width <= 0.f || height <= 0.f || !std::isfinite(m_zoom) || m_zoom <= 0.f)
+        return { 0.f, 0.f };
 
     auto scale = getGameScale();
 
@@ -394,20 +400,23 @@ std::pair<float, float> drawPitch(FixedPoint cameraX, FixedPoint cameraY)
 
     int xInt = static_cast<int>(x);
     auto xDiv = std::div(xInt, kSwosPatternSize);
-    int column = xDiv.quot;
+    int column = std::clamp(xDiv.quot, 0, kPitchPatternWidth - 1);
     auto xOfs = (x - xInt + xDiv.rem) * scale * m_zoom;
 
     int yInt = static_cast<int>(y);
     auto yDiv = std::div(yInt, kSwosPatternSize);
     // make sure to skip the top invisible row
     int row = yDiv.quot - 1;
-    row = std::max(0, row);
+    row = std::clamp(row, 0, kPitchPatternHeight - 1);
     auto yOfs = (y - yInt + yDiv.rem) * scale * m_zoom;
+
+    int clampedPatternsX = std::clamp(static_cast<int>(numPatternsX), 1, kPitchPatternWidth - column);
+    int clampedPatternsY = std::clamp(static_cast<int>(numPatternsY), 1, kPitchPatternHeight - row);
 
     assert(row >= 0 && column >= 0);
 
 #ifndef SWOS_TEST
-    drawPitch(xOfs, yOfs, row, column, static_cast<int>(numPatternsX), static_cast<int>(numPatternsY));
+    drawPitch(xOfs, yOfs, row, column, clampedPatternsX, clampedPatternsY);
 #endif
 
     // unfortunately, this has to stay until UpdateCameraBreakMode() is converted
@@ -770,9 +779,16 @@ static float getMinimumZoom(float scale /* = getGameScale() */)
     auto fieldWidth = getFieldWidth();
     auto fieldHeight = getFieldHeight();
 
+    if (fieldWidth <= 0.f || fieldHeight <= 0.f) {
+        updateLogicalScreenSize();
+        fieldWidth = getFieldWidth();
+        fieldHeight = getFieldHeight();
+    }
+
     assert(fieldWidth <= kPitchWidth && fieldHeight <= kPitchHeight);
 
-    return std::max(fieldWidth / kPitchWidth, fieldHeight / kPitchHeight);
+    float computed = std::max(fieldWidth / kPitchWidth, fieldHeight / kPitchHeight);
+    return std::max(0.25f, computed);
 }
 
 static float getDefaultZoom(float scale)
@@ -786,12 +802,16 @@ static float getDefaultZoom(float scale)
 
 static float getZoomIncrement()
 {
-    auto zoomRange = kMaxZoom - getMinimumZoom();
-    return (m_zoom - getMinimumZoom()) / zoomRange * kMaxZoomVelocityFactor + kZoomIncrement;
+    auto minZoom = getMinimumZoom();
+    auto zoomRange = std::max(0.01f, kMaxZoom - minZoom);
+    return (m_zoom - minZoom) / zoomRange * kMaxZoomVelocityFactor + kZoomIncrement;
 }
 
 static void clipZoom()
 {
-    m_zoom = std::max(m_zoom, getMinimumZoom());
+    auto minZoom = getMinimumZoom();
+    if (!std::isfinite(m_zoom) || m_zoom <= 0.f)
+        m_zoom = minZoom;
+    m_zoom = std::max(m_zoom, minZoom);
     m_zoom = std::min(m_zoom, kMaxZoom);
 }

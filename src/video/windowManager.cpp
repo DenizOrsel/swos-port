@@ -77,10 +77,9 @@ void destroyWindow()
 
 void initWindow()
 {
-    if (m_maximized)
+    if (m_windowMode == kModeWindow && m_maximized)
         SDL_MaximizeWindow(m_window);
-    else
-        updateLogicalScreenSize();
+    updateLogicalScreenSize();
 }
 
 void deinitWindow()
