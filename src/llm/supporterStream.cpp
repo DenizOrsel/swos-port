@@ -298,8 +298,8 @@ std::vector<SupporterTweet> parseSupporterTweetBatch(const std::string& rawRespo
             handle.resize(14);
         if (handle.empty() || msg.empty())
             continue;
-        if (msg.size() > 136)
-            msg.resize(136);
+        if (msg.size() > 220)
+            msg.resize(220);
 
         SupporterTweet tw;
         tw.handle = std::move(handle);
@@ -350,8 +350,8 @@ void pushPunditMessageToStream(const std::string& rawMessage)
 
     if (msg.empty())
         return;
-    if (msg.size() > 185)
-        msg.resize(185);
+    if (msg.size() > 260)
+        msg.resize(260);
 
     SupporterTweet tw;
     tw.side = SupporterSide::kPundit;
@@ -563,7 +563,7 @@ void drawSupporterStreamOverlay()
         std::string handleLabel = isPundit ? std::string() : (tw.handle + ": ");
         int handleW = isPundit ? 0 : (measureMiniTextUnits(handleLabel) + 2);
         int firstLineAvail = std::max(0, kTextMaxUnits - handleW);
-        auto lines = wrapInlineMessage(tw.message, firstLineAvail, kTextMaxUnits, isPundit ? 5 : 4);
+        auto lines = wrapInlineMessage(tw.message, firstLineAvail, kTextMaxUnits, 7);
         int blockH = std::max(kAvatarSize + 1, static_cast<int>(lines.size()) * kLineStepUnits) + kTweetGapUnits;
 
         if (curY + blockH > maxBodyBottom)

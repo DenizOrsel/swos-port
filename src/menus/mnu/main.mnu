@@ -70,16 +70,22 @@ Menu mainMenu
         color: @kDarkBlue
 
         upEntry: replays
-        downEntry: career
+        downEntry: achievements
         rightEntry: season
 
         text: swos.aOptions
         onSelect: ~showOptionsMenu
     }
 
-    // invisible entry in place of "SAVE DISK FILING" to keep everything in place
-    Entry {
-        invisible: true
+    Entry achievements {
+        color: @kPurple
+
+        upEntry: options
+        downEntry: continueContest
+        rightEntry: career
+
+        text: "ACHIEVEMENTS"
+        onSelect: ~showAchievementsMenu
     }
 
     defaultX: kColumn2X
@@ -130,11 +136,12 @@ Menu mainMenu
     }
 
     Entry career {
-        x: 79
+        x: kColumn2X
         color: @kLightBrownWithOrangeFrame
 
         upEntry: season
         downEntry: continueContest
+        leftEntry: achievements
 
         text: swos.aCareer
         onSelect: ~startCareerMode

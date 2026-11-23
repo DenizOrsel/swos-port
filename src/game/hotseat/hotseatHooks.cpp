@@ -1,10 +1,14 @@
 #include "hotseatInternal.h"
 #include "llmFeatures.h"
 #include "pressCharisma.h"
+#include "achievements.h"
 
 namespace SWOS {
 
 namespace {
+
+int16_t s_prevNationalSelector = 0;
+int s_lastSeasonEndLeague = -1;
 
 void activateEuroCupForVmSelectedTeam()
 {
@@ -26,6 +30,8 @@ void InitCareerVariables_OnEnter()
 {
     resetCareerLlmSnapshots();
     resetPressCharismaState();
+    s_prevNationalSelector = 0;
+    s_lastSeasonEndLeague = -1;
     auto& mgr = HotseatCareerManager::get();
     if (!mgr.isInitializingSeason()) {
         mgr.reset();
@@ -36,6 +42,8 @@ void CareerInitVars_OnEnter()
 {
     resetCareerLlmSnapshots();
     resetPressCharismaState();
+    s_prevNationalSelector = 0;
+    s_lastSeasonEndLeague = -1;
     auto& mgr = HotseatCareerManager::get();
     if (mgr.isActive() && !mgr.isInitializingSeason()) {
         mgr.reset();
@@ -87,11 +95,41 @@ void cseg_94DB1_OnEnter()
     applyPendingMatchdayGateReceiptsCharismaBonus();
     checkCareerSquadTransfersLlm();
     onCareerWeeklyTickLlm();
+
+    if (swos.g_gameType == kGameTypeCareer) {
+        int16_t natSel = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kIsNationalSelector]);
+        if (natSel != 0 && s_prevNationalSelector == 0)
+            achievementsOnNationalTeamCallup();
+        s_prevNationalSelector = natSel;
+    }
 }
 
 void cseg_3C07C_OnEnter()
 {
     onEndOfSeasonPressCharismaBonus();
+    if (swos.g_gameType == kGameTypeCareer) {
+        uint16_t seasonIdx = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCurrentSeasonShowing]);
+        uint16_t oldLeague = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerTeamLeague]);
+        const auto *statsWords = reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kDsegD6C88]);
+        uint16_t played = statsWords[0];
+        uint16_t losses = statsWords[3];
+        uint16_t trophyMask = 0;
+        size_t maxEntries = kCareerHistoryBufferSize / kCareerHistoryEntrySize;
+        if (seasonIdx < maxEntries) {
+            const uint8_t *histBuf = &SwosVM::g_memByte[CareerOffsets::kCareerHistory];
+            trophyMask = *reinterpret_cast<const uint16_t *>(&histBuf[seasonIdx * kCareerHistoryEntrySize + 20]);
+        }
+
+        AchievementSeasonSummary season;
+        season.oldDivisionTier = static_cast<int>(oldLeague);
+        season.wonTopFlightLeague = (oldLeague == 0 && (trophyMask & (32u | 64u)) != 0);
+        season.wonEuropeanCup = ((trophyMask & (1u | 2u | 4u)) != 0);
+        season.wonDomesticCup = ((trophyMask & (8u | 16u | 128u | 256u)) != 0);
+        season.unbeatenLeagueSeason = (played >= 10 && losses == 0);
+        season.completedCareerSeasons = static_cast<int>(seasonIdx) + 1;
+        achievementsOnCareerSeasonEnd(season);
+        s_lastSeasonEndLeague = static_cast<int>(oldLeague);
+    }
     HotseatCareerManager::get().onSeasonFinishedForAllPlayers();
 }
 
@@ -101,6 +139,16 @@ void Hotseat_OnNewSeasonInitialized()
     auto& mgr = HotseatCareerManager::get();
     mgr.restoreCalendarEntryFirstSlots();
     mgr.onNewSeasonInitialized();
+
+    if (swos.g_gameType == kGameTypeCareer && s_lastSeasonEndLeague >= 0) {
+        uint16_t newLeague = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerTeamLeague]);
+        AchievementSeasonSummary promo;
+        promo.oldDivisionTier = s_lastSeasonEndLeague;
+        promo.newDivisionTier = static_cast<int>(newLeague);
+        promo.promoted = (s_lastSeasonEndLeague > 0 && static_cast<int>(newLeague) < s_lastSeasonEndLeague);
+        achievementsOnCareerSeasonEnd(promo);
+        s_lastSeasonEndLeague = -1;
+    }
 }
 
 void Hotseat_OnAfterProcessCareerFile()

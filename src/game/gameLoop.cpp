@@ -44,6 +44,7 @@
 #include "sponsorChallenge.h"
 #include "pressCharisma.h"
 #include "supporterStream.h"
+#include "achievements.h"
 #include "util.h"
 #include "FixedPoint.h"
 
@@ -150,6 +151,58 @@ void gameLoop(TeamGame *topTeam, TeamGame *bottomTeam)
         markMatchHandledInGameLoop();
         onMatchFinishedSponsorChallenge();
         finalizeMatchTelemetry();
+        if (!swos.g_trainingGame) {
+            MatchTelemetrySnapshot snap = captureMatchTelemetrySnapshot();
+            if (snap.team1Human || snap.team2Human) {
+                const auto stats = getStats();
+                auto [def1, def2] = getMatchMaxGoalDeficits();
+                auto [red1, red2] = getMatchEarlyRedCards();
+
+                bool pens = (swos.playingPenalties != 0) || (snap.penGoals1 != snap.penGoals2);
+                int finalG1 = snap.goals1;
+                int finalG2 = snap.goals2;
+                bool t1Won = pens ? (snap.penGoals1 > snap.penGoals2) : (finalG1 > finalG2);
+                bool t2Won = pens ? (snap.penGoals2 > snap.penGoals1) : (finalG2 > finalG1);
+
+                bool evalTeam1 = true;
+                if (snap.team1Human && snap.team2Human)
+                    evalTeam1 = !t2Won;
+                else
+                    evalTeam1 = snap.team1Human;
+
+                const TeamFile *tf1 = swos.gameTeam1.asAligned();
+                const TeamFile *tf2 = swos.gameTeam2.asAligned();
+                if (!tf1) tf1 = swos.playMatchTeam1Ptr.asAligned();
+                if (!tf2) tf2 = swos.playMatchTeam2Ptr.asAligned();
+                int div1 = (tf1 && tf1->league <= 3) ? static_cast<int>(tf1->league) : -1;
+                int div2 = (tf2 && tf2->league <= 3) ? static_cast<int>(tf2->league) : -1;
+
+                AchievementMatchSummary ms;
+                ms.humanParticipated = true;
+                ms.humanWon = evalTeam1 ? t1Won : t2Won;
+                ms.isFriendly = (swos.g_gameType == kGameTypeNoGame);
+                ms.isCareer = (swos.g_gameType == kGameTypeCareer);
+                ms.isCompetitive = !ms.isFriendly;
+                ms.isCupMatch = (swos.g_gameType == kGameTypePresetCompetition ||
+                                 swos.g_gameType == kGameTypeDiyCompetition ||
+                                 (ms.isCareer && div1 >= 0 && div2 >= 0 && div1 != div2));
+                ms.wonOnPenalties = ms.humanWon && pens;
+                ms.wonInExtraTime = ms.humanWon && !pens && (swos.halfNumber > 2 || snap.minute > 90);
+                ms.humanGoals = evalTeam1 ? finalG1 : finalG2;
+                ms.opponentGoals = evalTeam1 ? finalG2 : finalG1;
+                ms.humanHtGoals = evalTeam1 ? snap.htGoals1 : snap.htGoals2;
+                ms.opponentHtGoals = evalTeam1 ? snap.htGoals2 : snap.htGoals1;
+                ms.maxGoalDeficit = evalTeam1 ? def1 : def2;
+                ms.humanPossessionPct = evalTeam1 ? snap.possession1 : snap.possession2;
+                ms.humanShotsOnTarget = evalTeam1 ? snap.onTarget1 : snap.onTarget2;
+                ms.humanYellowCards = evalTeam1 ? stats.team1.bookings : stats.team2.bookings;
+                ms.humanRedCards = evalTeam1 ? stats.team1.sendingsOff : stats.team2.sendingsOff;
+                ms.hadRedCardBefore60 = evalTeam1 ? red1 : red2;
+                ms.humanDivisionTier = evalTeam1 ? div1 : div2;
+                ms.opponentDivisionTier = evalTeam1 ? div2 : div1;
+                achievementsOnMatchFinished(ms);
+            }
+        }
         beginPostMatchNewspaperRequest();
         beginPostMatchPressConference(swos.statsTeam1Goals, swos.statsTeam2Goals);
         showPostMatchSponsorPayoutIfNeeded();

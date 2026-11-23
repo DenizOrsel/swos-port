@@ -6,6 +6,7 @@
 #include "sponsorChallenge.h"
 #include "pressCharisma.h"
 #include "supporterStream.h"
+#include "achievements.h"
 #include "continueAbortMenu.h"
 #include "controls.h"
 #include "darkRectangle.h"
@@ -652,10 +653,6 @@ void onViewResultMatchCompletedLlm()
     if (swos.g_trainingGame)
         return;
 
-    const auto& cfg = getLlmConfig();
-    if (!cfg.enabled)
-        return;
-
     const auto *t1File = swos.playMatchTeam1Ptr.asAligned();
     const auto *t2File = swos.playMatchTeam2Ptr.asAligned();
     if (!t1File || !t2File)
@@ -667,6 +664,34 @@ void onViewResultMatchCompletedLlm()
     int g2 = static_cast<int>(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[379096]));
     bool topHuman = (t1File->teamControls == kPlayerCoach || t1File->teamControls == kCoach);
     bool botHuman = (t2File->teamControls == kPlayerCoach || t2File->teamControls == kCoach);
+
+    // Award Global Achievements for Career "View Result" fast-sim matches even when LLM is disabled
+    if (topHuman || botHuman) {
+        bool evalTeam1 = (topHuman && botHuman) ? !(g2 > g1) : topHuman;
+        int hGoals = evalTeam1 ? g1 : g2;
+        int oGoals = evalTeam1 ? g2 : g1;
+        int div1 = (t1File->league <= 3) ? static_cast<int>(t1File->league) : -1;
+        int div2 = (t2File->league <= 3) ? static_cast<int>(t2File->league) : -1;
+
+        AchievementMatchSummary ms;
+        ms.humanParticipated = true;
+        ms.humanWon = (hGoals > oGoals);
+        ms.isFriendly = (swos.g_gameType == kGameTypeNoGame);
+        ms.isCareer = (swos.g_gameType == kGameTypeCareer);
+        ms.isCompetitive = !ms.isFriendly;
+        ms.isCupMatch = (swos.g_gameType == kGameTypePresetCompetition ||
+                         swos.g_gameType == kGameTypeDiyCompetition ||
+                         (ms.isCareer && div1 >= 0 && div2 >= 0 && div1 != div2));
+        ms.humanGoals = hGoals;
+        ms.opponentGoals = oGoals;
+        ms.humanDivisionTier = evalTeam1 ? div1 : div2;
+        ms.opponentDivisionTier = evalTeam1 ? div2 : div1;
+        achievementsOnMatchFinished(ms);
+    }
+
+    const auto& cfg = getLlmConfig();
+    if (!cfg.enabled)
+        return;
 
     if (cfg.features.postMatchNewspaper) {
         std::string prompt = buildMatchPerspectiveContext(t1, t2, g1, g2, topHuman, botHuman);
@@ -709,9 +734,14 @@ void onViewResultMatchCompletedLlm()
     }
 }
 
+static std::unordered_map<int16_t, int32_t> s_prevTransferPurchases;
+static std::unordered_map<int16_t, int32_t> s_prevTransferSales;
+
 void resetCareerLlmSnapshots()
 {
     s_squadSnapshots.clear();
+    s_prevTransferPurchases.clear();
+    s_prevTransferSales.clear();
 }
 
 void checkCareerSquadTransfersLlm()
@@ -730,10 +760,6 @@ void checkCareerSquadTransfersLlm()
         ~Guard() { flag = false; }
     } guard(s_inTransferCheck);
 
-    const auto& cfg = getLlmConfig();
-    if (!cfg.enabled || !cfg.features.transferNegotiations)
-        return;
-
     uint16_t numPlayers = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]);
     if (numPlayers == 0 || numPlayers > kCurrentMatchPlayersSize)
         return;
@@ -741,6 +767,9 @@ void checkCareerSquadTransfersLlm()
     const auto *hdr = reinterpret_cast<const TeamFileHeader *>(&SwosVM::g_memByte[CareerOffsets::kCareerTeam]);
     int16_t teamId = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kSelTeamNumber]);
     std::string clubName = hdr->teamName[0] ? std::string(hdr->teamName) : std::string("THE CLUB");
+
+    int32_t curPurchases = *reinterpret_cast<const int32_t *>(&SwosVM::g_memByte[CareerOffsets::kPlayerPurchases]);
+    int32_t curSales = *reinterpret_cast<const int32_t *>(&SwosVM::g_memByte[CareerOffsets::kPlayerSales]);
 
     // SWOS keeps active career squad slot indices in currentMatchPlayers[0..careerNumPlayers-1].
     // Removed/exchanged slots stay in careerTeam overwritten with "*ERR* ", while newly signed players
@@ -775,8 +804,15 @@ void checkCareerSquadTransfersLlm()
     auto it = s_squadSnapshots.find(teamId);
     if (it == s_squadSnapshots.end()) {
         s_squadSnapshots[teamId] = std::move(currentSquad);
+        s_prevTransferPurchases[teamId] = curPurchases;
+        s_prevTransferSales[teamId] = curSales;
         return;
     }
+
+    int32_t prevPurchases = s_prevTransferPurchases[teamId];
+    int32_t prevSales = s_prevTransferSales[teamId];
+    s_prevTransferPurchases[teamId] = curPurchases;
+    s_prevTransferSales[teamId] = curSales;
 
     const auto& prevSquad = it->second;
     std::unordered_set<std::string> prevSet;
@@ -801,6 +837,24 @@ void checkCareerSquadTransfersLlm()
     if (added.empty() && removed.empty())
         return;
     if (added.size() > 2 || removed.size() > 2)
+        return;
+
+    // Fire Global Achievement transfer hooks (works even when LLM Transfer Desk is disabled)
+    if (!added.empty()) {
+        int32_t buyDelta = std::max<int32_t>(0, curPurchases - prevPurchases);
+        int32_t perBuy = buyDelta / static_cast<int32_t>(added.size());
+        for (const auto& p : added)
+            achievementsOnCareerTransfer(true, perBuy, p.name);
+    }
+    if (!removed.empty()) {
+        int32_t sellDelta = std::max<int32_t>(0, curSales - prevSales);
+        int32_t perSell = sellDelta / static_cast<int32_t>(removed.size());
+        for (const auto& p : removed)
+            achievementsOnCareerTransfer(false, perSell, p.name);
+    }
+
+    const auto& cfg = getLlmConfig();
+    if (!cfg.enabled || !cfg.features.transferNegotiations)
         return;
 
     auto formatPlayerList = [](const std::vector<SquadPlayerSnapshot>& list) {

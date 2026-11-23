@@ -9,6 +9,7 @@
 #include "crash.h"
 #include "joypads.h"
 #include "llmClient.h"
+#include "achievements.h"
 
 static void turnOnDebugHeap()
 {
@@ -45,6 +46,7 @@ int main(int argc, char **argv)
     installCrashHandler();
     loadOptions();
     initLlmClient();
+    initAchievements();
     parseCommandLine(argc, argv);   // parse command line options again to override ini settings
     setSdlHints();
 

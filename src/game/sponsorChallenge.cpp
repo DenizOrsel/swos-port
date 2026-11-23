@@ -1,4 +1,5 @@
 #include "sponsorChallenge.h"
+#include "achievements.h"
 #include "compactFont.h"
 #include "controls.h"
 #include "darkRectangle.h"
@@ -1071,6 +1072,8 @@ void onMatchFinishedSponsorChallenge()
     s_state.totalBonusEarned += eval.totalNetDelta;
     s_state.lastMatchNewBalance = readCurrentClubBalance();
     syncTotalsToHotseatIfActive();
+    if (eval.completedCount > 0)
+        achievementsOnSponsorChallengesCompleted(static_cast<uint32_t>(eval.completedCount));
 
     logInfo("Sponsor challenges resolved: %d won, %d failed, jackpot=%s, net=%s, new balance=%s",
         eval.completedCount, eval.failedCount,

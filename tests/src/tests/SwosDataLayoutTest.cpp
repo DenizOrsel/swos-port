@@ -10,6 +10,7 @@
 #include "sponsorChallenge.h"
 #include "pressCharisma.h"
 #include "supporterStream.h"
+#include "achievements.h"
 
 static SwosDataLayoutTest t;
 
@@ -590,6 +591,227 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
         assertEqual(quote, std::string("We will dominate!"));
         std::remove(tmpPrs);
         resetPressCharismaState();
+    }
+
+    // 9. Global Achievements System: catalog, idempotency, evaluators, stadium hooks, atomic persistence
+    {
+        resetAchievementsProfileForTest();
+
+        // Catalog integrity: 50 achievements, 1,710 total points
+        assertEqual(kAchievementCount, uint16_t{ 50 });
+        assertEqual(getTotalPossibleAchievementPoints(), uint32_t{ 1710 });
+        for (uint16_t i = 0; i < kAchievementCount; ++i) {
+            const auto& def = getAchievementDef(static_cast<AchievementId>(i));
+            assertEqual(static_cast<uint16_t>(def.id), i);
+            assertTrue(def.title && def.title[0] != '\0');
+            assertTrue(def.description && def.description[0] != '\0');
+            assertTrue(def.points >= 10 && def.points <= 100);
+            assertTrue(def.targetProgress >= 1);
+        }
+
+        // Idempotent unlocking & toast queue
+        assertTrue(unlockAchievement(AchievementId::kFirstKickoff, false));
+        assertFalse(unlockAchievement(AchievementId::kFirstKickoff, false));
+        assertEqual(getAchievementProfile().unlockedCount, uint32_t{ 1 });
+        assertEqual(getAchievementProfile().totalPoints, uint32_t{ 10 });
+        assertEqual(getPendingAchievementToastCount(), size_t{ 1 });
+
+        // Goal event triggers: header, outside box, free kick, volley, corner <=3s, GK goal, early blitz, fergie time, hat-trick, 6-goal
+        resetAchievementsProfileForTest();
+        AchievementGoalEvent g;
+        g.humanScored = true;
+        g.isHeader = true;
+        g.isOutsideBox = true;
+        g.isFreeKick = true;
+        g.withinCornerWindow = true;
+        g.scorerIsGoalkeeper = true;
+        g.matchMinute = 1;
+        g.scorerMatchGoals = 6;
+        achievementsOnGoalScored(g);
+        const auto& prof = getAchievementProfile();
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kFirstGoal)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kHeaderGoal)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kOutsideBoxGoal)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kFreeKickGoal)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kCornerDirectOrQuick)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kGoalkeeperGoal)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kEarlyBlitz)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kHatTrick)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kDoubleHatTrick)].unlocked);
+
+        // Penalty, volley, and Fergie Time (90'+ go-ahead)
+        AchievementGoalEvent g2;
+        g2.humanScored = true;
+        g2.isPenalty = true;
+        g2.matchMinute = 90;
+        g2.isGoAheadGoal = true;
+        achievementsOnGoalScored(g2);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kPenaltyGoal)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kFergieTime)].unlocked);
+
+        AchievementGoalEvent g3;
+        g3.humanScored = true;
+        g3.isVolley = true;
+        g3.matchMinute = 50;
+        achievementsOnGoalScored(g3);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kVolleyOrOverhead)].unlocked);
+
+        // Match summary: comebacks, dominance, down-to-10, giant killing (3 tiers), shootout, ET
+        AchievementMatchSummary ms;
+        ms.humanParticipated = true;
+        ms.humanWon = true;
+        ms.isCompetitive = true;
+        ms.isCareer = true;
+        ms.isCupMatch = true;
+        ms.wonOnPenalties = true;
+        ms.wonInExtraTime = true;
+        ms.humanGoals = 10;
+        ms.opponentGoals = 3;
+        ms.humanHtGoals = 0;
+        ms.opponentHtGoals = 3;
+        ms.maxGoalDeficit = 3;
+        ms.humanPossessionPct = 68;
+        ms.humanShotsOnTarget = 12;
+        ms.humanYellowCards = 0;
+        ms.humanRedCards = 1;
+        ms.hadRedCardBefore60 = true;
+        ms.humanDivisionTier = 3;
+        ms.opponentDivisionTier = 0;
+        achievementsOnMatchFinished(ms);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kFirstKickoff)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kCareerFirstWin)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kPenaltyShootoutWin)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kExtraTimeWinner)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kHalftimeComeback)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kTwoGoalComeback)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kThreeGoalComeback)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kFiveGoalRout)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kDoubleDigits)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kPossessionMaster)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kClinicalFinishing)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kDownToTenWin)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kGiantKiller1Tier)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kGiantKiller2Tiers)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kGiantKiller3Tiers)].unlocked);
+
+        // Friendly win + clean sheet
+        AchievementMatchSummary ms2;
+        ms2.humanParticipated = true;
+        ms2.humanWon = true;
+        ms2.isFriendly = true;
+        ms2.humanGoals = 2;
+        ms2.opponentGoals = 0;
+        achievementsOnMatchFinished(ms2);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kFriendlyWin)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kCleanSheet)].unlocked);
+        assertFalse(prof.records[static_cast<uint16_t>(AchievementId::kNoCardsWin)].unlocked);
+
+        // Competitive Fair Play win (0 yellow, 0 red)
+        AchievementMatchSummary ms3;
+        ms3.humanParticipated = true;
+        ms3.humanWon = true;
+        ms3.isCompetitive = true;
+        ms3.humanGoals = 1;
+        ms3.opponentGoals = 0;
+        ms3.humanYellowCards = 0;
+        ms3.humanRedCards = 0;
+        achievementsOnMatchFinished(ms3);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kNoCardsWin)].unlocked);
+
+        // Transfers: First Signing, Million-Pound Signing, Profitable Flip (+1M+)
+        achievementsOnCareerTransfer(true, 1200000, "A. SHEARER");
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kFirstSigning)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kMillionPoundSigning)].unlocked);
+        assertFalse(prof.records[static_cast<uint16_t>(AchievementId::kProfitableFlip)].unlocked);
+        achievementsOnCareerTransfer(false, 2500000, "A. SHEARER");
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kProfitableFlip)].unlocked);
+
+        // Career Seasons: Promotion + Back-to-Back Promotion + Treble + Unbeaten + 10 Seasons + Call-up
+        AchievementSeasonSummary s1;
+        s1.oldDivisionTier = 2;
+        s1.newDivisionTier = 1;
+        s1.promoted = true;
+        s1.completedCareerSeasons = 1;
+        achievementsOnCareerSeasonEnd(s1);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kPromotion)].unlocked);
+        assertFalse(prof.records[static_cast<uint16_t>(AchievementId::kBackToBackPromotion)].unlocked);
+
+        // End-of-season call before new-season division check must NOT wipe consecutive promotion streak
+        AchievementSeasonSummary s2End;
+        s2End.oldDivisionTier = 1;
+        s2End.newDivisionTier = -1;
+        s2End.completedCareerSeasons = 2;
+        achievementsOnCareerSeasonEnd(s2End);
+
+        AchievementSeasonSummary s2Promo;
+        s2Promo.oldDivisionTier = 1;
+        s2Promo.newDivisionTier = 0;
+        s2Promo.promoted = true;
+        achievementsOnCareerSeasonEnd(s2Promo);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kBackToBackPromotion)].unlocked);
+
+        AchievementSeasonSummary sTreble;
+        sTreble.oldDivisionTier = 0;
+        sTreble.newDivisionTier = 0;
+        sTreble.wonTopFlightLeague = true;
+        sTreble.wonDomesticCup = true;
+        sTreble.wonEuropeanCup = true;
+        sTreble.unbeatenLeagueSeason = true;
+        sTreble.completedCareerSeasons = 10;
+        achievementsOnCareerSeasonEnd(sTreble);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kLeagueChampion)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kDomesticCupWin)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kEuropeanCupWin)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kContinentalTreble)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kUnbeatenSeason)].unlocked);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kCareerTenSeasons)].unlocked);
+
+        achievementsOnNationalTeamCallup();
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kInternationalCallup)].unlocked);
+
+        // Charisma 90+ & Sponsor 10-challenge cumulative streak
+        achievementsOnCharismaChanged(89);
+        assertFalse(prof.records[static_cast<uint16_t>(AchievementId::kIconicCharisma)].unlocked);
+        achievementsOnCharismaChanged(90);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kIconicCharisma)].unlocked);
+
+        achievementsOnSponsorChallengesCompleted(4);
+        assertFalse(prof.records[static_cast<uint16_t>(AchievementId::kSponsorStreak)].unlocked);
+        achievementsOnSponsorChallengesCompleted(6);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kSponsorStreak)].unlocked);
+
+        // Stadium & Facilities hooks (ready for future Stadium feature)
+        achievementsOnStadiumUpgradeCompleted();
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kStadiumFirstUpgrade)].unlocked);
+        achievementsOnStadiumMatchAttendance(9, 75000, 75000);
+        assertFalse(prof.records[static_cast<uint16_t>(AchievementId::kFortress85k)].unlocked);
+        achievementsOnStadiumMatchAttendance(10, 85000, 85000);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kFortress85k)].unlocked);
+        achievementsOnFacilitiesUpdated(5, 5, 4, 5);
+        assertFalse(prof.records[static_cast<uint16_t>(AchievementId::kMaxFacilities)].unlocked);
+        achievementsOnFacilitiesUpdated(5, 5, 5, 5);
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kMaxFacilities)].unlocked);
+
+        // Cumulative progress helper (Veteran 50 matches & Centurion 100 goals)
+        assertTrue(addAchievementProgress(AchievementId::kVeteran50Matches, 50, false));
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kVeteran50Matches)].unlocked);
+        assertTrue(setAchievementProgress(AchievementId::kCenturion100Goals, 100, false));
+        assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kCenturion100Goals)].unlocked);
+
+        // Atomic disk save/load round-trip
+        uint32_t expectedUnlocked = prof.unlockedCount;
+        uint32_t expectedPoints = prof.totalPoints;
+        const char *tmpAch = "tmp_test_achievements.dat";
+        assertTrue(saveAchievements(tmpAch));
+        resetAchievementsProfileForTest();
+        assertEqual(getAchievementProfile().unlockedCount, uint32_t{ 0 });
+        assertTrue(loadAchievements(tmpAch));
+        assertEqual(getAchievementProfile().unlockedCount, expectedUnlocked);
+        assertEqual(getAchievementProfile().totalPoints, expectedPoints);
+        assertTrue(getAchievementProfile().records[static_cast<uint16_t>(AchievementId::kMaxFacilities)].unlocked);
+        assertTrue(getAchievementProfile().records[static_cast<uint16_t>(AchievementId::kBackToBackPromotion)].unlocked);
+        std::remove(tmpAch);
+        resetAchievementsProfileForTest();
     }
 
     setLlmTransportForTest(nullptr);

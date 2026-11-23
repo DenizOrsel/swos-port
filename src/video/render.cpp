@@ -10,6 +10,7 @@
 #include "dump.h"
 #include "file.h"
 #include "util.h"
+#include "achievements.h"
 
 static SDL_Renderer *m_renderer;
 static Uint32 m_windowPixelFormat;
@@ -104,6 +105,7 @@ void updateScreen(bool delay /* = false */)
     // important call to keep the FPS stable
     SDL_RenderFlush(m_renderer);
 
+    drawAchievementToastOverlay();
     showOverlay();
 
     if (delay)

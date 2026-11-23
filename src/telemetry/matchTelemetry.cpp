@@ -1,4 +1,5 @@
 #include "matchTelemetry.h"
+#include "achievements.h"
 #include "file.h"
 #include "gameTime.h"
 #include "hotseatCareer.h"
@@ -29,11 +30,14 @@ struct TouchRecord {
     std::string name;
     float x = 0.0f;
     float y = 0.0f;
+    float ballZ = 0.0f;
     bool wasHeader = false;
     uint32_t frameTick = 0;
 };
 
 uint32_t s_frameCounter = 0;
+uint32_t s_lastCornerFrame = 0;
+uint32_t s_lastFreeKickFrame = 0;
 uint32_t s_zoneSamplesTeam1Attack = 0;
 uint32_t s_zoneSamplesMidfield = 0;
 uint32_t s_zoneSamplesTeam2Attack = 0;
@@ -43,6 +47,10 @@ int s_longRangeGoals1 = 0;
 int s_longRangeGoals2 = 0;
 int s_headerGoals1 = 0;
 int s_headerGoals2 = 0;
+int s_maxDeficit1 = 0;
+int s_maxDeficit2 = 0;
+bool s_redBefore60_1 = false;
+bool s_redBefore60_2 = false;
 
 TouchRecord s_lastTouch;
 TouchRecord s_prevTouch;
@@ -421,6 +429,7 @@ void sampleBallTouch()
     s_lastTouch.name = pName;
     s_lastTouch.x = swos.ballSprite.x.asFloat();
     s_lastTouch.y = swos.ballSprite.y.asFloat();
+    s_lastTouch.ballZ = swos.ballSprite.z.asFloat();
     s_lastTouch.wasHeader = isHeading || prevHeader;
     s_lastTouch.frameTick = s_frameCounter;
     s_lastTouchByTeam[teamNum - 1] = s_lastTouch;
@@ -555,6 +564,8 @@ std::string computeTimePressureTag(int minute, int goals1, int goals2, bool play
 void resetMatchTelemetry()
 {
     s_frameCounter = 0;
+    s_lastCornerFrame = 0;
+    s_lastFreeKickFrame = 0;
     s_zoneSamplesTeam1Attack = 0;
     s_zoneSamplesMidfield = 0;
     s_zoneSamplesTeam2Attack = 0;
@@ -564,6 +575,10 @@ void resetMatchTelemetry()
     s_longRangeGoals2 = 0;
     s_headerGoals1 = 0;
     s_headerGoals2 = 0;
+    s_maxDeficit1 = 0;
+    s_maxDeficit2 = 0;
+    s_redBefore60_1 = false;
+    s_redBefore60_2 = false;
     s_lastTouch = {};
     s_prevTouch = {};
     s_lastTouchByTeam[0] = {};
@@ -582,6 +597,26 @@ void updateMatchTelemetry()
     if (swos.halfNumber <= 1) {
         s_htGoals1 = swos.statsTeam1Goals;
         s_htGoals2 = swos.statsTeam2Goals;
+    }
+
+    if (swos.gameState == GameState::kCornerLeft || swos.gameState == GameState::kCornerRight)
+        s_lastCornerFrame = s_frameCounter;
+    if (swos.gameState >= GameState::kFreeKickOuterLeft && swos.gameState <= GameState::kFreeKickOuterRight)
+        s_lastFreeKickFrame = s_frameCounter;
+
+    int deficit1 = swos.statsTeam2Goals - swos.statsTeam1Goals;
+    if (deficit1 > s_maxDeficit1)
+        s_maxDeficit1 = deficit1;
+    int deficit2 = swos.statsTeam1Goals - swos.statsTeam2Goals;
+    if (deficit2 > s_maxDeficit2)
+        s_maxDeficit2 = deficit2;
+
+    if (static_cast<int>(gameTimeInMinutes()) < 60 && (s_frameCounter % 15) == 0) {
+        const auto st = getStats();
+        if (st.team1.sendingsOff > 0)
+            s_redBefore60_1 = true;
+        if (st.team2.sendingsOff > 0)
+            s_redBefore60_2 = true;
     }
 
     sampleBallTouch();
@@ -673,6 +708,48 @@ void recordTelemetryMatchEvent(const char *eventType, bool isGoalEvent /* = fals
         const TeamGame& concedingTg = (teamName == t1) ? swos.bottomTeamInGame : swos.topTeamInGame;
         if (concedingTg.players[0].shortName[0] != '\0')
             detail += ", past " + std::string(concedingTeam) + " goalkeeper " + concedingTg.players[0].shortName;
+
+        // Fire Global Achievements goal hook
+        if (!swos.playingPenalties && (scoringTeamNum == 1 || scoringTeamNum == 2)) {
+            bool t1Human = (team1Info->playerNumber != 0 || team1Info->playerCoachNumber != 0 || team1Info->isPlCoach != 0);
+            bool t2Human = (team2Info->playerNumber != 0 || team2Info->playerCoachNumber != 0 || team2Info->isPlCoach != 0);
+            if (!t1Human && !t2Human) {
+                const TeamFile *tf1 = swos.gameTeam1.asAligned();
+                const TeamFile *tf2 = swos.gameTeam2.asAligned();
+                if (tf1) t1Human = (tf1->teamControls == kPlayerCoach || tf1->teamControls == kCoach);
+                if (tf2) t2Human = (tf2->teamControls == kPlayerCoach || tf2->teamControls == kCoach);
+            }
+            bool scoringSideHuman = (scoringTeamNum == 1) ? t1Human : t2Human;
+            const TouchRecord& teamTouch = s_lastTouchByTeam[scoringTeamNum - 1];
+            bool recentTouch = (teamTouch.frameTick > 0 && s_frameCounter >= teamTouch.frameTick &&
+                                (s_frameCounter - teamTouch.frameTick) < 180);
+
+            AchievementGoalEvent achGoal;
+            achGoal.humanScored = scoringSideHuman;
+            achGoal.isOwnGoal = (swos.goalTypeScored == static_cast<int>(GoalType::kOwnGoal));
+            achGoal.isPenalty = (swos.penalty != 0) || (std::strstr(eventType, "PENALTY") != nullptr);
+            achGoal.isHeader = mech.isHeader;
+            achGoal.isOutsideBox = mech.isOutsidePenaltyArea;
+            achGoal.isFreeKick = (!achGoal.isOwnGoal && !achGoal.isPenalty &&
+                s_lastFreeKickFrame > 0 && s_frameCounter >= s_lastFreeKickFrame &&
+                (s_frameCounter - s_lastFreeKickFrame) <= 240);
+            achGoal.withinCornerWindow = (!achGoal.isOwnGoal && !achGoal.isPenalty &&
+                s_lastCornerFrame > 0 && s_frameCounter >= s_lastCornerFrame &&
+                (s_frameCounter - s_lastCornerFrame) <= 180);
+            achGoal.isVolley = (!achGoal.isOwnGoal && !achGoal.isPenalty && !achGoal.isHeader &&
+                recentTouch && teamTouch.ballZ >= 6.0f);
+            achGoal.scorerIsGoalkeeper = (scorerSprite && scorerSprite->playerOrdinal == 1);
+            achGoal.matchMinute = static_cast<int>(gameTimeInMinutes());
+            achGoal.isExtraTime = (swos.halfNumber > 2 || achGoal.matchMinute > 90);
+            int g1 = swos.statsTeam1Goals;
+            int g2 = swos.statsTeam2Goals;
+            achGoal.isGoAheadGoal = (scoringTeamNum == 1) ? (g1 > g2) : (g2 > g1);
+            if (scorerSprite && scorerSprite->playerOrdinal >= 1 && scorerSprite->playerOrdinal <= kNumPlayersInTeam) {
+                const TeamGame& tg = (scorerSprite->teamNumber == 1) ? swos.topTeamInGame : swos.bottomTeamInGame;
+                achGoal.scorerMatchGoals = std::max<int>(1, static_cast<int>(tg.players[scorerSprite->playerOrdinal - 1].goalsScored));
+            }
+            achievementsOnGoalScored(achGoal);
+        }
     } else if (isKeeperSave) {
         // Defending team's goalkeeper made the save against the attacking team's shot!
         teamName = teamNameForInfo(defendingInfo);
@@ -745,6 +822,16 @@ std::pair<int, int> getLongRangeTelemetryGoals()
 std::pair<int, int> getHeaderTelemetryGoals()
 {
     return { s_headerGoals1, s_headerGoals2 };
+}
+
+std::pair<int, int> getMatchMaxGoalDeficits()
+{
+    return { s_maxDeficit1, s_maxDeficit2 };
+}
+
+std::pair<bool, bool> getMatchEarlyRedCards()
+{
+    return { s_redBefore60_1, s_redBefore60_2 };
 }
 
 MatchTelemetrySnapshot captureMatchTelemetrySnapshot()

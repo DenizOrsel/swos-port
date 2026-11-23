@@ -1,0 +1,88 @@
+//
+// Native Global Achievements Browser Menu
+//
+
+#include "common.mh"
+
+Menu achievementsMenu
+{
+    onInit: initAchievementsMenu
+    onDraw: drawAchievementsMenu
+    initialEntry: prevCatBtn
+
+    Entry header {
+        x: 34
+        y: 0
+        width: 236
+        height: 14
+
+        color: kHeaderColor
+        text: "MANAGER ACHIEVEMENTS"
+    }
+
+    Entry prevCatBtn {
+        x: 8
+        y: 34
+        width: 48
+        height: 13
+
+        color: @kDarkBlue
+        text: "< PREV"
+        rightEntry: nextCatBtn
+        downEntry: scrollUpBtn
+        onSelect: achievementsPrevCategory
+    }
+
+    Entry nextCatBtn {
+        x: 248
+        y: 34
+        width: 48
+        height: 13
+
+        color: @kDarkBlue
+        text: "NEXT >"
+        leftEntry: prevCatBtn
+        downEntry: scrollDownBtn
+        onSelect: achievementsNextCategory
+    }
+
+    Entry scrollUpBtn {
+        x: 8
+        y: 182
+        width: 72
+        height: 14
+
+        color: @kDarkBlue
+        text: "PAGE UP"
+        upEntry: prevCatBtn
+        rightEntry: backBtn
+        onSelect: achievementsPageUp
+    }
+
+    Entry backBtn {
+        x: 102
+        y: 182
+        width: 100
+        height: 14
+
+        color: kExitColor
+        text: "BACK"
+        upEntry: prevCatBtn
+        leftEntry: scrollUpBtn
+        rightEntry: scrollDownBtn
+        onSelect: achievementsCloseMenu
+    }
+
+    Entry scrollDownBtn {
+        x: 224
+        y: 182
+        width: 72
+        height: 14
+
+        color: @kDarkBlue
+        text: "PAGE DOWN"
+        upEntry: nextCatBtn
+        leftEntry: backBtn
+        onSelect: achievementsPageDown
+    }
+}

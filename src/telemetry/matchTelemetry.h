@@ -79,5 +79,7 @@ MatchTelemetrySnapshot captureMatchTelemetrySnapshot();
 std::pair<int, int> getHalfTimeTelemetryGoals();
 std::pair<int, int> getLongRangeTelemetryGoals();
 std::pair<int, int> getHeaderTelemetryGoals();
+std::pair<int, int> getMatchMaxGoalDeficits();
+std::pair<bool, bool> getMatchEarlyRedCards();
 std::string formatTelemetryPromptBlock(const MatchTelemetrySnapshot& snap);
 std::string computeTimePressureTag(int minute, int goals1, int goals2, bool playingPenalties);

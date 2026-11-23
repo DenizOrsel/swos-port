@@ -7,6 +7,7 @@
 #include "music.h"
 #include "optionsMenu.h"
 #include "hotseatCareer.h"
+#include "achievements.h"
 #include "main.mnu.h"
 
 static void initMainMenu();

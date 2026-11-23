@@ -1,4 +1,5 @@
 #include "pressCharisma.h"
+#include "achievements.h"
 #include "compactFont.h"
 #include "controls.h"
 #include "darkRectangle.h"
@@ -642,6 +643,7 @@ void applySelectedPressOption(int idx)
     }
 
     syncPressToHotseatIfActive();
+    achievementsOnCharismaChanged(s_state.charismaPoints);
 
     logInfo("Press conference (%s) choice #%d [%s]: CP %d -> %d (delta %+d)",
         s_activePrompt.phase == PressPhase::kPreMatch ? "PRE" : "POST",
@@ -1475,6 +1477,7 @@ void onEndOfSeasonPressCharismaBonus()
         }
     }
     syncPressToHotseatIfActive();
+    achievementsOnCharismaChanged(s_state.charismaPoints);
 
     logInfo("End-of-season Press Charisma Bonus: CP=%d (%s), TV base=%lld, bonus=%lld",
         static_cast<int>(s_state.charismaPoints),
@@ -1586,4 +1589,5 @@ void setPressCareerTotals(int16_t charisma, uint16_t interviews, int64_t lastSea
         std::min<uint8_t>(lastStance, static_cast<uint8_t>(ManagerialStance::kHostile)));
     s_state.lastPreMatchQuote = sanitizePressField(lastQuote, 96);
     syncPressToHotseatIfActive();
+    achievementsOnCharismaChanged(s_state.charismaPoints);
 }
