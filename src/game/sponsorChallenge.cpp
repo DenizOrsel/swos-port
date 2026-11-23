@@ -64,36 +64,12 @@ std::string toUpperAscii(const std::string& s)
 
 std::string sanitizePlain(const std::string& in, size_t maxLen)
 {
-    std::string out;
-    out.reserve(std::min(in.size(), maxLen));
-    bool lastSpace = false;
-    for (size_t i = 0; i < in.size(); ++i) {
-        unsigned char ch = static_cast<unsigned char>(in[i]);
-        if (ch == '\r' || ch == '\n' || ch == '\t') {
-            if (!lastSpace && !out.empty()) {
-                out.push_back(' ');
-                lastSpace = true;
-            }
-            continue;
-        }
-        if (ch == '*' || ch == '`' || ch == '"')
-            continue;
-        if (ch >= 0x20 && ch <= 0x7E) {
-            if (ch == ' ') {
-                if (!lastSpace && !out.empty()) {
-                    out.push_back(' ');
-                    lastSpace = true;
-                }
-            } else {
-                out.push_back(static_cast<char>(ch));
-                lastSpace = false;
-            }
-        }
-        if (out.size() >= maxLen)
-            break;
+    std::string out = sanitizeCompactMixedCase(in);
+    if (out.size() > maxLen) {
+        out.resize(maxLen);
+        while (!out.empty() && out.back() == ' ')
+            out.pop_back();
     }
-    while (!out.empty() && out.back() == ' ')
-        out.pop_back();
     return out;
 }
 
@@ -805,7 +781,7 @@ std::vector<SponsorChallenge> parseLlmSponsorChallenges(
         c.title = sanitizePlain(parts[1], 24);
         if (c.title.empty())
             c.title = defaultTitleForType(type);
-        c.description = sanitizePlain(parts[2], 78);
+        c.description = sanitizePlain(parts[2], 96);
 
         int rawThresh = std::atoi(parts[4].c_str());
         c.thresholdValue = clampSponsorThreshold(type, static_cast<int16_t>(rawThresh));
@@ -1091,6 +1067,7 @@ static std::string describeSingleChallengeProgress(const SponsorChallenge& c, in
     int totalPoss = stats.team1.ballPossession + stats.team2.ballPossession;
     int poss1Pct = totalPoss > 0 ? (100 * stats.team1.ballPossession) / totalPoss : 50;
     int poss = s_humanIsTeam1 ? poss1Pct : (100 - poss1Pct);
+    int oppPoss = 100 - poss;
     int sot = s_humanIsTeam1 ? stats.team1.onTarget : stats.team2.onTarget;
 
     switch (c.type) {
@@ -1136,7 +1113,7 @@ static std::string describeSingleChallengeProgress(const SponsorChallenge& c, in
     case SponsorChallengeType::kPossessionWin:
         if (clubG > oppG && poss >= c.thresholdValue)
             outColorMode = 1;
-        return std::to_string(poss) + "%/" + std::to_string(c.thresholdValue) + "%";
+        return std::to_string(poss) + "%-" + std::to_string(oppPoss) + "% (" + std::to_string(c.thresholdValue) + "%+)";
     case SponsorChallengeType::kShotsOnTarget:
         if (sot >= c.thresholdValue)
             outColorMode = 1;
