@@ -21,7 +21,7 @@ Menu achievementsMenu
     }
 
     Entry prevCatBtn {
-        x: 8
+        x: 0
         y: 34
         width: 48
         height: 13
@@ -34,7 +34,7 @@ Menu achievementsMenu
     }
 
     Entry nextCatBtn {
-        x: 248
+        x: 256
         y: 34
         width: 48
         height: 13
@@ -47,7 +47,7 @@ Menu achievementsMenu
     }
 
     Entry scrollUpBtn {
-        x: 8
+        x: 0
         y: 182
         width: 72
         height: 14
@@ -74,7 +74,7 @@ Menu achievementsMenu
     }
 
     Entry scrollDownBtn {
-        x: 224
+        x: 232
         y: 182
         width: 72
         height: 14

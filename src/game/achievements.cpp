@@ -378,10 +378,11 @@ static void achievementsCloseMenu()
 
 static void drawAchievementsMenu()
 {
+    // Wide dark transparent panels spanning almost the full 320 VGA width:
     // Summary bar (y=16..31), Category bar (y=34..47), Main list panel (y=50..179)
-    drawDarkRectangle({ 16.0f, 16.0f, 288.0f, 15.0f }, true);
-    drawDarkRectangle({ 66.0f, 34.0f, 188.0f, 13.0f }, true);
-    drawDarkRectangle({ 16.0f, 50.0f, 288.0f, 129.0f }, true);
+    drawDarkRectangle({ 4.0f, 16.0f, 312.0f, 15.0f }, true);
+    drawDarkRectangle({ 58.0f, 34.0f, 204.0f, 13.0f }, true);
+    drawDarkRectangle({ 4.0f, 50.0f, 312.0f, 129.0f }, true);
 
     SDL_Renderer *r = getRenderer();
     SDL_Texture *atlas = getCompactFontAtlas(r);
@@ -406,18 +407,28 @@ static void drawAchievementsMenu()
         SDL_Color greenCol{ 96, 236, 134, 255 };
         SDL_Color cyanCol{ 118, 236, 246, 255 };
 
+        auto fitScaleForWidth = [](const std::string& s, float basePx, float maxPixelW) -> float {
+            int units = measureCompactTextUnits(s);
+            if (units <= 0 || maxPixelW <= 1.0f)
+                return basePx;
+            float needed = static_cast<float>(units) * basePx;
+            if (needed <= maxPixelW)
+                return basePx;
+            return std::max(0.75f, basePx * (maxPixelW / needed));
+        };
+
         // Top summary strip
         uint32_t maxPts = getTotalPossibleAchievementPoints();
         char leftSum[64];
         std::snprintf(leftSum, sizeof(leftSum), "UNLOCKED: %u / %u",
             static_cast<unsigned>(s_profile.unlockedCount), static_cast<unsigned>(kAchievementCount));
-        drawCompactText(r, atlas, offX + 22.0f * gameScale, offY + 20.0f * gameScale, px,
+        drawCompactText(r, atlas, offX + 10.0f * gameScale, offY + 20.0f * gameScale, px,
             leftSum, greenCol, 255, true);
 
         char rightSum[64];
         std::snprintf(rightSum, sizeof(rightSum), "GAMERSCORE: %u / %u PTS",
             static_cast<unsigned>(s_profile.totalPoints), static_cast<unsigned>(maxPts));
-        drawCompactTextRightAligned(r, atlas, offX + 298.0f * gameScale, offY + 20.0f * gameScale, px,
+        drawCompactTextRightAligned(r, atlas, offX + 310.0f * gameScale, offY + 20.0f * gameScale, px,
             rightSum, yellowCol, 255, true);
 
         // Category filter label
@@ -425,12 +436,14 @@ static void drawAchievementsMenu()
             ? "CATEGORY: ALL (50)"
             : (std::string("CATEGORY: ") + getAchievementCategoryName(static_cast<AchievementCategory>(s_browserCategory)) +
                " (" + std::to_string(filtered.size()) + ")");
-        drawCompactTextCentered(r, atlas, offX + 160.0f * gameScale, offY + 37.5f * gameScale, px,
+        float catPx = fitScaleForWidth(catLabel, px, 196.0f * gameScale);
+        drawCompactTextCentered(r, atlas, offX + 160.0f * gameScale, offY + 37.5f * gameScale, catPx,
             catLabel, cyanCol, 255, true);
 
         // Render visible achievement rows (5 per page, 24 VGA units each)
         float rowStartY = 53.0f;
         float rowStride = 24.5f;
+        float maxDescPixelW = 290.0f * gameScale;
         for (int row = 0; row < kRowsPerPage; ++row) {
             size_t listIdx = static_cast<size_t>(s_browserScroll + row);
             if (listIdx >= filtered.size())
@@ -441,14 +454,14 @@ static void drawAchievementsMenu()
             const auto& rec = s_profile.records[achIdx];
 
             float ry = offY + (rowStartY + row * rowStride) * gameScale;
-            float rx = offX + 22.0f * gameScale;
+            float rx = offX + 10.0f * gameScale;
 
             // Row separator line
             if (row > 0) {
                 SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
                 SDL_SetRenderDrawColor(r, 140, 152, 160, 65);
-                SDL_RenderDrawLineF(r, offX + 20.0f * gameScale, ry - 2.0f * gameScale,
-                    offX + 300.0f * gameScale, ry - 2.0f * gameScale);
+                SDL_RenderDrawLineF(r, offX + 8.0f * gameScale, ry - 2.0f * gameScale,
+                    offX + 312.0f * gameScale, ry - 2.0f * gameScale);
                 SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
             }
 
@@ -467,22 +480,24 @@ static void drawAchievementsMenu()
 
             // Points badge right-aligned
             std::string ptsStr = "[" + std::to_string(def.points) + " PTS]";
-            drawCompactTextRightAligned(r, atlas, offX + 298.0f * gameScale, ry, px,
+            drawCompactTextRightAligned(r, atlas, offX + 310.0f * gameScale, ry, px,
                 ptsStr, pointsTierColor(def.points), rec.unlocked ? 255 : 180, rec.unlocked);
 
-            // Description line below
-            drawCompactText(r, atlas, rx + 10.0f * gameScale, ry + 10.5f * gameScale, px,
+            // Description line below (auto-fitted so it never overflows the dark panel)
+            float descPx = fitScaleForWidth(def.description, px, maxDescPixelW);
+            drawCompactText(r, atlas, rx + 8.0f * gameScale, ry + 10.5f * gameScale, descPx,
                 def.description, rec.unlocked ? whiteCol : mutedCol, rec.unlocked ? 235 : 200, false);
         }
 
-        // Scroll indicator in bottom-right of list box
+        // Scroll indicator in bottom of list box
         if (!filtered.empty()) {
             int firstShown = s_browserScroll + 1;
             int lastShown = std::min<int>(static_cast<int>(filtered.size()), s_browserScroll + kRowsPerPage);
-            char rangeBuf[48];
+            char rangeBuf[64];
             std::snprintf(rangeBuf, sizeof(rangeBuf), "Showing %d-%d of %zu  |  Arrows: Browse  ESC: Back",
                 firstShown, lastShown, filtered.size());
-            drawCompactTextCentered(r, atlas, offX + 160.0f * gameScale, offY + 172.0f * gameScale, px * 0.88f,
+            float footPx = fitScaleForWidth(rangeBuf, px * 0.88f, 300.0f * gameScale);
+            drawCompactTextCentered(r, atlas, offX + 160.0f * gameScale, offY + 172.0f * gameScale, footPx,
                 rangeBuf, mutedCol, 220, false);
         }
 
@@ -988,15 +1003,24 @@ void drawAchievementToastOverlay()
     std::string headerStr = "ACHIEVEMENT UNLOCKED!";
     std::string ptsStr = "[+" + std::to_string(def.points) + " PTS]";
     std::string bodyStr = std::string(def.title) + " - " + def.description;
-    if (bodyStr.size() > 64) {
-        bodyStr.resize(61);
+
+    constexpr int kLeftTextOffsetUnits = 20; // trophy icon + padding on the left
+    constexpr int kRightPadUnits = 10;       // generous right padding behind text
+    int maxViewportUnits = std::max(180, static_cast<int>((static_cast<float>(vp.w) * 0.92f) / px));
+    int maxTextUnits = std::max(120, maxViewportUnits - kLeftTextOffsetUnits - kRightPadUnits);
+
+    if (measureCompactTextUnits(bodyStr) > maxTextUnits) {
+        while (bodyStr.size() > 16 && measureCompactTextUnits(bodyStr + "...") > maxTextUnits)
+            bodyStr.pop_back();
+        while (!bodyStr.empty() && bodyStr.back() == ' ')
+            bodyStr.pop_back();
         bodyStr += "...";
     }
 
     int topUnits = measureCompactTextUnits(headerStr) + measureCompactTextUnits(ptsStr) + 18;
     int bodyUnits = measureCompactTextUnits(bodyStr);
     int contentUnits = std::max(topUnits, bodyUnits);
-    int boxUnitsW = std::clamp(contentUnits + 24, 150, 265);
+    int boxUnitsW = std::clamp(kLeftTextOffsetUnits + contentUnits + kRightPadUnits, 180, maxViewportUnits);
     int boxUnitsH = 26;
 
     float boxW = boxUnitsW * px;
@@ -1022,11 +1046,11 @@ void drawAchievementToastOverlay()
     SDL_RenderDrawRectF(r, &bg);
 
     // Trophy icon on left
-    drawPixelTrophyIcon(r, boxX + 5.0f * px, boxY + 9.0f * px, px * 1.25f, alpha);
+    drawPixelTrophyIcon(r, boxX + 6.0f * px, boxY + 9.0f * px, px * 1.25f, alpha);
 
-    float tx = boxX + 18.0f * px;
+    float tx = boxX + static_cast<float>(kLeftTextOffsetUnits) * px;
     drawCompactText(r, atlas, tx, boxY + 5.0f * px, px, headerStr, { 255, 224, 76, 255 }, alpha, true);
-    drawCompactTextRightAligned(r, atlas, boxX + boxW - 5.0f * px, boxY + 5.0f * px, px,
+    drawCompactTextRightAligned(r, atlas, boxX + boxW - 8.0f * px, boxY + 5.0f * px, px,
         ptsStr, pointsTierColor(def.points), alpha, true);
     drawCompactText(r, atlas, tx, boxY + 15.0f * px, px, bodyStr, { 244, 246, 248, 255 }, alpha, false);
 
@@ -1037,9 +1061,6 @@ void drawAchievementToastOverlay()
 
 void showAchievementsMenu()
 {
-    menuFadeOut();
-    enqueueMenuFadeIn();
     showMenu(achievementsMenu);
-    menuFadeOut();
-    enqueueMenuFadeIn();
+    CommonMenuExit();
 }
