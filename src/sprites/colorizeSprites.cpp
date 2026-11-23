@@ -238,6 +238,8 @@ static void colorizePlayers(const TeamGame *topTeam, const TeamGame *bottomTeam,
             }
         }
         convertTextures(textures.data(), surfaces.data(), textures.size());
+        for (auto surface : surfaces)
+            SDL_FreeSurface(surface);
     }
 }
 
@@ -265,7 +267,7 @@ static AllTeamsGoalkeeperFaces colorizeGoalkeepers(const TeamGame *topTeam, cons
             if (faces[i] < 0 || textures[faces[i]])
                 continue;
 
-            assert(faces[i] <= kNumFaces);
+            assert(faces[i] < kNumFaces);
 
             const std::pair<const Color&, const decltype(kGoalkeeperSkin)&> kLayers[] = {
                 { kSkinColor[faces[i]], kGoalkeeperSkin },
@@ -428,13 +430,16 @@ static GoalkeeperSurfaces createGoalkeeperSurfaces(const GoalkeeperFaces& faces,
 
     GoalkeeperSurfaces surfaces{};
 
-    int neededSurfaces = !textures[faces[0]] + (faces[1] >= 0 && !textures[faces[1]]);
-    if (neededSurfaces > 0) {
-        surfaces[0] = loadGoalkeeperBackgroundSurface();
-        if (neededSurfaces > 1) {
-            surfaces[1] = SDL_DuplicateSurface(surfaces[0]);
+    const bool needFirst = faces[0] >= 0 && faces[0] < kNumFaces && !textures[faces[0]];
+    const bool needSecond = faces[1] >= 0 && faces[1] < kNumFaces && !textures[faces[1]];
+    if (needFirst || needSecond) {
+        auto surface = loadGoalkeeperBackgroundSurface();
+        if (needFirst)
+            surfaces[0] = surface;
+        if (needSecond) {
+            surfaces[1] = surfaces[0] ? SDL_DuplicateSurface(surface) : surface;
             if (!surfaces[1])
-                sdlErrorExit("Failed to duplicate goalkeeper surface %#x", surfaces[0]);
+                sdlErrorExit("Failed to duplicate goalkeeper surface %#x", surface);
         }
     }
 
