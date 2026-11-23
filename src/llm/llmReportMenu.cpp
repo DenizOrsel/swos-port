@@ -34,76 +34,14 @@ int s_lastWrapUnits = 0;
 
 std::string sanitizeReportLine(const std::string& in)
 {
+    std::string mixed = sanitizeCompactMixedCase(in);
     std::string out;
-    out.reserve(in.size());
-    bool lastSpace = false;
-    auto pushChar = [&](char c) {
-        if (c == ' ') {
-            if (!lastSpace && !out.empty()) {
-                out.push_back(' ');
-                lastSpace = true;
-            }
-        } else {
-            out.push_back(c);
-            lastSpace = false;
-        }
-    };
-
-    for (size_t i = 0; i < in.size(); ++i) {
-        unsigned char ch = static_cast<unsigned char>(in[i]);
-        if (ch == '\r' || ch == '\n' || ch == '\t') {
-            pushChar(' ');
+    out.reserve(mixed.size());
+    for (char c : mixed) {
+        if (c == '#')
             continue;
-        }
-        if (ch == '*' || ch == '#' || ch == '`')
-            continue;
-        if (ch >= 0x20 && ch <= 0x7E) {
-            pushChar(static_cast<char>(std::toupper(ch)));
-            continue;
-        }
-        if ((ch & 0xE0) == 0xC0 && i + 1 < in.size()) {
-            unsigned char b2 = static_cast<unsigned char>(in[++i]);
-            unsigned int cp = ((ch & 0x1Fu) << 6) | (b2 & 0x3Fu);
-            switch (cp) {
-            case 0x00C0: case 0x00C1: case 0x00C2: case 0x00C3: case 0x00C4: case 0x00C5:
-            case 0x00E0: case 0x00E1: case 0x00E2: case 0x00E3: case 0x00E4: case 0x00E5:
-                pushChar('A'); break;
-            case 0x00C7: case 0x00E7: case 0x0106: case 0x0107: case 0x010C: case 0x010D:
-                pushChar('C'); break;
-            case 0x00C8: case 0x00C9: case 0x00CA: case 0x00CB:
-            case 0x00E8: case 0x00E9: case 0x00EA: case 0x00EB:
-                pushChar('E'); break;
-            case 0x011E: case 0x011F:
-                pushChar('G'); break;
-            case 0x00CC: case 0x00CD: case 0x00CE: case 0x00CF:
-            case 0x00EC: case 0x00ED: case 0x00EE: case 0x00EF:
-            case 0x0130: case 0x0131:
-                pushChar('I'); break;
-            case 0x00D1: case 0x00F1:
-                pushChar('N'); break;
-            case 0x00D2: case 0x00D3: case 0x00D4: case 0x00D5: case 0x00D6: case 0x00D8:
-            case 0x00F2: case 0x00F3: case 0x00F4: case 0x00F5: case 0x00F6: case 0x00F8:
-                pushChar('O'); break;
-            case 0x015E: case 0x015F: case 0x0160: case 0x0161:
-                pushChar('S'); break;
-            case 0x00DF:
-                pushChar('S'); pushChar('S'); break;
-            case 0x00D9: case 0x00DA: case 0x00DB: case 0x00DC:
-            case 0x00F9: case 0x00FA: case 0x00FB: case 0x00FC:
-                pushChar('U'); break;
-            case 0x00DD: case 0x00FD: case 0x00FF:
-                pushChar('Y'); break;
-            case 0x017D: case 0x017E:
-                pushChar('Z'); break;
-            case 0x0110: case 0x0111:
-                pushChar('D'); break;
-            default:
-                break;
-            }
-        }
+        out.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
     }
-    while (!out.empty() && out.back() == ' ')
-        out.pop_back();
     return out;
 }
 

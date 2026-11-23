@@ -55,69 +55,7 @@ std::string trimStream(const std::string& s)
 
 std::string sanitizeStreamText(const std::string& in)
 {
-    std::string out;
-    out.reserve(in.size());
-    bool lastSpace = false;
-    auto pushChar = [&](char c) {
-        if (c == ' ') {
-            if (!lastSpace && !out.empty()) {
-                out.push_back(' ');
-                lastSpace = true;
-            }
-        } else {
-            out.push_back(c);
-            lastSpace = false;
-        }
-    };
-
-    for (size_t i = 0; i < in.size(); ++i) {
-        unsigned char ch = static_cast<unsigned char>(in[i]);
-        if (ch == '\r' || ch == '\n' || ch == '\t') {
-            pushChar(' ');
-            continue;
-        }
-        if (ch == '*' || ch == '`' || ch == '"')
-            continue;
-        if (ch >= 0x20 && ch <= 0x7E) {
-            pushChar(static_cast<char>(ch));
-            continue;
-        }
-        if ((ch & 0xE0) == 0xC0 && i + 1 < in.size()) {
-            unsigned char b2 = static_cast<unsigned char>(in[++i]);
-            unsigned int cp = ((ch & 0x1Fu) << 6) | (b2 & 0x3Fu);
-            switch (cp) {
-            case 0x00C0: case 0x00C1: case 0x00C2: case 0x00C3: case 0x00C4: case 0x00C5: pushChar('A'); break;
-            case 0x00E0: case 0x00E1: case 0x00E2: case 0x00E3: case 0x00E4: case 0x00E5: pushChar('a'); break;
-            case 0x00C7: case 0x0106: case 0x010C: pushChar('C'); break;
-            case 0x00E7: case 0x0107: case 0x010D: pushChar('c'); break;
-            case 0x00C8: case 0x00C9: case 0x00CA: case 0x00CB: pushChar('E'); break;
-            case 0x00E8: case 0x00E9: case 0x00EA: case 0x00EB: pushChar('e'); break;
-            case 0x011E: pushChar('G'); break;
-            case 0x011F: pushChar('g'); break;
-            case 0x00CC: case 0x00CD: case 0x00CE: case 0x00CF: case 0x0130: pushChar('I'); break;
-            case 0x00EC: case 0x00ED: case 0x00EE: case 0x00EF: case 0x0131: pushChar('i'); break;
-            case 0x00D1: pushChar('N'); break;
-            case 0x00F1: pushChar('n'); break;
-            case 0x00D2: case 0x00D3: case 0x00D4: case 0x00D5: case 0x00D6: case 0x00D8: pushChar('O'); break;
-            case 0x00F2: case 0x00F3: case 0x00F4: case 0x00F5: case 0x00F6: case 0x00F8: pushChar('o'); break;
-            case 0x015E: case 0x0160: pushChar('S'); break;
-            case 0x015F: case 0x0161: pushChar('s'); break;
-            case 0x00DF: pushChar('s'); pushChar('s'); break;
-            case 0x00D9: case 0x00DA: case 0x00DB: case 0x00DC: pushChar('U'); break;
-            case 0x00F9: case 0x00FA: case 0x00FB: case 0x00FC: pushChar('u'); break;
-            case 0x00DD: pushChar('Y'); break;
-            case 0x00FD: case 0x00FF: pushChar('y'); break;
-            case 0x017D: pushChar('Z'); break;
-            case 0x017E: pushChar('z'); break;
-            case 0x0110: pushChar('D'); break;
-            case 0x0111: pushChar('d'); break;
-            default: break;
-            }
-        }
-    }
-    while (!out.empty() && out.back() == ' ')
-        out.pop_back();
-    return out;
+    return sanitizeCompactMixedCase(in);
 }
 
 std::string toUpperAscii(const std::string& s)
@@ -317,7 +255,7 @@ void enqueueSupporterBatchRequest(const char *triggerContext)
     prompt += "\nFormat STRICTLY one message per line as: HANDLE|SIDE|MESSAGE";
     prompt += "\n- HANDLE: realistic 1997 fan nickname (no spaces, max 13 chars, mixed case e.g. archy_brown, Fan_atic, Terrace97)";
     prompt += "\n- SIDE: HOME (supports " + snap.team1 + "), AWAY (supports " + snap.team2 + "), or NEUTRAL";
-    prompt += "\n- MESSAGE: short punchy fan reaction in normal sentence case (4 to 13 words). Use classic ASCII-only text emoticons naturally where fitting (like :), :(, :D, ;), :P, >:), O_O, T_T, <3, ^_^, xD, uWu) - NEVER use Unicode emojis. If minute >= 85 and margin <= 1, leading fans beg the ref to blow the whistle!";
+    prompt += "\n- MESSAGE: short punchy fan reaction in normal sentence case (4 to 13 words). Always write percentages as whole integers (e.g. 57% or %57, never decimals). Use classic ASCII-only text emoticons naturally where fitting (like :), :(, :D, ;), :P, >:), O_O, T_T, <3, ^_^, xD, uWu) - NEVER use Unicode emojis. If minute >= 85 and margin <= 1, leading fans beg the ref to blow the whistle!";
     prompt += "\nOutput ONLY the HANDLE|SIDE|MESSAGE lines. No intro, no numbering, no markdown.";
 
     const std::string sys = "You simulate a lively 1996/97 football fan chat stream watching the match live. "

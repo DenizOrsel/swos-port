@@ -1088,7 +1088,9 @@ static std::string describeSingleChallengeProgress(const SponsorChallenge& c, in
     const auto stats = getStats();
     int clubG = s_humanIsTeam1 ? swos.statsTeam1Goals : swos.statsTeam2Goals;
     int oppG = s_humanIsTeam1 ? swos.statsTeam2Goals : swos.statsTeam1Goals;
-    int poss = s_humanIsTeam1 ? stats.team1.ballPossession : stats.team2.ballPossession;
+    int totalPoss = stats.team1.ballPossession + stats.team2.ballPossession;
+    int poss1Pct = totalPoss > 0 ? (100 * stats.team1.ballPossession) / totalPoss : 50;
+    int poss = s_humanIsTeam1 ? poss1Pct : (100 - poss1Pct);
     int sot = s_humanIsTeam1 ? stats.team1.onTarget : stats.team2.onTarget;
 
     switch (c.type) {

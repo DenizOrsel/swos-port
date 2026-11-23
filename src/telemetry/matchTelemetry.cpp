@@ -732,8 +732,14 @@ MatchTelemetrySnapshot captureMatchTelemetrySnapshot()
     snap.shots2 = stats.team2.goalAttempts;
     snap.onTarget1 = stats.team1.onTarget;
     snap.onTarget2 = stats.team2.onTarget;
-    snap.possession1 = stats.team1.ballPossession;
-    snap.possession2 = stats.team2.ballPossession;
+    int totalPossession = stats.team1.ballPossession + stats.team2.ballPossession;
+    if (totalPossession > 0) {
+        snap.possession1 = (100 * stats.team1.ballPossession) / totalPossession;
+        snap.possession2 = 100 - snap.possession1;
+    } else {
+        snap.possession1 = 50;
+        snap.possession2 = 50;
+    }
     snap.corners1 = stats.team1.cornersWon;
     snap.corners2 = stats.team2.cornersWon;
     snap.fouls1 = stats.team1.foulsConceded;

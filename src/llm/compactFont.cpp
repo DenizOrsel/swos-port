@@ -135,6 +135,68 @@ bool isMentionTokenChar(char c)
     return std::isalnum(uc) != 0 || uc == '_' || uc == '-';
 }
 
+// Truncates fractional digits on percentages: "%57,23" / "%57.23" -> "%57", "57,23%" / "57.23%" -> "57%".
+std::string stripPercentageDecimals(const std::string& s)
+{
+    if (s.find('%') == std::string::npos)
+        return s;
+
+    std::string out;
+    out.reserve(s.size());
+    auto isDig = [](char c) { return c >= '0' && c <= '9'; };
+    size_t i = 0;
+    while (i < s.size()) {
+        // Pattern 1: "%57,23" or "%57.23"
+        if (s[i] == '%' && i + 1 < s.size() && isDig(s[i + 1])) {
+            size_t j = i + 1;
+            while (j < s.size() && isDig(s[j]) && (j - (i + 1)) < 3)
+                ++j;
+            if (j + 1 < s.size() && (s[j] == '.' || s[j] == ',') && isDig(s[j + 1])) {
+                size_t k = j + 1;
+                while (k < s.size() && isDig(s[k]))
+                    ++k;
+                out.append(s, i, j - i);
+                i = k;
+                continue;
+            }
+        }
+        // Pattern 2: "57,23%" or "57.23%"
+        if (isDig(s[i]) && (i == 0 || !isDig(s[i - 1]))) {
+            size_t j = i;
+            while (j < s.size() && isDig(s[j]) && (j - i) < 3)
+                ++j;
+            if (j + 1 < s.size() && (s[j] == '.' || s[j] == ',') && isDig(s[j + 1])) {
+                size_t k = j + 1;
+                while (k < s.size() && isDig(s[k]))
+                    ++k;
+                if (k < s.size() && s[k] == '%') {
+                    out.append(s, i, j - i);
+                    out.push_back('%');
+                    i = k + 1;
+                    continue;
+                }
+            }
+        }
+        out.push_back(s[i++]);
+    }
+    return out;
+}
+
+bool needsDisplaySanitize(const std::string& text)
+{
+    bool hasPct = false;
+    bool hasFrac = false;
+    for (unsigned char c : text) {
+        if (c >= 0x80)
+            return true;
+        if (c == '%')
+            hasPct = true;
+        else if (c == '.' || c == ',')
+            hasFrac = true;
+    }
+    return hasPct && hasFrac;
+}
+
 } // namespace
 
 SDL_Texture *getCompactFontAtlas(SDL_Renderer *r)
@@ -178,6 +240,13 @@ SDL_Texture *getCompactFontAtlas(SDL_Renderer *r)
 
 int measureCompactTextUnits(const std::string& text)
 {
+    if (needsDisplaySanitize(text)) {
+        std::string clean = sanitizeCompactMixedCase(text);
+        int w = 0;
+        for (char c : clean)
+            w += charAdvanceUnits(c);
+        return w > 0 ? w - 1 : 0;
+    }
     int w = 0;
     for (char c : text)
         w += charAdvanceUnits(c);
@@ -244,7 +313,11 @@ std::string sanitizeCompactMixedCase(const std::string& in)
             case 0x017E: pushChar('z'); break;
             case 0x0110: pushChar('D'); break;
             case 0x0111: pushChar('d'); break;
-            default: break;
+            default:
+                // Silently drop Unicode combining diacritical marks (e.g. NFD Turkish I+dot, c+cedilla, g+breve)
+                if (cp >= 0x0300 && cp <= 0x036F)
+                    break;
+                break;
             }
         } else if (ch == 0xE2 && i + 2 < in.size()) {
             // Common UTF-8 punctuation: smart quotes, dashes, ellipsis
@@ -262,11 +335,32 @@ std::string sanitizeCompactMixedCase(const std::string& in)
                 pushChar('.'); pushChar('.'); pushChar('.');
                 i += 2;
             }
+        } else if ((ch & 0xF0) == 0xE0 && i + 2 < in.size()) {
+            i += 2; // skip other 3-byte UTF-8 sequences
+        } else if ((ch & 0xF8) == 0xF0 && i + 3 < in.size()) {
+            i += 3; // skip 4-byte UTF-8 emojis
+        } else {
+            // Single-byte Windows-1254 / ISO-8859-9 Turkish fallback
+            switch (ch) {
+            case 0xC7: pushChar('C'); break;
+            case 0xE7: pushChar('c'); break;
+            case 0xD0: pushChar('G'); break;
+            case 0xF0: pushChar('g'); break;
+            case 0xDD: pushChar('I'); break;
+            case 0xFD: pushChar('i'); break;
+            case 0xD6: pushChar('O'); break;
+            case 0xF6: pushChar('o'); break;
+            case 0xDE: pushChar('S'); break;
+            case 0xFE: pushChar('s'); break;
+            case 0xDC: pushChar('U'); break;
+            case 0xFC: pushChar('u'); break;
+            default: break;
+            }
         }
     }
     while (!out.empty() && out.back() == ' ')
         out.pop_back();
-    return out;
+    return stripPercentageDecimals(out);
 }
 
 std::vector<std::string> wrapCompactTextUnits(const std::string& rawText, int maxUnits)
@@ -330,11 +424,18 @@ float drawCompactText(SDL_Renderer *r, SDL_Texture *atlas, float x, float y, flo
     if (!r || !atlas || text.empty())
         return x;
 
+    std::string sanitized;
+    const std::string& drawStr = needsDisplaySanitize(text)
+        ? (sanitized = sanitizeCompactMixedCase(text))
+        : text;
+    if (drawStr.empty())
+        return x;
+
     auto renderPass = [&](float ox, float oy, Uint8 cr, Uint8 cg, Uint8 cb, Uint8 ca) {
         SDL_SetTextureColorMod(atlas, cr, cg, cb);
         SDL_SetTextureAlphaMod(atlas, ca);
         float curX = x + ox;
-        for (char c : text) {
+        for (char c : drawStr) {
             unsigned char uc = static_cast<unsigned char>(c);
             if (uc < kMiniFontFirst || uc >= kMiniFontFirst + kMiniFontCount) {
                 curX += 3.0f * px;

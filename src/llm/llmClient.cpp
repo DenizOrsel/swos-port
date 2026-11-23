@@ -273,16 +273,24 @@ bool parseJsonStringAt(const std::string& json, size_t quotePos, std::string& ou
                         else if (h >= 'A' && h <= 'F') cp |= static_cast<unsigned int>(h - 'A' + 10);
                     }
                     i += 4;
-                    if (cp >= 0x20 && cp <= 0x7E)
+                    if (cp >= 0x20 && cp <= 0x7E) {
                         out.push_back(static_cast<char>(cp));
-                    else if (cp == 0x2019 || cp == 0x2018)
+                    } else if (cp == 0x2019 || cp == 0x2018) {
                         out.push_back('\'');
-                    else if (cp == 0x201C || cp == 0x201D)
+                    } else if (cp == 0x201C || cp == 0x201D) {
                         out.push_back('"');
-                    else if (cp == 0x2013 || cp == 0x2014)
+                    } else if (cp == 0x2013 || cp == 0x2014) {
                         out.push_back('-');
-                    else
+                    } else if (cp >= 0x80 && cp <= 0x7FF) {
+                        out.push_back(static_cast<char>(0xC0u | ((cp >> 6) & 0x1Fu)));
+                        out.push_back(static_cast<char>(0x80u | (cp & 0x3Fu)));
+                    } else if (cp >= 0x800 && cp <= 0xFFFF) {
+                        out.push_back(static_cast<char>(0xE0u | ((cp >> 12) & 0x0Fu)));
+                        out.push_back(static_cast<char>(0x80u | ((cp >> 6) & 0x3Fu)));
+                        out.push_back(static_cast<char>(0x80u | (cp & 0x3Fu)));
+                    } else {
                         out.push_back(' ');
+                    }
                 }
                 break;
             default:
@@ -389,6 +397,7 @@ std::vector<FanPersonality> defaultFanPersonalities()
         { "pessimist", "You are a nervous, glass-half-empty supporter who always fears a late collapse or missed chance." },
         { "joker", "You are a witty 1997 terrace comedian who reacts with cheeky banter and dry humour." },
         { "troll", "You are a mischievous chat troll who loves winding up rival supporters, teasing other commenters in the stream, and mocking missed chances or shaky defending with cheeky sarcasm." },
+        { "hothead", "You are a fiery, foul-mouthed 1997 terrace hothead who vents raw frustration and wild hype using gritty stadium slang and exclamations (in English: FUK!, damn!, shit!, bloody hell!; in Turkish: AMK!, Hasktir yaa!, Hay Amua!, Oha lan!) strictly about the football action, missed chances, ref calls, and goals - never attacking real people or using slurs." },
     };
 }
 
