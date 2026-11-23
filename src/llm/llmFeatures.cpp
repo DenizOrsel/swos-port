@@ -249,18 +249,27 @@ std::string pickCareerSquadVoice(std::string& outClubName, std::string& outPlaye
         outClubName = "THE CLUB";
 
     uint16_t numPlayers = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]);
-    if (numPlayers == 0 || numPlayers > kMaxCareerSquadPlayers)
+    if (numPlayers == 0 || numPlayers > kCurrentMatchPlayersSize)
         return {};
 
+    const uint8_t *matchPlayers = &SwosVM::g_memByte[CareerOffsets::kCurrentMatchPlayers];
+    bool seenSlot[kCurrentMatchPlayersSize] = {};
     std::vector<std::pair<std::string, std::string>> candidates;
     for (uint16_t i = 0; i < numPlayers; ++i) {
+        uint8_t slot = matchPlayers[i];
+        if (slot >= kCurrentMatchPlayersSize || seenSlot[slot])
+            continue;
+        seenSlot[slot] = true;
         size_t ofs = CareerOffsets::kCareerTeam +
                      HotseatInternal::kTeamFileHeaderSize +
-                     static_cast<size_t>(i) * HotseatInternal::kPlayerFileSize;
-        const auto *pf = reinterpret_cast<const PlayerFile *>(&SwosVM::g_memByte[ofs]);
-        if (pf->playerName[0] == '\0')
+                     static_cast<size_t>(slot) * HotseatInternal::kPlayerFileSize;
+        if (ofs + HotseatInternal::kPlayerFileSize > CareerOffsets::kCareerTeam + kCareerTeamBufferSize)
             continue;
-        candidates.emplace_back(pf->playerName, playerPositionName(pf->positionAndFace));
+        const auto *pf = reinterpret_cast<const PlayerFile *>(&SwosVM::g_memByte[ofs]);
+        std::string pName = cleanSwosPlayerName(pf->playerName, sizeof(pf->playerName));
+        if (pName.empty() || pName.rfind("*ERR*", 0) == 0)
+            continue;
+        candidates.emplace_back(std::move(pName), playerPositionName(pf->positionAndFace));
     }
     if (candidates.empty())
         return {};
@@ -761,26 +770,37 @@ void checkCareerSquadTransfersLlm()
         return;
 
     uint16_t numPlayers = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]);
-    if (numPlayers == 0 || numPlayers > kMaxCareerSquadPlayers)
+    if (numPlayers == 0 || numPlayers > kCurrentMatchPlayersSize)
         return;
 
     const auto *hdr = reinterpret_cast<const TeamFileHeader *>(&SwosVM::g_memByte[CareerOffsets::kCareerTeam]);
     int16_t teamId = *reinterpret_cast<const int16_t *>(&SwosVM::g_memByte[CareerOffsets::kSelTeamNumber]);
     std::string clubName = hdr->teamName[0] ? std::string(hdr->teamName) : std::string("THE CLUB");
 
+    // SWOS keeps active career squad slot indices in currentMatchPlayers[0..careerNumPlayers-1].
+    // Removed/exchanged slots stay in careerTeam overwritten with "*ERR* ", while newly signed players
+    // can occupy higher slot indices >= careerNumPlayers, so we MUST index via currentMatchPlayers.
+    const uint8_t *matchPlayers = &SwosVM::g_memByte[CareerOffsets::kCurrentMatchPlayers];
+    bool seenSlot[kCurrentMatchPlayersSize] = {};
     std::vector<SquadPlayerSnapshot> currentSquad;
     currentSquad.reserve(numPlayers);
     for (uint16_t i = 0; i < numPlayers; ++i) {
+        uint8_t slot = matchPlayers[i];
+        if (slot >= kCurrentMatchPlayersSize || seenSlot[slot])
+            continue;
+        seenSlot[slot] = true;
         size_t ofs = CareerOffsets::kCareerTeam +
                      HotseatInternal::kTeamFileHeaderSize +
-                     static_cast<size_t>(i) * HotseatInternal::kPlayerFileSize;
+                     static_cast<size_t>(slot) * HotseatInternal::kPlayerFileSize;
+        if (ofs + HotseatInternal::kPlayerFileSize > CareerOffsets::kCareerTeam + kCareerTeamBufferSize)
+            continue;
         const auto *pf = reinterpret_cast<const PlayerFile *>(&SwosVM::g_memByte[ofs]);
         std::string pName = cleanSwosPlayerName(pf->playerName, sizeof(pf->playerName));
-        if (!pName.empty()) {
+        if (!pName.empty() && pName.rfind("*ERR*", 0) != 0) {
             currentSquad.push_back({
                 std::move(pName),
                 playerPositionName(pf->positionAndFace),
-                formatExactCareerPlayerMarketValue(i, pf)
+                formatExactCareerPlayerMarketValue(slot, pf)
             });
         }
     }
@@ -818,29 +838,61 @@ void checkCareerSquadTransfersLlm()
     if (added.size() > 2 || removed.size() > 2)
         return;
 
-    std::string prompt;
-    if (!added.empty()) {
-        const auto& signedP = added.front();
-        prompt = clubName + " just completed the signing of \"" + signedP.name + "\"" +
-                 " (Position: " + signedP.position + ", Exact In-Game Market Value: " + signedP.marketValue + ").";
-        if (!removed.empty()) {
-            const auto& leftP = removed.front();
-            prompt += " \"" + leftP.name + "\" (Position: " + leftP.position + ", Exact In-Game Market Value: " + leftP.marketValue + ") has departed the club.";
+    auto formatPlayerList = [](const std::vector<SquadPlayerSnapshot>& list) {
+        std::string s;
+        for (size_t i = 0; i < list.size(); ++i) {
+            if (i > 0) s += "; ";
+            s += "\"" + list[i].name + "\" (Position: " + list[i].position +
+                 ", Exact In-Game Market Value: " + list[i].marketValue + ")";
         }
-        prompt += "\nSTRICT RULES: Keep the player's name EXACTLY as written (\"" + signedP.name + "\") - NEVER guess or invent a different first name or alter spelling. "
-                  "State the EXACT market value (" + signedP.marketValue + ") and position (" + signedP.position + ") without converting currency or changing the number.\n"
-                  "Write a lively 2-3 sentence 1997 transfer desk bulletin with a brief quote from the new signing or rival manager. Plain text only.";
+        return s;
+    };
+    auto formatNamesOnly = [](const std::vector<SquadPlayerSnapshot>& list) {
+        std::string s;
+        for (size_t i = 0; i < list.size(); ++i) {
+            if (i > 0) s += ", ";
+            s += "\"" + list[i].name + "\"";
+        }
+        return s;
+    };
+
+    const std::string addedSummary = formatPlayerList(added);
+    const std::string removedSummary = formatPlayerList(removed);
+    logInfo("LLM Transfer Desk detected move for %s | IN: [%s] | OUT: [%s]",
+        clubName.c_str(), addedSummary.c_str(), removedSummary.c_str());
+
+    std::string prompt;
+    if (!added.empty() && !removed.empty()) {
+        prompt = "PLAYER EXCHANGE TRANSFER DEAL FOR " + clubName + ":\n"
+                 "- NEW SIGNING(S) JOINING " + clubName + " (INCOMING): " + addedSummary + "\n"
+                 "- DEPARTING PLAYER(S) LEAVING " + clubName + " IN EXCHANGE (OUTGOING): " + removedSummary + "\n"
+                 "STRICT RULES:\n"
+                 "1) " + formatNamesOnly(added) + " JOINED / SIGNED FOR " + clubName + ". " +
+                 formatNamesOnly(removed) + " LEFT / DEPARTED " + clubName + " as part of the swap deal. NEVER reverse who joined and who left!\n"
+                 "2) Copy every player's name EXACTLY as written - NEVER guess or alter spelling.\n"
+                 "3) Quote each player's EXACT position and EXACT GBP market value without converting currency or changing numbers.\n"
+                 "Write a lively 2-3 sentence 1997 transfer desk bulletin covering this swap deal, with a brief quote from the new signing or manager. Plain text only.";
+    } else if (!added.empty()) {
+        prompt = "INCOMING TRANSFER SIGNING FOR " + clubName + ":\n"
+                 "- NEW SIGNING(S) JOINING " + clubName + ": " + addedSummary + "\n"
+                 "STRICT RULES:\n"
+                 "1) " + formatNamesOnly(added) + " JOINED / SIGNED FOR " + clubName + ".\n"
+                 "2) Copy every player's name EXACTLY as written - NEVER guess or invent a different first name or alter spelling.\n"
+                 "3) Quote each player's EXACT position and EXACT GBP market value without converting currency or changing numbers.\n"
+                 "Write a lively 2-3 sentence 1997 transfer desk bulletin with a brief quote from the new signing or rival manager. Plain text only.";
     } else {
-        const auto& leftP = removed.front();
-        prompt = "\"" + leftP.name + "\" (Position: " + leftP.position + ", Exact In-Game Market Value: " + leftP.marketValue + ") has just left " + clubName + ".\n"
-                 "STRICT RULES: Keep the player's name EXACTLY as written (\"" + leftP.name + "\") - NEVER alter spelling or invent another name. "
-                 "State the EXACT market value (" + leftP.marketValue + ") and position (" + leftP.position + ") without converting currency or changing the number.\n"
+        prompt = "OUTGOING TRANSFER DEPARTURE FROM " + clubName + ":\n"
+                 "- DEPARTING PLAYER(S) LEAVING " + clubName + ": " + removedSummary + "\n"
+                 "STRICT RULES:\n"
+                 "1) " + formatNamesOnly(removed) + " LEFT / DEPARTED " + clubName + " (they did NOT sign in!).\n"
+                 "2) Copy every player's name EXACTLY as written - NEVER alter spelling or invent another name.\n"
+                 "3) Quote each player's EXACT position and EXACT GBP market value without converting currency or changing numbers.\n"
                  "Write a lively 2-3 sentence 1997 transfer desk bulletin with a brief reaction from the fans or dressing room. Plain text only.";
     }
 
     uint64_t reqId = enqueueLlmRequest(
         "You are a sharp 1997 football transfer desk journalist covering deadline moves and squad shake-ups. "
-        "CRITICAL: Copy every player name letter-for-letter as given (do not expand initials or change spelling), and always quote the exact position and exact GBP market value provided without converting currency. Plain text only.",
+        "CRITICAL: Never confuse incoming signings with outgoing departures. Copy every player name letter-for-letter as given (do not expand initials or change spelling), and always quote the exact position and exact GBP market value provided without converting currency. Plain text only.",
         prompt);
     if (reqId == 0)
         return;

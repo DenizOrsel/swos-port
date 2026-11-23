@@ -256,13 +256,21 @@ std::vector<SponsorStarterInfo> extractStartingXi(const TeamGame *team)
     std::vector<std::pair<std::string, int>> careerSeasonGoals;
     if (swos.g_gameType == kGameTypeCareer) {
         uint16_t numPlayers = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]);
-        if (numPlayers > 0 && numPlayers <= kMaxCareerSquadPlayers) {
+        if (numPlayers > 0 && numPlayers <= kCurrentMatchPlayersSize) {
+            const uint8_t *matchPlayers = &SwosVM::g_memByte[CareerOffsets::kCurrentMatchPlayers];
+            bool seenSlot[kCurrentMatchPlayersSize] = {};
             for (uint16_t i = 0; i < numPlayers; ++i) {
+                uint8_t slot = matchPlayers[i];
+                if (slot >= kCurrentMatchPlayersSize || seenSlot[slot])
+                    continue;
+                seenSlot[slot] = true;
                 size_t ofs = CareerOffsets::kCareerTeam +
                              HotseatInternal::kTeamFileHeaderSize +
-                             static_cast<size_t>(i) * HotseatInternal::kPlayerFileSize;
+                             static_cast<size_t>(slot) * HotseatInternal::kPlayerFileSize;
+                if (ofs + HotseatInternal::kPlayerFileSize > CareerOffsets::kCareerTeam + kCareerTeamBufferSize)
+                    continue;
                 const auto *pf = reinterpret_cast<const PlayerFile *>(&SwosVM::g_memByte[ofs]);
-                if (pf->playerName[0] == '\0')
+                if (pf->playerName[0] == '\0' || std::strncmp(pf->playerName, "*ERR*", 5) == 0)
                     continue;
                 int g = static_cast<int>(pf->unk_2) + static_cast<int>(pf->unk_3) +
                         static_cast<int>(pf->unk_4) + static_cast<int>(pf->unk_5);
