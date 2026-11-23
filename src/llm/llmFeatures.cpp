@@ -20,13 +20,17 @@
 #include "stats.h"
 #include "swos.h"
 #include "text.h"
+#include "util.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstring>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
+
+extern void cseg_2484B();
 
 namespace {
 
@@ -63,23 +67,30 @@ const char *playerPositionName(byte positionAndFace)
     }
 }
 
-std::string formatPlayerMarketValue(byte priceIdx)
+std::string cleanSwosPlayerName(const char *raw, size_t maxBytes)
 {
-    static constexpr uint16_t kValueBases[] = {
-        0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85,
-        90, 95, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200, 225,
-        250, 275, 300, 350, 400, 450, 500, 550, 600, 650, 700, 750, 800, 850,
-        900, 950, 1000, 1100, 1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900,
-        2000, 2250, 2500, 2750, 3000, 3500, 4000, 4500, 5000, 6000, 7000, 8000,
-        9000, 10000, 11000, 12000, 13000, 14000, 15000
-    };
-    static constexpr uint8_t kPriceToBaseIdx[50] = {
-        5, 5, 6, 8, 10, 13, 15, 17, 20, 21, 23, 25, 26, 28, 30, 32, 34, 35,
-        37, 38, 39, 40, 41, 42, 43, 44, 45, 47, 48, 49, 51, 53, 54, 56, 57,
-        58, 59, 61, 62, 63, 65, 66, 67, 68, 69, 70, 71, 73, 76, 76
-    };
-    size_t idx = std::min<size_t>(priceIdx, 49);
-    uint16_t thousands = kValueBases[kPriceToBaseIdx[idx]];
+    std::string out;
+    if (!raw)
+        return out;
+    for (size_t i = 0; i < maxBytes && raw[i] != '\0'; ++i) {
+        unsigned char ch = static_cast<unsigned char>(raw[i]);
+        if (ch >= 0x20 && ch <= 0x7E) {
+            out.push_back(static_cast<char>(ch));
+        } else if (ch == static_cast<unsigned char>(kAUmlautChar)) {
+            out.push_back('A');
+        } else if (ch == static_cast<unsigned char>(kOUmlautChar)) {
+            out.push_back('O');
+        } else if (ch == static_cast<unsigned char>(kUUmlautChar)) {
+            out.push_back('U');
+        }
+    }
+    while (!out.empty() && out.back() == ' ')
+        out.pop_back();
+    return out;
+}
+
+std::string formatThousandsPounds(uint16_t thousands)
+{
     char buf[32];
     if (thousands >= 1000) {
         if (thousands % 1000 == 0)
@@ -92,6 +103,32 @@ std::string formatPlayerMarketValue(byte priceIdx)
         std::snprintf(buf, sizeof(buf), "GBP %uK", thousands);
     }
     return buf;
+}
+
+std::string formatExactCareerPlayerMarketValue(uint16_t playerIdx, const PlayerFile *pf)
+{
+    if (!pf)
+        return "GBP 0";
+    if (pf->someFlag == 0x9A)
+        return "Reserve";
+    if ((pf->positionAndFace & 2u) != 0)
+        return "On Loan";
+
+    // Invoke SWOS's exact native market-value index function (cseg_2484B) which applies
+    // avgTeamValues[pf->price] + live career form/performance modifiers (cseg_94C7E),
+    // then look up the exact pound figure in VM table avgTeamValueBases (offset 331612).
+    uint16_t valIdx = 1;
+    uint32_t playerHeaderVmOfs = static_cast<uint32_t>(
+        CareerOffsets::kCareerTeam + static_cast<size_t>(playerIdx) * HotseatInternal::kPlayerFileSize);
+    invokeWithSaved68kRegisters([&]() {
+        A0 = playerHeaderVmOfs;
+        cseg_2484B();
+        valIdx = D0.asWord();
+    });
+    valIdx = std::clamp<uint16_t>(valIdx, 1, 80);
+    constexpr size_t kAvgTeamValueBasesOfs = 331612;
+    uint16_t thousands = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[kAvgTeamValueBasesOfs + static_cast<size_t>(valIdx) * 2]);
+    return formatThousandsPounds(thousands);
 }
 
 const char *pitchConditionName(int pitchType)
@@ -422,6 +459,27 @@ LlmMatchContext buildLlmMatchContext(const TeamGame *preMatchTop = nullptr, cons
             ctx.team2Human = (tf2->teamControls == kPlayerCoach || tf2->teamControls == kCoach);
     }
 
+    // Career fallback: match active career club name directly so away matches always identify the human club accurately
+    if (ctx.team1Human == ctx.team2Human && swos.g_gameType == kGameTypeCareer) {
+        std::string careerClub;
+        const auto& mgr = HotseatCareerManager::get();
+        if (mgr.isActive() && mgr.activePlayerIndex() >= 0 && mgr.activePlayerIndex() < mgr.numPlayers()) {
+            careerClub = sanitizeAsciiUpper(mgr.activePlayer().teamName);
+        } else {
+            const auto *hdr = reinterpret_cast<const TeamFileHeader *>(&SwosVM::g_memByte[CareerOffsets::kCareerTeam]);
+            if (hdr && hdr->teamName[0] != '\0')
+                careerClub = sanitizeAsciiUpper(hdr->teamName);
+        }
+        if (!careerClub.empty()) {
+            bool m1 = (sanitizeAsciiUpper(ctx.team1) == careerClub);
+            bool m2 = (sanitizeAsciiUpper(ctx.team2) == careerClub);
+            if (m1 != m2) {
+                ctx.team1Human = m1;
+                ctx.team2Human = m2;
+            }
+        }
+    }
+
     ctx.competition = gameModeName();
     if (isPitchTypeResolved()) {
         ctx.pitchCondition = pitchConditionName(getPitchType());
@@ -433,7 +491,7 @@ std::string formatLlmMatchInfoBase(const LlmMatchContext& ctx)
 {
     std::string info = "Competition: " + ctx.competition;
     if (!ctx.pitchCondition.empty())
-        info += ", Pitch: " + ctx.pitchCondition;
+        info += ", Football pitch grass surface: " + ctx.pitchCondition;
     info += "\n" + ctx.team1 + (ctx.team1Human ? " [HUMAN]" : " [CPU]");
     if (!ctx.coach1.empty()) info += " (Coach: " + ctx.coach1 + ")";
     if (!ctx.players1.empty()) info += " | Players: " + ctx.players1;
@@ -717,11 +775,12 @@ void checkCareerSquadTransfersLlm()
                      HotseatInternal::kTeamFileHeaderSize +
                      static_cast<size_t>(i) * HotseatInternal::kPlayerFileSize;
         const auto *pf = reinterpret_cast<const PlayerFile *>(&SwosVM::g_memByte[ofs]);
-        if (pf->playerName[0] != '\0') {
+        std::string pName = cleanSwosPlayerName(pf->playerName, sizeof(pf->playerName));
+        if (!pName.empty()) {
             currentSquad.push_back({
-                pf->playerName,
+                std::move(pName),
                 playerPositionName(pf->positionAndFace),
-                formatPlayerMarketValue(pf->price)
+                formatExactCareerPlayerMarketValue(i, pf)
             });
         }
     }
@@ -762,23 +821,26 @@ void checkCareerSquadTransfersLlm()
     std::string prompt;
     if (!added.empty()) {
         const auto& signedP = added.front();
-        prompt = clubName + " just completed the signing of " + signedP.name +
-                 " (Position: " + signedP.position + ", Market Value: " + signedP.marketValue + ").";
+        prompt = clubName + " just completed the signing of \"" + signedP.name + "\"" +
+                 " (Position: " + signedP.position + ", Exact In-Game Market Value: " + signedP.marketValue + ").";
         if (!removed.empty()) {
             const auto& leftP = removed.front();
-            prompt += " " + leftP.name + " (Position: " + leftP.position + ", Market Value: " + leftP.marketValue + ") has departed the club.";
+            prompt += " \"" + leftP.name + "\" (Position: " + leftP.position + ", Exact In-Game Market Value: " + leftP.marketValue + ") has departed the club.";
         }
-        prompt += " Write a lively 2-3 sentence 1997 transfer desk bulletin referencing the exact position (" + signedP.position +
-                  ") and market value (" + signedP.marketValue + "), including a brief quote from the new signing or rival manager. Plain text only.";
+        prompt += "\nSTRICT RULES: Keep the player's name EXACTLY as written (\"" + signedP.name + "\") - NEVER guess or invent a different first name or alter spelling. "
+                  "State the EXACT market value (" + signedP.marketValue + ") and position (" + signedP.position + ") without converting currency or changing the number.\n"
+                  "Write a lively 2-3 sentence 1997 transfer desk bulletin with a brief quote from the new signing or rival manager. Plain text only.";
     } else {
         const auto& leftP = removed.front();
-        prompt = leftP.name + " (Position: " + leftP.position + ", Market Value: " + leftP.marketValue + ") has just left " + clubName + ". "
-                 "Write a lively 2-3 sentence 1997 transfer desk bulletin referencing their exact position (" + leftP.position +
-                 ") and market value (" + leftP.marketValue + ") with a brief reaction from the fans or dressing room. Plain text only.";
+        prompt = "\"" + leftP.name + "\" (Position: " + leftP.position + ", Exact In-Game Market Value: " + leftP.marketValue + ") has just left " + clubName + ".\n"
+                 "STRICT RULES: Keep the player's name EXACTLY as written (\"" + leftP.name + "\") - NEVER alter spelling or invent another name. "
+                 "State the EXACT market value (" + leftP.marketValue + ") and position (" + leftP.position + ") without converting currency or changing the number.\n"
+                 "Write a lively 2-3 sentence 1997 transfer desk bulletin with a brief reaction from the fans or dressing room. Plain text only.";
     }
 
     uint64_t reqId = enqueueLlmRequest(
-        "You are a sharp 1997 football transfer desk journalist covering deadline moves and squad shake-ups. Always use the exact player position and market value provided. Plain text only.",
+        "You are a sharp 1997 football transfer desk journalist covering deadline moves and squad shake-ups. "
+        "CRITICAL: Copy every player name letter-for-letter as given (do not expand initials or change spelling), and always quote the exact position and exact GBP market value provided without converting currency. Plain text only.",
         prompt);
     if (reqId == 0)
         return;
@@ -800,14 +862,46 @@ void beginPreMatchScoutingRequest(const TeamGame *topTeam, const TeamGame *botto
         return;
 
     LlmMatchContext ctx = buildLlmMatchContext(topTeam, bottomTeam);
-    std::string prompt = "Pre-match tunnel briefing:\n" + formatLlmMatchInfoBase(ctx);
-    prompt += "\nGive a sharp, authentic 3-sentence assistant manager pre-match briefing naming key opposition threats and tactical focus. "
-              "Only mention the pitch condition if Pitch is explicitly listed above; never invent weather. Plain text only.";
+    std::string prompt;
+    std::string sys;
 
-    s_preMatchRequestId = enqueueLlmRequest(
-        "You are an experienced 1997 football assistant manager speaking to the boss in the tunnel before kickoff. "
-        "Be specific, tactical, and atmospheric using only the real club/player/pitch facts given. Plain text only.",
-        prompt);
+    if (ctx.team1Human != ctx.team2Human) {
+        const std::string& myClub = ctx.team1Human ? ctx.team1 : ctx.team2;
+        const std::string& myPlayers = ctx.team1Human ? ctx.players1 : ctx.players2;
+        const std::string& oppClub = ctx.team1Human ? ctx.team2 : ctx.team1;
+        const std::string& oppCoach = ctx.team1Human ? ctx.coach2 : ctx.coach1;
+        const std::string& oppPlayers = ctx.team1Human ? ctx.players2 : ctx.players1;
+
+        prompt = "Pre-match tunnel briefing:\n";
+        prompt += "Competition: " + ctx.competition;
+        if (!ctx.pitchCondition.empty())
+            prompt += ", Football pitch grass surface: " + ctx.pitchCondition;
+        prompt += "\nYOUR CLUB (the manager's own team that YOU work for): " + myClub;
+        if (!myPlayers.empty())
+            prompt += " | Our own players (DO NOT warn against them as opponents): " + myPlayers;
+        prompt += "\nTODAY'S OPPONENT (the rival club we are playing against): " + oppClub;
+        if (!oppCoach.empty())
+            prompt += " (Coach: " + oppCoach + ")";
+        if (!oppPlayers.empty())
+            prompt += " | OPPONENT THREATS to be cautious about: " + oppPlayers;
+        prompt += "\nGive a sharp, authentic 3-sentence assistant manager pre-match briefing to the " + myClub + " boss.\n"
+                  "CRITICAL RULES:\n"
+                  "- You are the assistant manager of " + myClub + ". Warn ONLY about " + oppClub + "'s players (" + oppPlayers + ") as opposition threats.\n"
+                  "- NEVER describe " + myClub + " or " + myClub + "'s players as opponents or threats to watch out for.\n"
+                  "- Only mention the football pitch surface if explicitly listed above; never invent weather. Plain text only.";
+
+        sys = "You are the loyal 1997 assistant manager of " + myClub + " speaking to your boss in the tunnel before facing " + oppClub + ". "
+              "Be specific, tactical, and atmospheric. NEVER confuse your own club (" + myClub + ") with the opponent (" + oppClub + "): "
+              "only scout and warn against " + oppClub + "'s players. Plain text only.";
+    } else {
+        prompt = "Pre-match tunnel briefing:\n" + formatLlmMatchInfoBase(ctx);
+        prompt += "\nGive a sharp, authentic 3-sentence tactical pre-match preview naming key players on both sides. "
+                  "Only mention the football pitch surface if explicitly listed above; never invent weather. Plain text only.";
+        sys = "You are an experienced 1997 football tactical analyst previewing a head-to-head match before kickoff. "
+              "Be specific, tactical, and atmospheric using only the real club/player/pitch facts given. Plain text only.";
+    }
+
+    s_preMatchRequestId = enqueueLlmRequest(sys, prompt);
 }
 
 void showPreMatchScoutingIfReady()
