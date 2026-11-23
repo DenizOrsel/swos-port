@@ -298,8 +298,8 @@ std::vector<SupporterTweet> parseSupporterTweetBatch(const std::string& rawRespo
             handle.resize(14);
         if (handle.empty() || msg.empty())
             continue;
-        if (msg.size() > 96)
-            msg.resize(96);
+        if (msg.size() > 136)
+            msg.resize(136);
 
         SupporterTweet tw;
         tw.handle = std::move(handle);
@@ -350,8 +350,8 @@ void pushPunditMessageToStream(const std::string& rawMessage)
 
     if (msg.empty())
         return;
-    if (msg.size() > 140)
-        msg.resize(140);
+    if (msg.size() > 185)
+        msg.resize(185);
 
     SupporterTweet tw;
     tw.side = SupporterSide::kPundit;
@@ -541,7 +541,8 @@ void drawSupporterStreamOverlay()
         return;
     }
 
-    int maxPanelUnitsH = static_cast<int>((static_cast<float>(vp.h) * 0.46f) / px);
+    float heightFrac = static_cast<float>(std::clamp(cfg.telemetry.streamBoxHeightPct, 30, 85)) / 100.0f;
+    int maxPanelUnitsH = static_cast<int>((static_cast<float>(vp.h) * heightFrac) / px);
     int maxBodyBottom = maxPanelUnitsH - 4;
 
     struct LaidOutTweet {
@@ -562,7 +563,7 @@ void drawSupporterStreamOverlay()
         std::string handleLabel = isPundit ? std::string() : (tw.handle + ": ");
         int handleW = isPundit ? 0 : (measureMiniTextUnits(handleLabel) + 2);
         int firstLineAvail = std::max(0, kTextMaxUnits - handleW);
-        auto lines = wrapInlineMessage(tw.message, firstLineAvail, kTextMaxUnits, isPundit ? 4 : 3);
+        auto lines = wrapInlineMessage(tw.message, firstLineAvail, kTextMaxUnits, isPundit ? 5 : 4);
         int blockH = std::max(kAvatarSize + 1, static_cast<int>(lines.size()) * kLineStepUnits) + kTweetGapUnits;
 
         if (curY + blockH > maxBodyBottom)

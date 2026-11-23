@@ -34,6 +34,7 @@ struct LlmTelemetryConfig {
     bool exportMatchJson = false;
     int streamUpdateSeconds = 18;
     int maxVisibleTweets = 5;
+    int streamBoxHeightPct = 62;
 };
 
 struct LlmConfig {

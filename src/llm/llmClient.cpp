@@ -121,6 +121,7 @@ void writeAiIni(const std::string& path, const LlmConfig& cfg)
     ini.SetBoolValue("telemetry", "exportMatchJson", cfg.telemetry.exportMatchJson);
     ini.SetLongValue("telemetry", "streamUpdateSeconds", cfg.telemetry.streamUpdateSeconds);
     ini.SetLongValue("telemetry", "maxVisibleTweets", cfg.telemetry.maxVisibleTweets);
+    ini.SetLongValue("telemetry", "streamBoxHeightPct", cfg.telemetry.streamBoxHeightPct);
 
     const auto& plist = cfg.personalities.empty() ? defaultFanPersonalities() : cfg.personalities;
     std::string namesList;
@@ -466,6 +467,8 @@ bool loadLlmConfig(const char *iniPath /* = nullptr */)
         static_cast<int>(ini.GetLongValue("telemetry", "streamUpdateSeconds", s_config.telemetry.streamUpdateSeconds)), 5, 120);
     s_config.telemetry.maxVisibleTweets = std::clamp(
         static_cast<int>(ini.GetLongValue("telemetry", "maxVisibleTweets", s_config.telemetry.maxVisibleTweets)), 3, 6);
+    s_config.telemetry.streamBoxHeightPct = std::clamp(
+        static_cast<int>(ini.GetLongValue("telemetry", "streamBoxHeightPct", s_config.telemetry.streamBoxHeightPct)), 30, 85);
 
     const char *rawPersonalities = ini.GetValue("personalities", "personalities", nullptr);
     if (rawPersonalities && rawPersonalities[0] != '\0') {

@@ -43,7 +43,18 @@ uint64_t s_preMatchRequestId = 0;
 uint64_t s_punditRequestId = 0;
 int s_punditCooldownFrames = 0;
 int s_punditDisplayFrames = 0;
+int s_urundulAmbientFrames = 1500;
+uint32_t s_punditCallCount = 0;
+bool s_pendingPunditIsUrundul = false;
 std::vector<std::string> s_punditLines;
+
+bool isTurkishLlmLanguage(const std::string& lang)
+{
+    std::string up = sanitizeCompactMixedCase(lang);
+    for (char& c : up)
+        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    return up == "TURKISH" || up == "TR" || up == "TURKCE" || up.find("TURK") != std::string::npos;
+}
 struct SquadPlayerSnapshot {
     std::string name;
     std::string position;
@@ -926,6 +937,9 @@ void resetLivePunditTicker()
     s_punditRequestId = 0;
     s_punditCooldownFrames = 0;
     s_punditDisplayFrames = 0;
+    s_urundulAmbientFrames = 1350; // ~22.5s before first ambient Turkish Ömer Üründül drop-in
+    s_punditCallCount = 0;
+    s_pendingPunditIsUrundul = false;
     s_punditLines.clear();
 }
 
@@ -946,7 +960,7 @@ void triggerLivePunditEvent(const char *eventLabel, bool highPriority)
         snap.team1.c_str(), snap.team2.c_str(), snap.goals1, snap.goals2, snap.team1Human, snap.team2Human);
     prompt += "\n" + formatTelemetryPromptBlock(snap);
     prompt += "\nLatest event to react to right now: " + std::string(eventLabel);
-    if (!snap.recentEvents.empty()) {
+    if (!snap.recentEvents.empty() && std::strcmp(eventLabel, "OMER URUNDUL AMBIENT") != 0) {
         const auto& latest = snap.recentEvents.back();
         if (!latest.team.empty())
             prompt += " (" + latest.team + ")";
@@ -955,15 +969,47 @@ void triggerLivePunditEvent(const char *eventLabel, bool highPriority)
         if (!latest.detail.empty())
             prompt += " [" + latest.detail + "]";
     }
-    prompt += "\nReact with ONE spontaneous, excited 1997 TV co-commentator sentence grounded strictly in the telemetry facts above "
-              "(exact goalkeeper, exact team, exact scorer, exact finish type, exact minute). Plain text only, no quotes, no speaker prefix.";
 
-    s_punditRequestId = enqueueLlmRequest(
-        "You are an excited 1997 live football TV co-commentator like Barry Davies or Andy Gray. "
-        "Always credit the exact goalkeeper, shooter, scorer, finish type, and team from the telemetry accurately. "
-        "One vivid, punchy broadcast sentence. Plain text only, no speaker label.",
-        prompt);
+    ++s_punditCallCount;
+    bool forceUrundul = (std::strcmp(eventLabel, "OMER URUNDUL AMBIENT") == 0);
+    bool useUrundul = isTurkishLlmLanguage(cfg.language) && (forceUrundul || (s_punditCallCount % 2u) == 0u);
+    s_pendingPunditIsUrundul = useUrundul;
+
+    if (useUrundul) {
+        prompt += "\nYou are legendary Turkish football TV commentator Omer Urundul chiming in live on the broadcast! "
+                  "React to this exact match situation in 1-2 short, punchy Turkish sentences grounded strictly in the real clubs, players, score, and event above.\n"
+                  "Naturally weave in ONE fitting Omer Urundul signature catchphrase or style that matches what just happened:\n"
+                  "- Tactical mantras: \"Kollektif futbol\", \"Defans ve orta saha bloklari arasindaki mesafe...\", "
+                  "\"Sirti donuk oynayabilen santrfor / kule forvet\", \"Gunumuz futbolunda duran toplar cok onemli\", "
+                  "\"Arkadan sarkiyorlar, dikkat etmemiz lazim\", \"Iyi orta gol getirir\".\n"
+                  "- Captain Obvious classics: \"Gol atan kazanir, futbol ilginc bir oyun\", \"Kazanmalari icin gol atmalari lazim\", "
+                  "\"Iki takim da gol atamazsa berabere biter\", \"Eger kacirmasaydi goldu!\", "
+                  "\"Kaleci olmasa gol olacakti, cok enteresan\", \"Futbol topla oynanan bir oyundur\", "
+                  "\"Top dogrudan auta gitti, rakibe carpsaydi korner olurdu\", \"[Team A] kazanirsa [Team B] kaybedecek\".\n"
+                  "- Iconic reactions: on red/yellow cards \"Ya niye kirmizi kart cikariyorsun ki simdi adama? Ne olacak yani, zaten mac bitecek\", "
+                  "on offsides \"Ama bu cok acik ofsayit, hakemlerin bunu gormesi lazim artik\", "
+                  "on big wins \"Bugun cok buyuk futbol oynadik, bundan daha buyugu oynanmaz\", "
+                  "on thrilling goals \"Ooohleeeeeeyyyyy! Sahane bir gol!\".\n"
+                  "Plain text only, no quotes, no speaker label.";
+
+        s_punditRequestId = enqueueLlmRequest(
+            "You are Omer Urundul, the iconic Turkish live football TV commentator famous for tactical mantras (kollektif futbol, bloklar arasi mesafe, kule forvet, duran toplar) and hilariously matter-of-fact Captain Obvious observations. "
+            "Stay 100% faithful to the real match telemetry (exact teams, players, score, goalkeeper, event). "
+            "Reply in natural, witty Turkish in 1-2 short sentences (max 160 chars). Plain text only, no speaker prefix.",
+            prompt);
+    } else {
+        prompt += "\nReact with ONE spontaneous, excited 1997 TV co-commentator sentence grounded strictly in the telemetry facts above "
+                  "(exact goalkeeper, exact team, exact scorer, exact finish type, exact minute). Plain text only, no quotes, no speaker prefix.";
+
+        s_punditRequestId = enqueueLlmRequest(
+            "You are an excited 1997 live football TV co-commentator like Barry Davies or Andy Gray. "
+            "Always credit the exact goalkeeper, shooter, scorer, finish type, and team from the telemetry accurately. "
+            "One vivid, punchy broadcast sentence. Plain text only, no speaker label.",
+            prompt);
+    }
+
     s_punditCooldownFrames = 360; // ~6 seconds cooldown between non-goal events
+    s_urundulAmbientFrames = 1620; // reset ~27s ambient drop-in timer after any pundit line
 }
 
 void updateLivePunditTicker()
@@ -973,14 +1019,34 @@ void updateLivePunditTicker()
     if (s_punditDisplayFrames > 0)
         --s_punditDisplayFrames;
 
-    if (s_punditRequestId == 0)
+    if (s_punditRequestId != 0) {
+        std::string reply;
+        if (tryTakeLlmResponse(s_punditRequestId, reply)) {
+            s_punditRequestId = 0;
+            bool wasUrundul = s_pendingPunditIsUrundul;
+            s_pendingPunditIsUrundul = false;
+            if (!reply.empty()) {
+                if (wasUrundul) {
+                    std::string normUp = sanitizeAsciiUpper(reply);
+                    if (normUp.rfind("OMER URUNDUL", 0) != 0)
+                        reply = "Omer Urundul: " + reply;
+                }
+                pushPunditMessageToStream(reply);
+            }
+        }
         return;
+    }
 
-    std::string reply;
-    if (tryTakeLlmResponse(s_punditRequestId, reply)) {
-        s_punditRequestId = 0;
-        if (!reply.empty())
-            pushPunditMessageToStream(reply);
+    // Periodic ambient Omer Urundul commentary drop-in (strictly when Turkish + live pundit are both enabled)
+    if (swos.gameStatePl == GameState::kInProgress && !swos.g_trainingGame) {
+        const auto& cfg = getLlmConfig();
+        if (cfg.enabled && cfg.features.livePunditTicker && isTurkishLlmLanguage(cfg.language)) {
+            if (s_urundulAmbientFrames > 0) {
+                --s_urundulAmbientFrames;
+            } else if (s_punditCooldownFrames <= 0) {
+                triggerLivePunditEvent("OMER URUNDUL AMBIENT", false);
+            }
+        }
     }
 }
 
