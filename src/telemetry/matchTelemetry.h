@@ -84,3 +84,20 @@ std::pair<int, int> getMatchMaxGoalDeficits();
 std::pair<bool, bool> getMatchEarlyRedCards();
 std::string formatTelemetryPromptBlock(const MatchTelemetrySnapshot& snap);
 std::string computeTimePressureTag(int minute, int goals1, int goals2, bool playingPenalties);
+
+// Telemetry V2 Analytics helpers (for Next.js / TypeScript analytics dashboards & unit tests)
+constexpr int kTelemetryHeatmapCols = 12;
+constexpr int kTelemetryHeatmapRows = 16;
+
+double computeSwosShotXg(
+    float normX, float normY, float rawZ,
+    bool isHeader, bool isPenalty, bool isFreeKick, bool isVolley,
+    float& outDistYards, float& outAngleDeg);
+
+double computePlayerMatchRating(
+    int goals, int assists, int shotsOnTarget, int shotsOffTarget,
+    int passesCompleted, int turnovers, int tacklesWon,
+    int gkSaves, int goalsConcededByGk, bool isGk,
+    int yellowCards, int redCards, bool wonMatch, bool lostMatch);
+
+bool exportMatchTelemetryJsonToPath(const std::string& fullPath);

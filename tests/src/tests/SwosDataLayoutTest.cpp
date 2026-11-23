@@ -12,6 +12,8 @@
 #include "supporterStream.h"
 #include "achievements.h"
 #include "stadiumFacilities.h"
+#include <fstream>
+#include <iterator>
 
 static SwosDataLayoutTest t;
 
@@ -931,6 +933,54 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
         assertEqual(loaded.seasonHomeMatches, uint16_t{ 4 });
         std::remove(tmpStd);
         resetStadiumFacilitiesState();
+    }
+
+    // 11. Telemetry V2 Analytics: SWOS xG geometry, individual player ratings, and V2 JSON export
+    {
+        float dist = 0.0f, angle = 0.0f;
+
+        // Penalty = canonical 0.76 xG
+        double penXg = computeSwosShotXg(0.5f, 0.90f, 0.0f, false, true, false, false, dist, angle);
+        assertTrue(std::abs(penXg - 0.76) < 0.001);
+
+        // Close-range central tap-in > edge-of-box > 30-yard screamer; center > tight angle; foot > header
+        double tapInXg = computeSwosShotXg(0.5f, 0.95f, 0.0f, false, false, false, false, dist, angle);
+        double boxEdgeXg = computeSwosShotXg(0.5f, 0.84f, 0.0f, false, false, false, false, dist, angle);
+        double screamerXg = computeSwosShotXg(0.5f, 0.72f, 0.0f, false, false, false, false, dist, angle);
+        double tightAngleXg = computeSwosShotXg(0.18f, 0.95f, 0.0f, false, false, false, false, dist, angle);
+        double headerXg = computeSwosShotXg(0.5f, 0.92f, 0.0f, true, false, false, false, dist, angle);
+        double footSameSpotXg = computeSwosShotXg(0.5f, 0.92f, 0.0f, false, false, false, false, dist, angle);
+        assertTrue(tapInXg > 0.65 && tapInXg < 0.93);
+        assertTrue(tapInXg > boxEdgeXg && boxEdgeXg > screamerXg);
+        assertTrue(tapInXg > tightAngleXg);
+        assertTrue(footSameSpotXg > headerXg);
+        assertTrue(screamerXg >= 0.01 && screamerXg < 0.15);
+
+        // Player ratings: hat-trick hero near 10.0, red-card offender drops low, clean-sheet GK rewarded
+        double heroRating = computePlayerMatchRating(3, 1, 4, 1, 20, 1, 2, 0, 0, false, 0, 0, true, false);
+        double redRating = computePlayerMatchRating(0, 0, 0, 2, 4, 5, 0, 0, 0, false, 1, 1, false, true);
+        double gkHero = computePlayerMatchRating(0, 0, 0, 0, 12, 0, 0, 6, 0, true, 0, 0, true, false);
+        assertTrue(heroRating >= 9.5 && heroRating <= 10.0);
+        assertTrue(redRating <= 4.5 && redRating >= 3.0);
+        assertTrue(gkHero >= 8.5 && gkHero <= 10.0);
+
+        // Telemetry V2 JSON file export structure check
+        resetMatchTelemetry();
+        const char *tmpJson = "tmp_test_telemetry_v2.json";
+        assertTrue(exportMatchTelemetryJsonToPath(tmpJson));
+        std::ifstream jin(tmpJson);
+        assertTrue(static_cast<bool>(jin));
+        std::string content((std::istreambuf_iterator<char>(jin)), std::istreambuf_iterator<char>());
+        jin.close();
+        assertTrue(content.find("\"schemaVersion\": 2") != std::string::npos);
+        assertTrue(content.find("\"pitchDimensions\"") != std::string::npos);
+        assertTrue(content.find("\"heatmaps\"") != std::string::npos);
+        assertTrue(content.find("\"shots\"") != std::string::npos);
+        assertTrue(content.find("\"timeline\"") != std::string::npos);
+        assertTrue(content.find("\"passNetworks\"") != std::string::npos);
+        assertTrue(content.find("\"players\"") != std::string::npos);
+        assertTrue(content.find("\"motm\"") != std::string::npos);
+        std::remove(tmpJson);
     }
 
     setLlmTransportForTest(nullptr);

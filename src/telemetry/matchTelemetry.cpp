@@ -16,14 +16,20 @@
 #include "swos.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <ctime>
 #include <deque>
 #include <fstream>
+#include <iomanip>
 #include <map>
+#include <sstream>
 
 namespace {
+
+constexpr double kPi = 3.14159265358979323846;
+constexpr int kMaxTimelineBuckets = 24; // 0..120' in 5-minute windows
 
 struct TouchRecord {
     int teamNum = 0;       // 1 = team1, 2 = team2
@@ -34,6 +40,60 @@ struct TouchRecord {
     float ballZ = 0.0f;
     bool wasHeader = false;
     uint32_t frameTick = 0;
+};
+
+struct ShotRecord {
+    int minute = 0;
+    int half = 1;
+    int teamNum = 1;
+    std::string team;
+    int playerOrd = 0;
+    int shirtNumber = 0;
+    std::string player;
+    std::string assistedBy;
+    float rawX = 0.0f;
+    float rawY = 0.0f;
+    float rawZ = 0.0f;
+    float normX = 0.5f;   // 0..1 left-to-right width
+    float normY = 0.5f;   // 0..1 own goal -> opponent goal (always attacking toward 1.0)
+    float distYards = 0.0f;
+    float angleDeg = 0.0f;
+    std::string bodyPart = "foot";
+    std::string situation = "open_play";
+    std::string outcome = "wide";
+    double xg = 0.0;
+};
+
+struct PlayerMatchAnalytics {
+    int goals = 0;
+    int assists = 0;
+    int shots = 0;
+    int shotsOnTarget = 0;
+    double xg = 0.0;
+    int touches = 0;
+    int passesCompleted = 0;
+    int turnovers = 0;
+    int tacklesWon = 0;
+    int yellowCards = 0;
+    int redCards = 0;
+    int gkSaves = 0;
+    double sumNormX = 0.0;
+    double sumNormY = 0.0;
+    uint32_t posSamples = 0;
+    std::array<uint32_t, kTelemetryHeatmapCols * kTelemetryHeatmapRows> heatmap{};
+};
+
+struct TimelineBucket {
+    uint32_t possTicks1 = 0;
+    uint32_t possTicks2 = 0;
+    int shots1 = 0;
+    int shots2 = 0;
+    double xg1 = 0.0;
+    double xg2 = 0.0;
+    int goals1 = 0;
+    int goals2 = 0;
+    int finalThirdTouches1 = 0;
+    int finalThirdTouches2 = 0;
 };
 
 uint32_t s_frameCounter = 0;
@@ -59,6 +119,75 @@ TouchRecord s_lastTouchByTeam[2];
 std::deque<MatchTelemetryEvent> s_recentEvents;
 std::vector<MatchTelemetryEvent> s_allMatchEvents;
 std::map<std::string, int> s_matchAssists;
+
+// Telemetry V2 spatial, shot, player, pass-network & momentum stores
+std::vector<ShotRecord> s_shots;
+std::array<uint32_t, kTelemetryHeatmapCols * kTelemetryHeatmapRows> s_ballHeatmap{};
+std::array<std::array<uint32_t, kTelemetryHeatmapCols * kTelemetryHeatmapRows>, 2> s_teamHeatmaps{};
+std::array<std::array<PlayerMatchAnalytics, kNumPlayersInTeam>, 2> s_playerAnalytics{};
+std::array<std::map<std::pair<int, int>, int>, 2> s_passLinks{}; // (fromOrd, toOrd) -> count
+std::array<TimelineBucket, kMaxTimelineBuckets> s_timeline{};
+uint32_t s_lastShotDedupFrame = 0;
+
+bool isTeam1AttackingTopGoal()
+{
+    // topTeamData defends top goal (Y=129) and attacks bottom goal (Y=769).
+    // When team1 is topTeamData, team1 attacks bottom; when swapped at halftime, team1 attacks top.
+    return swos.topTeamData.inGameTeamPtr.asAligned() != &swos.topTeamInGame;
+}
+
+void normalizeToTeamAttackCoords(float rawX, float rawY, int teamNum, float& outNormX, float& outNormY)
+{
+    float nx = std::clamp((rawX - static_cast<float>(kLeftThrowInLine)) /
+                          static_cast<float>(kRightThrowInLine - kLeftThrowInLine), 0.0f, 1.0f);
+    float nyTopToBot = std::clamp((rawY - static_cast<float>(kTopPitchLine)) /
+                                  static_cast<float>(kBottomPitchLine - kTopPitchLine), 0.0f, 1.0f);
+    bool t1AtkTop = isTeam1AttackingTopGoal();
+    bool thisTeamAtkTop = (teamNum == 1) ? t1AtkTop : !t1AtkTop;
+    // Canonical: normY = 0.0 at own goal line, 1.0 at opponent goal line; normX flips when attacking top so left/right stays consistent
+    if (thisTeamAtkTop) {
+        outNormX = 1.0f - nx;
+        outNormY = 1.0f - nyTopToBot;
+    } else {
+        outNormX = nx;
+        outNormY = nyTopToBot;
+    }
+}
+
+void addHeatmapSample(std::array<uint32_t, kTelemetryHeatmapCols * kTelemetryHeatmapRows>& grid, float normX, float normY, uint32_t weight = 1)
+{
+    int col = std::clamp(static_cast<int>(normX * static_cast<float>(kTelemetryHeatmapCols)), 0, kTelemetryHeatmapCols - 1);
+    int row = std::clamp(static_cast<int>(normY * static_cast<float>(kTelemetryHeatmapRows)), 0, kTelemetryHeatmapRows - 1);
+    grid[static_cast<size_t>(row * kTelemetryHeatmapCols + col)] += weight;
+}
+
+int currentTimelineBucket()
+{
+    int m = static_cast<int>(gameTimeInMinutes());
+    return std::clamp(m / 5, 0, kMaxTimelineBuckets - 1);
+}
+
+std::string fmtFloat(double v, int prec = 3)
+{
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(prec) << v;
+    return oss.str();
+}
+
+void writeHeatmapJson(std::ofstream& f, const std::array<uint32_t, kTelemetryHeatmapCols * kTelemetryHeatmapRows>& grid)
+{
+    f << "[";
+    for (int r = 0; r < kTelemetryHeatmapRows; ++r) {
+        if (r > 0) f << ",";
+        f << "[";
+        for (int c = 0; c < kTelemetryHeatmapCols; ++c) {
+            if (c > 0) f << ",";
+            f << grid[static_cast<size_t>(r * kTelemetryHeatmapCols + c)];
+        }
+        f << "]";
+    }
+    f << "]";
+}
 
 const char *telemetryPitchName(int pitchType)
 {
@@ -422,6 +551,32 @@ void sampleBallTouch()
                       carrier->state == PlayerState::kJumpHeader);
     bool samePlayer = (s_lastTouch.teamNum == teamNum && s_lastTouch.playerOrd == carrier->playerOrdinal);
     if (!samePlayer) {
+        // Detect pass completion or turnover/tackle between previous touch and new touch
+        if (s_lastTouch.teamNum != 0 && s_lastTouch.playerOrd >= 1 && s_lastTouch.playerOrd <= kNumPlayersInTeam &&
+            s_frameCounter >= s_lastTouch.frameTick) {
+            uint32_t dt = s_frameCounter - s_lastTouch.frameTick;
+            if (s_lastTouch.teamNum == teamNum && dt <= 240) {
+                ++s_playerAnalytics[teamNum - 1][s_lastTouch.playerOrd - 1].passesCompleted;
+                ++s_passLinks[teamNum - 1][{ s_lastTouch.playerOrd, carrier->playerOrdinal }];
+            } else if (s_lastTouch.teamNum != teamNum && dt <= 120) {
+                ++s_playerAnalytics[s_lastTouch.teamNum - 1][s_lastTouch.playerOrd - 1].turnovers;
+                ++s_playerAnalytics[teamNum - 1][carrier->playerOrdinal - 1].tacklesWon;
+            }
+        }
+
+        // Count discrete touch & spatial touch sample
+        auto& pa = s_playerAnalytics[teamNum - 1][carrier->playerOrdinal - 1];
+        ++pa.touches;
+        float nx = 0.5f, ny = 0.5f;
+        normalizeToTeamAttackCoords(swos.ballSprite.x.asFloat(), swos.ballSprite.y.asFloat(), teamNum, nx, ny);
+        addHeatmapSample(pa.heatmap, nx, ny, 2);
+        addHeatmapSample(s_teamHeatmaps[teamNum - 1], nx, ny, 2);
+        if (ny >= 0.67f) {
+            int b = currentTimelineBucket();
+            if (teamNum == 1) ++s_timeline[b].finalThirdTouches1;
+            else ++s_timeline[b].finalThirdTouches2;
+        }
+
         s_prevTouch = s_lastTouch;
     }
     bool prevHeader = samePlayer && s_lastTouch.wasHeader && (s_frameCounter - s_lastTouch.frameTick) <= 18;
@@ -434,6 +589,135 @@ void sampleBallTouch()
     s_lastTouch.wasHeader = isHeading || prevHeader;
     s_lastTouch.frameTick = s_frameCounter;
     s_lastTouchByTeam[teamNum - 1] = s_lastTouch;
+}
+
+void sampleSpatialPositionsAndTimeline()
+{
+    if (swos.gameStatePl != GameState::kInProgress)
+        return;
+
+    // 1. Ball heatmap (always oriented to Team 1 attacking toward 1.0)
+    float bnx = 0.5f, bny = 0.5f;
+    normalizeToTeamAttackCoords(swos.ballSprite.x.asFloat(), swos.ballSprite.y.asFloat(), 1, bnx, bny);
+    addHeatmapSample(s_ballHeatmap, bnx, bny, 1);
+
+    // 2. Timeline 5-min possession tick
+    int b = currentTimelineBucket();
+    const TeamGeneralInfo *team1Info = nullptr;
+    const TeamGeneralInfo *team2Info = nullptr;
+    resolveCanonicalTeams(team1Info, team2Info);
+    const TeamGeneralInfo *lastTeam = swos.lastTeamPlayed.asAligned();
+    if (lastTeam == team1Info)
+        ++s_timeline[b].possTicks1;
+    else if (lastTeam == team2Info)
+        ++s_timeline[b].possTicks2;
+
+    // 3. All 22 on-pitch player positions for average positions & heatmaps
+    auto sampleTeamSprites = [](const TeamGeneralInfo *info, int teamNum) {
+        if (!info)
+            return;
+        const auto *plArr = info->players.asAligned();
+        if (!plArr)
+            return;
+        for (int i = 0; i < kNumPlayersInLineup; ++i) {
+            const Sprite *sp = plArr[i].asAligned();
+            if (!sp || sp->playerOrdinal < 1 || sp->playerOrdinal > kNumPlayersInTeam)
+                continue;
+            float nx = 0.5f, ny = 0.5f;
+            normalizeToTeamAttackCoords(sp->x.asFloat(), sp->y.asFloat(), teamNum, nx, ny);
+            auto& pa = s_playerAnalytics[teamNum - 1][sp->playerOrdinal - 1];
+            pa.sumNormX += static_cast<double>(nx);
+            pa.sumNormY += static_cast<double>(ny);
+            ++pa.posSamples;
+            addHeatmapSample(pa.heatmap, nx, ny, 1);
+            addHeatmapSample(s_teamHeatmaps[teamNum - 1], nx, ny, 1);
+        }
+    };
+    sampleTeamSprites(team1Info, 1);
+    sampleTeamSprites(team2Info, 2);
+}
+
+void recordShotAnalytics(
+    int teamNum, const std::string& teamName, int playerOrd, const std::string& playerName,
+    const std::string& assistedBy, float rawX, float rawY, float rawZ,
+    bool isHeader, bool isPenalty, bool isFreeKick, bool isVolley, bool withinCorner,
+    const std::string& outcome)
+{
+    if (teamNum != 1 && teamNum != 2)
+        return;
+
+    // Deduplicate back-to-back shot comments within 25 frames for non-goal shots
+    if (outcome != "goal" && outcome != "own_goal" &&
+        s_lastShotDedupFrame > 0 && s_frameCounter >= s_lastShotDedupFrame &&
+        (s_frameCounter - s_lastShotDedupFrame) < 25) {
+        return;
+    }
+    s_lastShotDedupFrame = s_frameCounter;
+
+    float normX = 0.5f, normY = 0.5f;
+    normalizeToTeamAttackCoords(rawX, rawY, teamNum, normX, normY);
+    if (isPenalty) {
+        normX = 0.5f;
+        normY = 1.0f - (static_cast<float>(kTopPenaltySpotY - kTopPitchLine) /
+                        static_cast<float>(kBottomPitchLine - kTopPitchLine));
+    }
+
+    float distYards = 0.0f;
+    float angleDeg = 0.0f;
+    double xg = (outcome == "own_goal")
+        ? 0.0
+        : computeSwosShotXg(normX, normY, rawZ, isHeader, isPenalty, isFreeKick, isVolley, distYards, angleDeg);
+
+    ShotRecord sr;
+    sr.minute = static_cast<int>(gameTimeInMinutes());
+    sr.half = swos.halfNumber ? static_cast<int>(swos.halfNumber) : 1;
+    sr.teamNum = teamNum;
+    sr.team = teamName;
+    sr.playerOrd = playerOrd;
+    if (playerOrd >= 1 && playerOrd <= kNumPlayersInTeam) {
+        const TeamGame& tg = (teamNum == 1) ? swos.topTeamInGame : swos.bottomTeamInGame;
+        sr.shirtNumber = static_cast<int>(tg.players[playerOrd - 1].shirtNumber);
+    }
+    sr.player = playerName;
+    sr.assistedBy = assistedBy;
+    sr.rawX = rawX;
+    sr.rawY = rawY;
+    sr.rawZ = rawZ;
+    sr.normX = normX;
+    sr.normY = normY;
+    sr.distYards = distYards;
+    sr.angleDeg = angleDeg;
+    sr.bodyPart = isHeader ? "header" : (isVolley ? "volley" : "foot");
+    sr.situation = isPenalty ? "penalty" : (isFreeKick ? "free_kick" : (withinCorner ? "corner" : "open_play"));
+    sr.outcome = outcome;
+    sr.xg = xg;
+    s_shots.push_back(sr);
+
+    // Update player & timeline aggregates
+    int b = currentTimelineBucket();
+    if (outcome != "own_goal") {
+        if (teamNum == 1) {
+            ++s_timeline[b].shots1;
+            s_timeline[b].xg1 += xg;
+            if (outcome == "goal") ++s_timeline[b].goals1;
+        } else {
+            ++s_timeline[b].shots2;
+            s_timeline[b].xg2 += xg;
+            if (outcome == "goal") ++s_timeline[b].goals2;
+        }
+        if (playerOrd >= 1 && playerOrd <= kNumPlayersInTeam) {
+            auto& pa = s_playerAnalytics[teamNum - 1][playerOrd - 1];
+            ++pa.shots;
+            pa.xg += xg;
+            if (outcome == "goal" || outcome == "saved")
+                ++pa.shotsOnTarget;
+            if (outcome == "goal")
+                ++pa.goals;
+        }
+    } else {
+        if (teamNum == 1) ++s_timeline[b].goals1;
+        else ++s_timeline[b].goals2;
+    }
 }
 
 // Exact SWOS penalty area lines (swos.asm): X in [193..478], upper box Y <= 216, lower box Y >= 682
@@ -587,6 +871,18 @@ void resetMatchTelemetry()
     s_recentEvents.clear();
     s_allMatchEvents.clear();
     s_matchAssists.clear();
+    s_shots.clear();
+    s_ballHeatmap.fill(0);
+    s_teamHeatmaps[0].fill(0);
+    s_teamHeatmaps[1].fill(0);
+    for (auto& teamArr : s_playerAnalytics)
+        for (auto& pa : teamArr)
+            pa = PlayerMatchAnalytics{};
+    s_passLinks[0].clear();
+    s_passLinks[1].clear();
+    for (auto& tb : s_timeline)
+        tb = TimelineBucket{};
+    s_lastShotDedupFrame = 0;
 }
 
 void updateMatchTelemetry()
@@ -621,8 +917,10 @@ void updateMatchTelemetry()
     }
 
     sampleBallTouch();
-    if ((s_frameCounter % 30) == 0)
+    if ((s_frameCounter % 30) == 0) {
         sampleTerritoryThirds();
+        sampleSpatialPositionsAndTimeline();
+    }
 }
 
 void recordTelemetryMatchEvent(const char *eventType, bool isGoalEvent /* = false */)
@@ -750,6 +1048,28 @@ void recordTelemetryMatchEvent(const char *eventType, bool isGoalEvent /* = fals
                 achGoal.scorerMatchGoals = std::max<int>(1, static_cast<int>(tg.players[scorerSprite->playerOrdinal - 1].goalsScored));
             }
             achievementsOnGoalScored(achGoal);
+
+            // Record Telemetry V2 shot + xG + assister credit
+            int scorerOrd = (scorerSprite && scorerSprite->playerOrdinal >= 1 && scorerSprite->playerOrdinal <= kNumPlayersInTeam)
+                ? static_cast<int>(scorerSprite->playerOrdinal)
+                : (recentTouch ? teamTouch.playerOrd : 0);
+            std::string assister;
+            if (!achGoal.isOwnGoal && !achGoal.isPenalty &&
+                s_prevTouch.teamNum == scoringTeamNum &&
+                s_prevTouch.playerOrd >= 1 && s_prevTouch.playerOrd <= kNumPlayersInTeam &&
+                s_prevTouch.playerOrd != scorerOrd &&
+                s_frameCounter >= s_prevTouch.frameTick && (s_frameCounter - s_prevTouch.frameTick) <= 300) {
+                assister = s_prevTouch.name;
+                ++s_playerAnalytics[scoringTeamNum - 1][s_prevTouch.playerOrd - 1].assists;
+            }
+            float sx = recentTouch ? teamTouch.x : swos.ballSprite.x.asFloat();
+            float sy = recentTouch ? teamTouch.y : swos.ballSprite.y.asFloat();
+            float sz = recentTouch ? teamTouch.ballZ : swos.ballSprite.z.asFloat();
+            recordShotAnalytics(
+                scoringTeamNum, teamName, scorerOrd, playerName, assister,
+                sx, sy, sz, achGoal.isHeader, achGoal.isPenalty, achGoal.isFreeKick,
+                achGoal.isVolley, achGoal.withinCornerWindow,
+                achGoal.isOwnGoal ? "own_goal" : "goal");
         }
     } else if (isKeeperSave) {
         // Defending team's goalkeeper made the save against the attacking team's shot!
@@ -758,10 +1078,28 @@ void recordTelemetryMatchEvent(const char *eventType, bool isGoalEvent /* = fals
         playerName = keeperNameForInfo(defendingInfo);
 
         int atkTeamNum = (attackingInfo == team1Info) ? 1 : 2;
+        int defTeamNum = (defendingInfo == team1Info) ? 1 : 2;
+        ++s_playerAnalytics[defTeamNum - 1][0].gkSaves;
+
         std::string shooter;
-        if (s_lastTouch.teamNum == atkTeamNum && !s_lastTouch.name.empty() &&
-            s_frameCounter >= s_lastTouch.frameTick && (s_frameCounter - s_lastTouch.frameTick) < 150) {
-            shooter = s_lastTouch.name;
+        int shooterOrd = 0;
+        const TouchRecord& atkTouch = s_lastTouchByTeam[atkTeamNum - 1];
+        bool recentAtk = (atkTouch.frameTick > 0 && s_frameCounter >= atkTouch.frameTick &&
+                          (s_frameCounter - atkTouch.frameTick) < 150);
+        if (recentAtk && !atkTouch.name.empty()) {
+            shooter = atkTouch.name;
+            shooterOrd = atkTouch.playerOrd;
+        }
+        if (!swos.playingPenalties) {
+            bool isPen = (swos.penalty != 0) || (std::strstr(eventType, "PENALTY") != nullptr);
+            bool isFk = !isPen && s_lastFreeKickFrame > 0 && s_frameCounter >= s_lastFreeKickFrame && (s_frameCounter - s_lastFreeKickFrame) <= 240;
+            bool isCor = !isPen && s_lastCornerFrame > 0 && s_frameCounter >= s_lastCornerFrame && (s_frameCounter - s_lastCornerFrame) <= 180;
+            bool isHdr = recentAtk && atkTouch.wasHeader;
+            bool isVol = !isPen && !isHdr && recentAtk && atkTouch.ballZ >= 6.0f;
+            float sx = recentAtk ? atkTouch.x : swos.ballSprite.x.asFloat();
+            float sy = recentAtk ? atkTouch.y : swos.ballSprite.y.asFloat();
+            float sz = recentAtk ? atkTouch.ballZ : swos.ballSprite.z.asFloat();
+            recordShotAnalytics(atkTeamNum, oppTeam, shooterOrd, shooter, {}, sx, sy, sz, isHdr, isPen, isFk, isVol, isCor, "saved");
         }
         detail = teamName + " goalkeeper" + (playerName.empty() ? "" : (" " + playerName)) +
                  " saved shot from " + oppTeam + (shooter.empty() ? "" : (" (" + shooter + ")")) +
@@ -773,9 +1111,26 @@ void recordTelemetryMatchEvent(const char *eventType, bool isGoalEvent /* = fals
         std::string defGk = keeperNameForInfo(defendingInfo);
 
         int atkTeamNum = (attackingInfo == team1Info) ? 1 : 2;
-        if (s_lastTouch.teamNum == atkTeamNum && !s_lastTouch.name.empty() &&
-            s_frameCounter >= s_lastTouch.frameTick && (s_frameCounter - s_lastTouch.frameTick) < 150) {
-            playerName = s_lastTouch.name;
+        int shooterOrd = 0;
+        const TouchRecord& atkTouch = s_lastTouchByTeam[atkTeamNum - 1];
+        bool recentAtk = (atkTouch.frameTick > 0 && s_frameCounter >= atkTouch.frameTick &&
+                          (s_frameCounter - atkTouch.frameTick) < 150);
+        if (recentAtk && !atkTouch.name.empty()) {
+            playerName = atkTouch.name;
+            shooterOrd = atkTouch.playerOrd;
+        }
+        bool isPenAwarded = (std::strstr(eventType, "PENALTY AWARDED") != nullptr);
+        if (!swos.playingPenalties && !isPenAwarded) {
+            bool isPost = (std::strstr(eventType, "POST") != nullptr || std::strstr(eventType, "CROSSBAR") != nullptr);
+            bool isPen = (std::strstr(eventType, "PENALTY MISSED") != nullptr);
+            bool isFk = !isPen && s_lastFreeKickFrame > 0 && s_frameCounter >= s_lastFreeKickFrame && (s_frameCounter - s_lastFreeKickFrame) <= 240;
+            bool isCor = !isPen && s_lastCornerFrame > 0 && s_frameCounter >= s_lastCornerFrame && (s_frameCounter - s_lastCornerFrame) <= 180;
+            bool isHdr = recentAtk && atkTouch.wasHeader;
+            bool isVol = !isPen && !isHdr && recentAtk && atkTouch.ballZ >= 6.0f;
+            float sx = recentAtk ? atkTouch.x : swos.ballSprite.x.asFloat();
+            float sy = recentAtk ? atkTouch.y : swos.ballSprite.y.asFloat();
+            float sz = recentAtk ? atkTouch.ballZ : swos.ballSprite.z.asFloat();
+            recordShotAnalytics(atkTeamNum, teamName, shooterOrd, playerName, {}, sx, sy, sz, isHdr, isPen, isFk, isVol, isCor, isPost ? "post" : "wide");
         }
         detail = teamName + " attacking " + defTeam + "'s goal" +
                  (defGk.empty() ? "" : (" (defending GK: " + defGk + ")"));
@@ -787,6 +1142,11 @@ void recordTelemetryMatchEvent(const char *eventType, bool isGoalEvent /* = fals
             const TeamGame& tg = (bookedSp->teamNumber == 1) ? swos.topTeamInGame : swos.bottomTeamInGame;
             if (tg.players[bookedSp->playerOrdinal - 1].shortName[0] != '\0')
                 playerName = tg.players[bookedSp->playerOrdinal - 1].shortName;
+            int bTeam = (bookedSp->teamNumber == 1 || bookedTeam == team1Info) ? 1 : 2;
+            if (std::strstr(eventType, "RED") != nullptr)
+                ++s_playerAnalytics[bTeam - 1][bookedSp->playerOrdinal - 1].redCards;
+            else
+                ++s_playerAnalytics[bTeam - 1][bookedSp->playerOrdinal - 1].yellowCards;
         }
     } else {
         const TeamGeneralInfo *activePtr = swos.lastTeamPlayed.asAligned();
@@ -985,6 +1345,398 @@ std::string formatTelemetryPromptBlock(const MatchTelemetrySnapshot& snap)
     return out;
 }
 
+double computeSwosShotXg(
+    float normX, float normY, float rawZ,
+    bool isHeader, bool isPenalty, bool isFreeKick, bool isVolley,
+    float& outDistYards, float& outAngleDeg)
+{
+    if (isPenalty) {
+        outDistYards = 12.0f;
+        outAngleDeg = 33.4f;
+        return 0.76;
+    }
+
+    // Map normalized pitch [0..1]x[0..1] to realistic yards (75yd wide x 115yd long, goal width = 8yd centered at x=37.5)
+    constexpr double kPitchWidthYds = 75.0;
+    constexpr double kPitchLengthYds = 115.0;
+    constexpr double kGoalHalfWidthYds = 4.0;
+
+    double xYds = (static_cast<double>(std::clamp(normX, 0.0f, 1.0f)) - 0.5) * kPitchWidthYds;
+    double yYds = std::max(0.5, (1.0 - static_cast<double>(std::clamp(normY, 0.0f, 1.0f))) * kPitchLengthYds);
+
+    double dist = std::hypot(xYds, yYds);
+    outDistYards = static_cast<float>(dist);
+
+    // Exact visible angle subtended by the two goalposts from (xYds, yYds)
+    double a1 = std::atan2(kGoalHalfWidthYds - xYds, yYds);
+    double a2 = std::atan2(-kGoalHalfWidthYds - xYds, yYds);
+    double angleRad = std::max(0.01, std::abs(a1 - a2));
+    outAngleDeg = static_cast<float>(angleRad * 180.0 / kPi);
+
+    double logit = -0.35 - 0.135 * dist + 2.35 * angleRad;
+    if (isHeader)
+        logit -= 0.55;
+    if (isVolley)
+        logit -= 0.45;
+    if (isFreeKick)
+        logit -= 0.25;
+    if (rawZ > 12.0f)
+        logit -= 0.20;
+
+    double xg = 1.0 / (1.0 + std::exp(-logit));
+    return std::clamp(xg, 0.01, 0.92);
+}
+
+double computePlayerMatchRating(
+    int goals, int assists, int shotsOnTarget, int shotsOffTarget,
+    int passesCompleted, int turnovers, int tacklesWon,
+    int gkSaves, int goalsConcededByGk, bool isGk,
+    int yellowCards, int redCards, bool wonMatch, bool lostMatch)
+{
+    double r = 6.0;
+    r += static_cast<double>(goals) * 1.15;
+    r += static_cast<double>(assists) * 0.65;
+    r += static_cast<double>(shotsOnTarget) * 0.18;
+    r -= static_cast<double>(shotsOffTarget) * 0.05;
+    r += std::min(1.0, static_cast<double>(passesCompleted) * 0.03);
+    r += std::min(1.1, static_cast<double>(tacklesWon) * 0.22);
+    r -= std::min(1.2, static_cast<double>(turnovers) * 0.08);
+    if (isGk) {
+        r += std::min(2.2, static_cast<double>(gkSaves) * 0.35);
+        r -= static_cast<double>(goalsConcededByGk) * 0.30;
+        if (goalsConcededByGk == 0)
+            r += 0.45;
+    }
+    r -= static_cast<double>(yellowCards) * 0.35;
+    r -= static_cast<double>(redCards) * 1.25;
+    if (wonMatch) r += 0.25;
+    else if (lostMatch) r -= 0.20;
+
+    return std::round(std::clamp(r, 3.0, 10.0) * 10.0) / 10.0;
+}
+
+bool exportMatchTelemetryJsonToPath(const std::string& fullPath)
+{
+    MatchTelemetrySnapshot snap = captureMatchTelemetrySnapshot();
+    const auto stats = getStats();
+
+    std::ofstream f(fullPath, std::ios::out | std::ios::trunc);
+    if (!f)
+        return false;
+
+    std::time_t now = std::time(nullptr);
+    std::tm tmBuf{};
+    localtime_s(&tmBuf, &now);
+    char isoBuf[32];
+    std::snprintf(isoBuf, sizeof(isoBuf), "%04d-%02d-%02dT%02d:%02d:%02d",
+        tmBuf.tm_year + 1900, tmBuf.tm_mon + 1, tmBuf.tm_mday,
+        tmBuf.tm_hour, tmBuf.tm_min, tmBuf.tm_sec);
+    char matchIdBuf[48];
+    std::snprintf(matchIdBuf, sizeof(matchIdBuf), "match-%04d%02d%02d-%02d%02d%02d",
+        tmBuf.tm_year + 1900, tmBuf.tm_mon + 1, tmBuf.tm_mday,
+        tmBuf.tm_hour, tmBuf.tm_min, tmBuf.tm_sec);
+
+    double totalXg1 = 0.0, totalXg2 = 0.0;
+    for (const auto& sr : s_shots) {
+        if (sr.teamNum == 1) totalXg1 += sr.xg;
+        else if (sr.teamNum == 2) totalXg2 += sr.xg;
+    }
+
+    int passes1 = 0, passes2 = 0, tackles1 = 0, tackles2 = 0;
+    for (int i = 0; i < kNumPlayersInTeam; ++i) {
+        passes1 += s_playerAnalytics[0][i].passesCompleted;
+        passes2 += s_playerAnalytics[1][i].passesCompleted;
+        tackles1 += s_playerAnalytics[0][i].tacklesWon;
+        tackles2 += s_playerAnalytics[1][i].tacklesWon;
+    }
+
+    bool t1Won = snap.playingPenalties ? (snap.penGoals1 > snap.penGoals2) : (snap.goals1 > snap.goals2);
+    bool t2Won = snap.playingPenalties ? (snap.penGoals2 > snap.penGoals1) : (snap.goals2 > snap.goals1);
+
+    // Pre-build player rows & find MOTM
+    struct BuiltPlayerRow {
+        int teamNum = 1;
+        int ordinal = 1;
+        int shirtNumber = 1;
+        std::string team;
+        std::string name;
+        std::string pos;
+        bool isStarter = true;
+        int goals = 0;
+        int assists = 0;
+        int shots = 0;
+        int shotsOnTarget = 0;
+        double xg = 0.0;
+        int touches = 0;
+        int passesCompleted = 0;
+        int turnovers = 0;
+        int tacklesWon = 0;
+        int yellowCards = 0;
+        int redCards = 0;
+        int gkSaves = 0;
+        double avgX = 0.5;
+        double avgY = 0.5;
+        double rating = 6.0;
+        const std::array<uint32_t, kTelemetryHeatmapCols * kTelemetryHeatmapRows> *heatmap = nullptr;
+    };
+
+    std::vector<BuiltPlayerRow> builtPlayers;
+    auto collectTeamPlayers = [&](int teamNum, const TeamGame& tg, const std::string& teamName, int oppGoals, bool won, bool lost) {
+        for (int i = 0; i < kNumPlayersInTeam; ++i) {
+            const auto& pl = tg.players[i];
+            const auto& pa = s_playerAnalytics[teamNum - 1][i];
+            if (pl.shortName[0] == '\0')
+                continue;
+            bool participated = (i < kNumPlayersInLineup) || (pa.touches > 0) || (pa.posSamples > 0) ||
+                                (pl.goalsScored > 0) || (pa.goals > 0);
+            if (!participated)
+                continue;
+
+            BuiltPlayerRow row;
+            row.teamNum = teamNum;
+            row.ordinal = i + 1;
+            row.shirtNumber = static_cast<int>(pl.shirtNumber);
+            row.team = teamName;
+            row.name = pl.shortName;
+            row.pos = shortPosTag(pl.position);
+            row.isStarter = (i < kNumPlayersInLineup);
+            row.goals = std::max(pa.goals, static_cast<int>(pl.goalsScored));
+            row.assists = pa.assists;
+            row.shots = std::max(pa.shots, row.goals);
+            row.shotsOnTarget = std::max(pa.shotsOnTarget, row.goals);
+            row.xg = pa.xg;
+            row.touches = pa.touches;
+            row.passesCompleted = pa.passesCompleted;
+            row.turnovers = pa.turnovers;
+            row.tacklesWon = pa.tacklesWon;
+            row.yellowCards = pa.yellowCards;
+            row.redCards = pa.redCards;
+            row.gkSaves = pa.gkSaves;
+            row.avgX = (pa.posSamples > 0) ? (pa.sumNormX / static_cast<double>(pa.posSamples)) : 0.5;
+            row.avgY = (pa.posSamples > 0) ? (pa.sumNormY / static_cast<double>(pa.posSamples)) : (i == 0 ? 0.06 : 0.5);
+            row.heatmap = &pa.heatmap;
+            bool isGk = (i == 0 || pl.position == PlayerPosition::kGoalkeeper);
+            row.rating = computePlayerMatchRating(
+                row.goals, row.assists, row.shotsOnTarget, std::max(0, row.shots - row.shotsOnTarget),
+                row.passesCompleted, row.turnovers, row.tacklesWon,
+                row.gkSaves, oppGoals, isGk, row.yellowCards, row.redCards, won, lost);
+            builtPlayers.push_back(std::move(row));
+        }
+    };
+    collectTeamPlayers(1, swos.topTeamInGame, snap.team1, snap.goals2, t1Won, t2Won);
+    collectTeamPlayers(2, swos.bottomTeamInGame, snap.team2, snap.goals1, t2Won, t1Won);
+
+    const BuiltPlayerRow *motm = nullptr;
+    for (const auto& pr : builtPlayers) {
+        if (!motm || pr.rating > motm->rating ||
+            (pr.rating == motm->rating && (pr.goals + pr.assists) > (motm->goals + motm->assists))) {
+            motm = &pr;
+        }
+    }
+
+    f << "{\n";
+    f << "  \"schemaVersion\": 2,\n";
+    f << "  \"matchId\": \"" << matchIdBuf << "\",\n";
+    f << "  \"timestamp\": \"" << isoBuf << "\",\n";
+    f << "  \"competition\": \"" << escapeLlmJson(snap.competition) << "\",\n";
+    f << "  \"pitch\": \"" << escapeLlmJson(snap.pitchCondition) << "\",\n";
+    f << "  \"minute\": " << snap.minute << ",\n";
+    f << "  \"half\": " << snap.half << ",\n";
+    f << "  \"playingPenalties\": " << (snap.playingPenalties ? "true" : "false") << ",\n";
+    f << "  \"pitchDimensions\": { \"leftX\": " << kLeftThrowInLine
+      << ", \"rightX\": " << kRightThrowInLine
+      << ", \"topY\": " << kTopPitchLine
+      << ", \"bottomY\": " << kBottomPitchLine
+      << ", \"goalLeftX\": " << kGoalLeft
+      << ", \"goalRightX\": " << kGoalRight
+      << ", \"heatmapCols\": " << kTelemetryHeatmapCols
+      << ", \"heatmapRows\": " << kTelemetryHeatmapRows << " },\n";
+
+    // Backward-compatible top-level summary fields + rich team objects
+    f << "  \"team1\": \"" << escapeLlmJson(snap.team1) << "\",\n";
+    f << "  \"team2\": \"" << escapeLlmJson(snap.team2) << "\",\n";
+    f << "  \"goals1\": " << snap.goals1 << ",\n";
+    f << "  \"goals2\": " << snap.goals2 << ",\n";
+    f << "  \"shots1\": " << snap.shots1 << ",\n";
+    f << "  \"shots2\": " << snap.shots2 << ",\n";
+    f << "  \"possession1\": " << snap.possession1 << ",\n";
+    f << "  \"possession2\": " << snap.possession2 << ",\n";
+    f << "  \"territory\": { \"team1AtkPct\": " << snap.team1AttackZonePct
+      << ", \"midPct\": " << snap.midfieldZonePct
+      << ", \"team2AtkPct\": " << snap.team2AttackZonePct << " },\n";
+
+    f << "  \"teams\": {\n";
+    f << "    \"team1\": { \"name\": \"" << escapeLlmJson(snap.team1)
+      << "\", \"coach\": \"" << escapeLlmJson(snap.coach1)
+      << "\", \"isHuman\": " << (snap.team1Human ? "true" : "false")
+      << ", \"goals\": " << snap.goals1 << ", \"htGoals\": " << snap.htGoals1
+      << ", \"penGoals\": " << snap.penGoals1 << ", \"xg\": " << fmtFloat(totalXg1, 2)
+      << ", \"shots\": " << snap.shots1 << ", \"shotsOnTarget\": " << snap.onTarget1
+      << ", \"possessionPct\": " << snap.possession1 << ", \"corners\": " << snap.corners1
+      << ", \"fouls\": " << snap.fouls1 << ", \"yellowCards\": " << stats.team1.bookings
+      << ", \"redCards\": " << stats.team1.sendingsOff << ", \"passesCompleted\": " << passes1
+      << ", \"tacklesWon\": " << tackles1 << ", \"longRangeGoals\": " << snap.longRangeGoals1
+      << ", \"headerGoals\": " << snap.headerGoals1 << ", \"attackZonePct\": " << snap.team1AttackZonePct << " },\n";
+    f << "    \"team2\": { \"name\": \"" << escapeLlmJson(snap.team2)
+      << "\", \"coach\": \"" << escapeLlmJson(snap.coach2)
+      << "\", \"isHuman\": " << (snap.team2Human ? "true" : "false")
+      << ", \"goals\": " << snap.goals2 << ", \"htGoals\": " << snap.htGoals2
+      << ", \"penGoals\": " << snap.penGoals2 << ", \"xg\": " << fmtFloat(totalXg2, 2)
+      << ", \"shots\": " << snap.shots2 << ", \"shotsOnTarget\": " << snap.onTarget2
+      << ", \"possessionPct\": " << snap.possession2 << ", \"corners\": " << snap.corners2
+      << ", \"fouls\": " << snap.fouls2 << ", \"yellowCards\": " << stats.team2.bookings
+      << ", \"redCards\": " << stats.team2.sendingsOff << ", \"passesCompleted\": " << passes2
+      << ", \"tacklesWon\": " << tackles2 << ", \"longRangeGoals\": " << snap.longRangeGoals2
+      << ", \"headerGoals\": " << snap.headerGoals2 << ", \"attackZonePct\": " << snap.team2AttackZonePct << " }\n";
+    f << "  },\n";
+
+    // Optional Career Stadium & Charisma context
+    if (swos.g_gameType == kGameTypeCareer) {
+        const auto& st = getCurrentCareerStadium();
+        int16_t cp = 50; uint16_t ints = 0; int64_t sb = 0; uint8_t lst = 0; std::string lq;
+        getPressCareerTotals(cp, ints, sb, lst, lq);
+        f << "  \"stadium\": { \"name\": \"" << escapeLlmJson(st.stadiumName)
+          << "\", \"capacityLevel\": " << static_cast<int>(st.capacityLevel)
+          << ", \"maxCapacity\": " << st.maxCapacity
+          << ", \"pitchLevel\": " << static_cast<int>(st.pitchLevel)
+          << ", \"pitchQuality\": \"" << getPitchQualityLabel(st.pitchLevel)
+          << "\", \"trainingLevel\": " << static_cast<int>(st.trainingLevel)
+          << ", \"medicalLevel\": " << static_cast<int>(st.medicalLevel)
+          << ", \"commercialLevel\": " << static_cast<int>(st.commercialLevel)
+          << ", \"ticketPolicy\": \"" << getTicketPolicyName(st.ticketPolicy)
+          << "\", \"ticketPrice\": " << st.ticketPrice
+          << ", \"coachCharisma\": " << static_cast<int>(cp) << " },\n";
+    } else {
+        f << "  \"stadium\": null,\n";
+    }
+
+    if (motm) {
+        f << "  \"motm\": { \"teamNum\": " << motm->teamNum
+          << ", \"team\": \"" << escapeLlmJson(motm->team)
+          << "\", \"player\": \"" << escapeLlmJson(motm->name)
+          << "\", \"shirtNumber\": " << motm->shirtNumber
+          << ", \"pos\": \"" << motm->pos
+          << "\", \"rating\": " << fmtFloat(motm->rating, 1)
+          << ", \"goals\": " << motm->goals
+          << ", \"assists\": " << motm->assists
+          << ", \"xg\": " << fmtFloat(motm->xg, 2) << " },\n";
+    } else {
+        f << "  \"motm\": null,\n";
+    }
+
+    // Spatial heatmaps (16 rows x 12 cols)
+    f << "  \"heatmaps\": {\n";
+    f << "    \"ball\": "; writeHeatmapJson(f, s_ballHeatmap); f << ",\n";
+    f << "    \"team1\": "; writeHeatmapJson(f, s_teamHeatmaps[0]); f << ",\n";
+    f << "    \"team2\": "; writeHeatmapJson(f, s_teamHeatmaps[1]); f << "\n";
+    f << "  },\n";
+
+    // Shots with exact normalized & raw coordinates + xG
+    f << "  \"shots\": [\n";
+    for (size_t i = 0; i < s_shots.size(); ++i) {
+        const auto& sr = s_shots[i];
+        f << "    { \"minute\": " << sr.minute << ", \"half\": " << sr.half
+          << ", \"teamNum\": " << sr.teamNum << ", \"team\": \"" << escapeLlmJson(sr.team)
+          << "\", \"player\": \"" << escapeLlmJson(sr.player)
+          << "\", \"shirtNumber\": " << sr.shirtNumber
+          << ", \"assistedBy\": \"" << escapeLlmJson(sr.assistedBy)
+          << "\", \"normX\": " << fmtFloat(sr.normX, 3) << ", \"normY\": " << fmtFloat(sr.normY, 3)
+          << ", \"rawX\": " << fmtFloat(sr.rawX, 1) << ", \"rawY\": " << fmtFloat(sr.rawY, 1)
+          << ", \"rawZ\": " << fmtFloat(sr.rawZ, 1)
+          << ", \"distYards\": " << fmtFloat(sr.distYards, 1) << ", \"angleDeg\": " << fmtFloat(sr.angleDeg, 1)
+          << ", \"bodyPart\": \"" << sr.bodyPart << "\", \"situation\": \"" << sr.situation
+          << "\", \"outcome\": \"" << sr.outcome << "\", \"xg\": " << fmtFloat(sr.xg, 3) << " }"
+          << (i + 1 < s_shots.size() ? "," : "") << "\n";
+    }
+    f << "  ],\n";
+
+    // 5-minute attack momentum & xG race timeline
+    int activeBuckets = std::clamp((std::max(snap.minute, 90) + 4) / 5, 18, kMaxTimelineBuckets);
+    f << "  \"timeline\": [\n";
+    for (int b = 0; b < activeBuckets; ++b) {
+        const auto& tb = s_timeline[b];
+        uint32_t totPoss = tb.possTicks1 + tb.possTicks2;
+        int poss1 = (totPoss > 0) ? static_cast<int>((tb.possTicks1 * 100u) / totPoss) : 50;
+        double rawMom = static_cast<double>(poss1 - 50) * 0.9 +
+                        static_cast<double>(tb.finalThirdTouches1 - tb.finalThirdTouches2) * 6.0 +
+                        (tb.xg1 - tb.xg2) * 55.0 +
+                        static_cast<double>(tb.goals1 - tb.goals2) * 30.0;
+        int momentum = std::clamp(static_cast<int>(std::lround(rawMom)), -100, 100);
+        f << "    { \"fromMin\": " << (b * 5) << ", \"toMin\": " << ((b + 1) * 5)
+          << ", \"poss1Pct\": " << poss1
+          << ", \"shots1\": " << tb.shots1 << ", \"shots2\": " << tb.shots2
+          << ", \"xg1\": " << fmtFloat(tb.xg1, 3) << ", \"xg2\": " << fmtFloat(tb.xg2, 3)
+          << ", \"goals1\": " << tb.goals1 << ", \"goals2\": " << tb.goals2
+          << ", \"finalThird1\": " << tb.finalThirdTouches1 << ", \"finalThird2\": " << tb.finalThirdTouches2
+          << ", \"momentum\": " << momentum << " }"
+          << (b + 1 < activeBuckets ? "," : "") << "\n";
+    }
+    f << "  ],\n";
+
+    // Pass networks per team
+    auto writePassNetwork = [&](int teamNum, const TeamGame& tg) {
+        f << "[";
+        bool first = true;
+        for (const auto& kv : s_passLinks[teamNum - 1]) {
+            int fromOrd = kv.first.first;
+            int toOrd = kv.first.second;
+            if (fromOrd < 1 || fromOrd > kNumPlayersInTeam || toOrd < 1 || toOrd > kNumPlayersInTeam)
+                continue;
+            const char *fromName = tg.players[fromOrd - 1].shortName;
+            const char *toName = tg.players[toOrd - 1].shortName;
+            if (!fromName[0] || !toName[0])
+                continue;
+            if (!first) f << ",";
+            first = false;
+            f << "{\"from\":\"" << escapeLlmJson(fromName) << "\",\"fromShirt\":" << static_cast<int>(tg.players[fromOrd - 1].shirtNumber)
+              << ",\"to\":\"" << escapeLlmJson(toName) << "\",\"toShirt\":" << static_cast<int>(tg.players[toOrd - 1].shirtNumber)
+              << ",\"count\":" << kv.second << "}";
+        }
+        f << "]";
+    };
+    f << "  \"passNetworks\": {\n";
+    f << "    \"team1\": "; writePassNetwork(1, swos.topTeamInGame); f << ",\n";
+    f << "    \"team2\": "; writePassNetwork(2, swos.bottomTeamInGame); f << "\n";
+    f << "  },\n";
+
+    // Individual player stats, ratings, average position & personal heatmaps
+    f << "  \"players\": [\n";
+    for (size_t i = 0; i < builtPlayers.size(); ++i) {
+        const auto& pr = builtPlayers[i];
+        f << "    { \"teamNum\": " << pr.teamNum << ", \"team\": \"" << escapeLlmJson(pr.team)
+          << "\", \"name\": \"" << escapeLlmJson(pr.name) << "\", \"shirtNumber\": " << pr.shirtNumber
+          << ", \"pos\": \"" << pr.pos << "\", \"isStarter\": " << (pr.isStarter ? "true" : "false")
+          << ", \"goals\": " << pr.goals << ", \"assists\": " << pr.assists
+          << ", \"shots\": " << pr.shots << ", \"shotsOnTarget\": " << pr.shotsOnTarget
+          << ", \"xg\": " << fmtFloat(pr.xg, 3) << ", \"touches\": " << pr.touches
+          << ", \"passesCompleted\": " << pr.passesCompleted << ", \"turnovers\": " << pr.turnovers
+          << ", \"tacklesWon\": " << pr.tacklesWon << ", \"yellowCards\": " << pr.yellowCards
+          << ", \"redCards\": " << pr.redCards << ", \"gkSaves\": " << pr.gkSaves
+          << ", \"avgX\": " << fmtFloat(pr.avgX, 3) << ", \"avgY\": " << fmtFloat(pr.avgY, 3)
+          << ", \"rating\": " << fmtFloat(pr.rating, 1) << ", \"heatmap\": ";
+        if (pr.heatmap)
+            writeHeatmapJson(f, *pr.heatmap);
+        else
+            f << "[]";
+        f << " }" << (i + 1 < builtPlayers.size() ? "," : "") << "\n";
+    }
+    f << "  ],\n";
+
+    // Full timestamped match event feed
+    f << "  \"events\": [\n";
+    for (size_t i = 0; i < s_allMatchEvents.size(); ++i) {
+        const auto& ev = s_allMatchEvents[i];
+        f << "    { \"minute\": " << ev.minute
+          << ", \"type\": \"" << escapeLlmJson(ev.type)
+          << "\", \"team\": \"" << escapeLlmJson(ev.team)
+          << "\", \"player\": \"" << escapeLlmJson(ev.player)
+          << "\", \"detail\": \"" << escapeLlmJson(ev.detail) << "\" }"
+          << (i + 1 < s_allMatchEvents.size() ? "," : "") << "\n";
+    }
+    f << "  ]\n}\n";
+    return f.good();
+}
+
 void finalizeMatchTelemetry()
 {
     const auto& cfg = getLlmConfig();
@@ -1004,37 +1756,6 @@ void finalizeMatchTelemetry()
         tmBuf.tm_hour, tmBuf.tm_min, tmBuf.tm_sec);
 
     std::string fullPath = joinPaths(dir.c_str(), fname);
-    MatchTelemetrySnapshot snap = captureMatchTelemetrySnapshot();
-
-    std::ofstream f(fullPath, std::ios::out | std::ios::trunc);
-    if (!f)
-        return;
-
-    f << "{\n";
-    f << "  \"competition\": \"" << escapeLlmJson(snap.competition) << "\",\n";
-    f << "  \"pitch\": \"" << escapeLlmJson(snap.pitchCondition) << "\",\n";
-    f << "  \"minute\": " << snap.minute << ",\n";
-    f << "  \"team1\": \"" << escapeLlmJson(snap.team1) << "\",\n";
-    f << "  \"team2\": \"" << escapeLlmJson(snap.team2) << "\",\n";
-    f << "  \"goals1\": " << snap.goals1 << ",\n";
-    f << "  \"goals2\": " << snap.goals2 << ",\n";
-    f << "  \"shots1\": " << snap.shots1 << ",\n";
-    f << "  \"shots2\": " << snap.shots2 << ",\n";
-    f << "  \"possession1\": " << snap.possession1 << ",\n";
-    f << "  \"possession2\": " << snap.possession2 << ",\n";
-    f << "  \"territory\": { \"team1AtkPct\": " << snap.team1AttackZonePct
-      << ", \"midPct\": " << snap.midfieldZonePct
-      << ", \"team2AtkPct\": " << snap.team2AttackZonePct << " },\n";
-    f << "  \"events\": [\n";
-    for (size_t i = 0; i < s_allMatchEvents.size(); ++i) {
-        const auto& ev = s_allMatchEvents[i];
-        f << "    { \"minute\": " << ev.minute
-          << ", \"type\": \"" << escapeLlmJson(ev.type)
-          << "\", \"team\": \"" << escapeLlmJson(ev.team)
-          << "\", \"player\": \"" << escapeLlmJson(ev.player)
-          << "\", \"detail\": \"" << escapeLlmJson(ev.detail) << "\" }"
-          << (i + 1 < s_allMatchEvents.size() ? "," : "") << "\n";
-    }
-    f << "  ]\n}\n";
-    logInfo("Exported match telemetry to %s", fullPath.c_str());
+    if (exportMatchTelemetryJsonToPath(fullPath))
+        logInfo("Exported Telemetry V2 JSON to %s", fullPath.c_str());
 }
