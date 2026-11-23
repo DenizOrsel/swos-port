@@ -14,6 +14,7 @@
 #include "stadiumFacilities.h"
 #include "stats.h"
 #include "swos.h"
+#include "updatePlayers.h"
 
 #include <algorithm>
 #include <array>
@@ -61,7 +62,10 @@ struct ShotRecord {
     std::string bodyPart = "foot";
     std::string situation = "open_play";
     std::string outcome = "wide";
+    bool outsideBox = false;
     double xg = 0.0;
+    uint32_t frameTick = 0;
+    int timelineBucket = 0;
 };
 
 struct PlayerMatchAnalytics {
@@ -116,6 +120,11 @@ bool s_redBefore60_2 = false;
 TouchRecord s_lastTouch;
 TouchRecord s_prevTouch;
 TouchRecord s_lastTouchByTeam[2];
+TouchRecord s_lastStrikeByTeam[2];
+std::array<std::array<TouchRecord, kNumPlayersInTeam>, 2> s_lastTouchByPlayer{};
+const Sprite *s_prevLastPlayerPlayed = nullptr;
+std::array<word, 2> s_prevPassKickTimer = { 0, 0 };
+std::array<word, 2> s_prevPlayerHasBall = { 0, 0 };
 std::deque<MatchTelemetryEvent> s_recentEvents;
 std::vector<MatchTelemetryEvent> s_allMatchEvents;
 std::map<std::string, int> s_matchAssists;
@@ -525,31 +534,31 @@ std::string extractCareerRecordSummary()
     return {};
 }
 
-void sampleBallTouch()
+void recordPlayerTouchOrStrike(const Sprite *sp, bool isStrikeRelease, bool isHeading)
 {
-    const TeamGeneralInfo *team = swos.lastTeamPlayed.asAligned();
-    const Sprite *carrier = team ? team->controlledPlayer.asAligned() : nullptr;
-    if (!carrier || carrier->playerOrdinal < 1 || carrier->playerOrdinal > kNumPlayersInTeam)
+    if (!sp || sp->playerOrdinal < 1 || sp->playerOrdinal > kNumPlayersInTeam)
         return;
 
-    int teamNum = carrier->teamNumber;
+    int teamNum = sp->teamNumber;
     if (teamNum != 1 && teamNum != 2)
         return;
 
-    // Only register a touch when the ball is close to the player sprite
-    float dx = swos.ballSprite.x.asFloat() - carrier->x.asFloat();
-    float dy = swos.ballSprite.y.asFloat() - carrier->y.asFloat();
-    if (dx * dx + dy * dy > 26.0f * 26.0f)
-        return;
-
     const TeamGame& tg = (teamNum == 1) ? swos.topTeamInGame : swos.bottomTeamInGame;
-    const char *pName = tg.players[carrier->playerOrdinal - 1].shortName;
+    const char *pName = tg.players[sp->playerOrdinal - 1].shortName;
     if (!pName || pName[0] == '\0')
         return;
 
-    bool isHeading = (carrier->state == PlayerState::kStaticHeader ||
-                      carrier->state == PlayerState::kJumpHeader);
-    bool samePlayer = (s_lastTouch.teamNum == teamNum && s_lastTouch.playerOrd == carrier->playerOrdinal);
+    // On a kick/shot release, prefer the striker's exact pitch coordinates (since the ball may already
+    // have jumped 15-25px forward in the kick frame, pushing an edge-of-box strike inside the box!).
+    float bx = swos.ballSprite.x.asFloat();
+    float by = swos.ballSprite.y.asFloat();
+    float sx = sp->x.asFloat();
+    float sy = sp->y.asFloat();
+    float distSq = (bx - sx) * (bx - sx) + (by - sy) * (by - sy);
+    float touchX = (isStrikeRelease || distSq > 16.0f * 16.0f) ? sx : bx;
+    float touchY = (isStrikeRelease || distSq > 16.0f * 16.0f) ? sy : by;
+
+    bool samePlayer = (s_lastTouch.teamNum == teamNum && s_lastTouch.playerOrd == sp->playerOrdinal);
     if (!samePlayer) {
         // Detect pass completion or turnover/tackle between previous touch and new touch
         if (s_lastTouch.teamNum != 0 && s_lastTouch.playerOrd >= 1 && s_lastTouch.playerOrd <= kNumPlayersInTeam &&
@@ -557,18 +566,18 @@ void sampleBallTouch()
             uint32_t dt = s_frameCounter - s_lastTouch.frameTick;
             if (s_lastTouch.teamNum == teamNum && dt <= 240) {
                 ++s_playerAnalytics[teamNum - 1][s_lastTouch.playerOrd - 1].passesCompleted;
-                ++s_passLinks[teamNum - 1][{ s_lastTouch.playerOrd, carrier->playerOrdinal }];
+                ++s_passLinks[teamNum - 1][{ s_lastTouch.playerOrd, sp->playerOrdinal }];
             } else if (s_lastTouch.teamNum != teamNum && dt <= 120) {
                 ++s_playerAnalytics[s_lastTouch.teamNum - 1][s_lastTouch.playerOrd - 1].turnovers;
-                ++s_playerAnalytics[teamNum - 1][carrier->playerOrdinal - 1].tacklesWon;
+                ++s_playerAnalytics[teamNum - 1][sp->playerOrdinal - 1].tacklesWon;
             }
         }
 
         // Count discrete touch & spatial touch sample
-        auto& pa = s_playerAnalytics[teamNum - 1][carrier->playerOrdinal - 1];
+        auto& pa = s_playerAnalytics[teamNum - 1][sp->playerOrdinal - 1];
         ++pa.touches;
         float nx = 0.5f, ny = 0.5f;
-        normalizeToTeamAttackCoords(swos.ballSprite.x.asFloat(), swos.ballSprite.y.asFloat(), teamNum, nx, ny);
+        normalizeToTeamAttackCoords(touchX, touchY, teamNum, nx, ny);
         addHeatmapSample(pa.heatmap, nx, ny, 2);
         addHeatmapSample(s_teamHeatmaps[teamNum - 1], nx, ny, 2);
         if (ny >= 0.67f) {
@@ -579,16 +588,91 @@ void sampleBallTouch()
 
         s_prevTouch = s_lastTouch;
     }
+
     bool prevHeader = samePlayer && s_lastTouch.wasHeader && (s_frameCounter - s_lastTouch.frameTick) <= 18;
-    s_lastTouch.teamNum = teamNum;
-    s_lastTouch.playerOrd = carrier->playerOrdinal;
-    s_lastTouch.name = pName;
-    s_lastTouch.x = swos.ballSprite.x.asFloat();
-    s_lastTouch.y = swos.ballSprite.y.asFloat();
-    s_lastTouch.ballZ = swos.ballSprite.z.asFloat();
-    s_lastTouch.wasHeader = isHeading || prevHeader;
-    s_lastTouch.frameTick = s_frameCounter;
-    s_lastTouchByTeam[teamNum - 1] = s_lastTouch;
+    TouchRecord rec;
+    rec.teamNum = teamNum;
+    rec.playerOrd = sp->playerOrdinal;
+    rec.name = pName;
+    rec.x = touchX;
+    rec.y = touchY;
+    rec.ballZ = swos.ballSprite.z.asFloat();
+    rec.wasHeader = isHeading || prevHeader;
+    rec.frameTick = s_frameCounter;
+
+    s_lastTouch = rec;
+    s_lastTouchByTeam[teamNum - 1] = rec;
+    s_lastTouchByPlayer[teamNum - 1][sp->playerOrdinal - 1] = rec;
+    if (isStrikeRelease)
+        s_lastStrikeByTeam[teamNum - 1] = rec;
+}
+
+void sampleBallTouch()
+{
+    // Never sample bogus touches during goal celebrations / stoppages
+    if (swos.gameStatePl != GameState::kInProgress) {
+        s_prevPassKickTimer = { 0, 0 };
+        s_prevPlayerHasBall = { 0, 0 };
+        return;
+    }
+
+    const TeamGeneralInfo *teams[2] = { &swos.topTeamData, &swos.bottomTeamData };
+    bool recordedThisFrame = false;
+
+    // 1. Check authoritative engine kick/shot release & active ball carry on BOTH teams
+    for (int t = 0; t < 2; ++t) {
+        const TeamGeneralInfo *ti = teams[t];
+        word curKick = ti->passKickTimer;
+        word curHas = ti->playerHasBall;
+        bool kickJustFired = (curKick > s_prevPassKickTimer[t]) || (ti->shooting != 0);
+        bool ballJustReleased = (s_prevPlayerHasBall[t] != 0 && curHas == 0);
+
+        if (kickJustFired || ballJustReleased) {
+            const Sprite *striker = ti->passingKickingPlayer.asAligned();
+            if (!striker || striker->playerOrdinal < 1 || striker->playerOrdinal > kNumPlayersInTeam)
+                striker = ti->controlledPlayer.asAligned();
+            if (striker && striker->playerOrdinal >= 1 && striker->playerOrdinal <= kNumPlayersInTeam) {
+                bool isHdr = (striker->state == PlayerState::kStaticHeader ||
+                              striker->state == PlayerState::kJumpHeader);
+                recordPlayerTouchOrStrike(striker, true, isHdr);
+                recordedThisFrame = true;
+            }
+        } else if (curHas != 0) {
+            const Sprite *carrier = ti->controlledPlayer.asAligned();
+            if (carrier && carrier->playerOrdinal >= 1 && carrier->playerOrdinal <= kNumPlayersInTeam) {
+                bool isHdr = (carrier->state == PlayerState::kStaticHeader ||
+                              carrier->state == PlayerState::kJumpHeader);
+                recordPlayerTouchOrStrike(carrier, false, isHdr);
+                recordedThisFrame = true;
+            }
+        }
+
+        s_prevPassKickTimer[t] = curKick;
+        s_prevPlayerHasBall[t] = curHas;
+    }
+
+    // 2. Check SWOS's authoritative lastPlayerPlayed (catches one-touch volleys, headers, & deflections)
+    const Sprite *lastPl = getLastPlayerPlayed();
+    if (!swos.lastKeeperPlayed.isNull() &&
+        (lastPl == &swos.goalie1Sprite || lastPl == &swos.goalie2Sprite)) {
+        lastPl = swos.lastKeeperPlayed.asAligned();
+    }
+
+    if (lastPl && lastPl->playerOrdinal >= 1 && lastPl->playerOrdinal <= kNumPlayersInTeam) {
+        bool pointerChanged = (lastPl != s_prevLastPlayerPlayed);
+        float dx = swos.ballSprite.x.asFloat() - lastPl->x.asFloat();
+        float dy = swos.ballSprite.y.asFloat() - lastPl->y.asFloat();
+        bool veryClose = (dx * dx + dy * dy <= 20.0f * 20.0f);
+        bool isHdr = (lastPl->state == PlayerState::kStaticHeader ||
+                      lastPl->state == PlayerState::kJumpHeader);
+        if (!recordedThisFrame && (pointerChanged || (veryClose && isHdr))) {
+            // Only treat as a real touch/strike if the player actually just made contact
+            if (pointerChanged || veryClose) {
+                recordPlayerTouchOrStrike(lastPl, pointerChanged, isHdr);
+            }
+        }
+    }
+    s_prevLastPlayerPlayed = lastPl;
 }
 
 void sampleSpatialPositionsAndTimeline()
@@ -637,6 +721,8 @@ void sampleSpatialPositionsAndTimeline()
     sampleTeamSprites(team2Info, 2);
 }
 
+bool isInsideSwosPenaltyArea(float x, float y, bool topGoal);
+
 void recordShotAnalytics(
     int teamNum, const std::string& teamName, int playerOrd, const std::string& playerName,
     const std::string& assistedBy, float rawX, float rawY, float rawZ,
@@ -652,6 +738,38 @@ void recordShotAnalytics(
         (s_frameCounter - s_lastShotDedupFrame) < 25) {
         return;
     }
+
+    // If a keeper fingertip "saved" event fired just moments ago (< 60 frames) for the SAME attacking team
+    // and the ball still went in (or hit the post), replace that false save in-place so the Shot Map
+    // doesn't draw two overlapping circles or double-count xG / keeper saves!
+    bool mergedFromDeflectionSave = false;
+    if ((outcome == "goal" || outcome == "post") && !s_shots.empty()) {
+        const auto& prev = s_shots.back();
+        if (prev.outcome == "saved" && prev.teamNum == teamNum &&
+            s_frameCounter >= prev.frameTick && (s_frameCounter - prev.frameTick) <= 60) {
+            // Roll back the false save's player/timeline/GK credits
+            int defTeam = (teamNum == 1) ? 2 : 1;
+            if (s_playerAnalytics[defTeam - 1][0].gkSaves > 0)
+                --s_playerAnalytics[defTeam - 1][0].gkSaves;
+            int prevB = std::clamp(prev.timelineBucket, 0, kMaxTimelineBuckets - 1);
+            if (teamNum == 1) {
+                s_timeline[prevB].shots1 = std::max(0, s_timeline[prevB].shots1 - 1);
+                s_timeline[prevB].xg1 = std::max(0.0, s_timeline[prevB].xg1 - prev.xg);
+            } else {
+                s_timeline[prevB].shots2 = std::max(0, s_timeline[prevB].shots2 - 1);
+                s_timeline[prevB].xg2 = std::max(0.0, s_timeline[prevB].xg2 - prev.xg);
+            }
+            if (prev.playerOrd >= 1 && prev.playerOrd <= kNumPlayersInTeam) {
+                auto& prevPa = s_playerAnalytics[teamNum - 1][prev.playerOrd - 1];
+                prevPa.shots = std::max(0, prevPa.shots - 1);
+                prevPa.shotsOnTarget = std::max(0, prevPa.shotsOnTarget - 1);
+                prevPa.xg = std::max(0.0, prevPa.xg - prev.xg);
+            }
+            s_shots.pop_back();
+            mergedFromDeflectionSave = true;
+        }
+    }
+    (void)mergedFromDeflectionSave;
     s_lastShotDedupFrame = s_frameCounter;
 
     float normX = 0.5f, normY = 0.5f;
@@ -668,6 +786,11 @@ void recordShotAnalytics(
         ? 0.0
         : computeSwosShotXg(normX, normY, rawZ, isHeader, isPenalty, isFreeKick, isVolley, distYards, angleDeg);
 
+    bool attackingTop = (teamNum == 1) ? isTeam1AttackingTopGoal() : !isTeam1AttackingTopGoal();
+    bool shotOutsideBox = (!isPenalty && outcome != "own_goal") &&
+                          !isInsideSwosPenaltyArea(rawX, rawY, attackingTop);
+
+    int b = currentTimelineBucket();
     ShotRecord sr;
     sr.minute = static_cast<int>(gameTimeInMinutes());
     sr.half = swos.halfNumber ? static_cast<int>(swos.halfNumber) : 1;
@@ -690,11 +813,13 @@ void recordShotAnalytics(
     sr.bodyPart = isHeader ? "header" : (isVolley ? "volley" : "foot");
     sr.situation = isPenalty ? "penalty" : (isFreeKick ? "free_kick" : (withinCorner ? "corner" : "open_play"));
     sr.outcome = outcome;
+    sr.outsideBox = shotOutsideBox;
     sr.xg = xg;
+    sr.frameTick = s_frameCounter;
+    sr.timelineBucket = b;
     s_shots.push_back(sr);
 
     // Update player & timeline aggregates
-    int b = currentTimelineBucket();
     if (outcome != "own_goal") {
         if (teamNum == 1) {
             ++s_timeline[b].shots1;
@@ -756,16 +881,48 @@ struct GoalMechanicsInfo {
     std::string detail;
     bool isHeader = false;
     bool isOutsidePenaltyArea = false;
+    float shotX = 0.0f;
+    float shotY = 0.0f;
+    float shotZ = 0.0f;
+    bool hasExactStrike = false;
 };
+
+// Resolve the shooter's true strike/touch origin, prioritizing the actual scorer's last strike/touch
+// so opponent deflections inside the penalty box NEVER corrupt a long-range shot's coordinates!
+const TouchRecord *resolveTeamShotTouch(int teamNum, const Sprite *scorerSprite, uint32_t maxAgeFrames = 360)
+{
+    if (teamNum != 1 && teamNum != 2)
+        return nullptr;
+
+    auto isFresh = [&](const TouchRecord& r) {
+        return r.frameTick > 0 && s_frameCounter >= r.frameTick && (s_frameCounter - r.frameTick) <= maxAgeFrames;
+    };
+
+    // 1. Exact scorer's own recorded strike/touch (immune to teammates & opponent deflections!)
+    if (scorerSprite && scorerSprite->playerOrdinal >= 1 && scorerSprite->playerOrdinal <= kNumPlayersInTeam) {
+        const auto& pRec = s_lastTouchByPlayer[teamNum - 1][scorerSprite->playerOrdinal - 1];
+        if (isFresh(pRec))
+            return &pRec;
+    }
+
+    // 2. Attacking team's last kick/shot release
+    const auto& strikeRec = s_lastStrikeByTeam[teamNum - 1];
+    if (isFresh(strikeRec))
+        return &strikeRec;
+
+    // 3. Attacking team's last touch
+    const auto& teamRec = s_lastTouchByTeam[teamNum - 1];
+    if (isFresh(teamRec))
+        return &teamRec;
+
+    return nullptr;
+}
 
 GoalMechanicsInfo describeGoalMechanics(const Sprite *scorerSprite, const char *eventType, int scoringTeamNum)
 {
     GoalMechanicsInfo info;
-    const TouchRecord *teamTouch = (scoringTeamNum == 1 || scoringTeamNum == 2)
-        ? &s_lastTouchByTeam[scoringTeamNum - 1]
-        : &s_lastTouch;
-    bool recentTouch = (teamTouch->frameTick > 0 && s_frameCounter >= teamTouch->frameTick &&
-                        (s_frameCounter - teamTouch->frameTick) < 180);
+    const TouchRecord *teamTouch = resolveTeamShotTouch(scoringTeamNum, scorerSprite, 360);
+    bool recentTouch = (teamTouch != nullptr);
 
     bool isOwnGoal = (swos.goalTypeScored == static_cast<int>(GoalType::kOwnGoal));
     bool isPenalty = (swos.penalty != 0) || (eventType && std::strstr(eventType, "PENALTY") != nullptr);
@@ -783,18 +940,38 @@ GoalMechanicsInfo describeGoalMechanics(const Sprite *scorerSprite, const char *
         info.detail = "footed shot (NOT a header)";
     }
 
-    // Exact SWOS penalty-box classification from shooter's last ball touch position
+    // Exact SWOS penalty-box classification from shooter's true strike position
     float bx = swos.ballSprite.x.asFloat();
     float by = swos.ballSprite.y.asFloat();
     float bz = swos.ballSprite.z.asFloat();
     bool scoredAtTopGoal = (by < static_cast<float>(kPitchCenterY));
-    float shotX = recentTouch ? teamTouch->x : bx;
-    float shotY = recentTouch ? teamTouch->y : by;
+
+    float shotX = bx;
+    float shotY = by;
+    float shotZ = bz;
+    bool haveOrigin = false;
+    if (recentTouch) {
+        shotX = teamTouch->x;
+        shotY = teamTouch->y;
+        shotZ = teamTouch->ballZ;
+        haveOrigin = true;
+    } else if (scorerSprite && !isOwnGoal) {
+        // Fallback to scorer sprite coordinates (far better than goal-line ballSprite!)
+        shotX = scorerSprite->x.asFloat();
+        shotY = scorerSprite->y.asFloat();
+        haveOrigin = true;
+    }
+
+    info.shotX = shotX;
+    info.shotY = shotY;
+    info.shotZ = shotZ;
+    info.hasExactStrike = haveOrigin;
+
     float goalY = scoredAtTopGoal ? static_cast<float>(kTopPitchLine) : static_cast<float>(kBottomPitchLine);
     float shotDist = std::hypot(shotX - static_cast<float>(kPitchCenterX), shotY - goalY);
 
     if (!isPenalty && !isOwnGoal) {
-        bool outsideBox = recentTouch && !isInsideSwosPenaltyArea(shotX, shotY, scoredAtTopGoal);
+        bool outsideBox = haveOrigin && !isInsideSwosPenaltyArea(shotX, shotY, scoredAtTopGoal);
         if (outsideBox) {
             info.detail += ", long-range strike from outside the penalty area";
             info.isOutsidePenaltyArea = true;
@@ -868,6 +1045,14 @@ void resetMatchTelemetry()
     s_prevTouch = {};
     s_lastTouchByTeam[0] = {};
     s_lastTouchByTeam[1] = {};
+    s_lastStrikeByTeam[0] = {};
+    s_lastStrikeByTeam[1] = {};
+    for (auto& arr : s_lastTouchByPlayer)
+        for (auto& tr : arr)
+            tr = TouchRecord{};
+    s_prevLastPlayerPlayed = nullptr;
+    s_prevPassKickTimer = { 0, 0 };
+    s_prevPlayerHasBall = { 0, 0 };
     s_recentEvents.clear();
     s_allMatchEvents.clear();
     s_matchAssists.clear();
@@ -1019,9 +1204,7 @@ void recordTelemetryMatchEvent(const char *eventType, bool isGoalEvent /* = fals
                 if (tf2) t2Human = (tf2->teamControls == kPlayerCoach || tf2->teamControls == kCoach);
             }
             bool scoringSideHuman = (scoringTeamNum == 1) ? t1Human : t2Human;
-            const TouchRecord& teamTouch = s_lastTouchByTeam[scoringTeamNum - 1];
-            bool recentTouch = (teamTouch.frameTick > 0 && s_frameCounter >= teamTouch.frameTick &&
-                                (s_frameCounter - teamTouch.frameTick) < 180);
+            const TouchRecord *goalTouch = resolveTeamShotTouch(scoringTeamNum, scorerSprite, 360);
 
             AchievementGoalEvent achGoal;
             achGoal.humanScored = scoringSideHuman;
@@ -1036,7 +1219,7 @@ void recordTelemetryMatchEvent(const char *eventType, bool isGoalEvent /* = fals
                 s_lastCornerFrame > 0 && s_frameCounter >= s_lastCornerFrame &&
                 (s_frameCounter - s_lastCornerFrame) <= 180);
             achGoal.isVolley = (!achGoal.isOwnGoal && !achGoal.isPenalty && !achGoal.isHeader &&
-                recentTouch && teamTouch.ballZ >= 6.0f);
+                goalTouch && goalTouch->ballZ >= 6.0f);
             achGoal.scorerIsGoalkeeper = (scorerSprite && scorerSprite->playerOrdinal == 1);
             achGoal.matchMinute = static_cast<int>(gameTimeInMinutes());
             achGoal.isExtraTime = (swos.halfNumber > 2 || achGoal.matchMinute > 90);
@@ -1049,10 +1232,10 @@ void recordTelemetryMatchEvent(const char *eventType, bool isGoalEvent /* = fals
             }
             achievementsOnGoalScored(achGoal);
 
-            // Record Telemetry V2 shot + xG + assister credit
+            // Record Telemetry V2 shot + xG + assister credit using the exact scorer strike coordinates!
             int scorerOrd = (scorerSprite && scorerSprite->playerOrdinal >= 1 && scorerSprite->playerOrdinal <= kNumPlayersInTeam)
                 ? static_cast<int>(scorerSprite->playerOrdinal)
-                : (recentTouch ? teamTouch.playerOrd : 0);
+                : (goalTouch ? goalTouch->playerOrd : 0);
             std::string assister;
             if (!achGoal.isOwnGoal && !achGoal.isPenalty &&
                 s_prevTouch.teamNum == scoringTeamNum &&
@@ -1062,12 +1245,9 @@ void recordTelemetryMatchEvent(const char *eventType, bool isGoalEvent /* = fals
                 assister = s_prevTouch.name;
                 ++s_playerAnalytics[scoringTeamNum - 1][s_prevTouch.playerOrd - 1].assists;
             }
-            float sx = recentTouch ? teamTouch.x : swos.ballSprite.x.asFloat();
-            float sy = recentTouch ? teamTouch.y : swos.ballSprite.y.asFloat();
-            float sz = recentTouch ? teamTouch.ballZ : swos.ballSprite.z.asFloat();
             recordShotAnalytics(
                 scoringTeamNum, teamName, scorerOrd, playerName, assister,
-                sx, sy, sz, achGoal.isHeader, achGoal.isPenalty, achGoal.isFreeKick,
+                mech.shotX, mech.shotY, mech.shotZ, achGoal.isHeader, achGoal.isPenalty, achGoal.isFreeKick,
                 achGoal.isVolley, achGoal.withinCornerWindow,
                 achGoal.isOwnGoal ? "own_goal" : "goal");
         }
@@ -1083,22 +1263,20 @@ void recordTelemetryMatchEvent(const char *eventType, bool isGoalEvent /* = fals
 
         std::string shooter;
         int shooterOrd = 0;
-        const TouchRecord& atkTouch = s_lastTouchByTeam[atkTeamNum - 1];
-        bool recentAtk = (atkTouch.frameTick > 0 && s_frameCounter >= atkTouch.frameTick &&
-                          (s_frameCounter - atkTouch.frameTick) < 150);
-        if (recentAtk && !atkTouch.name.empty()) {
-            shooter = atkTouch.name;
-            shooterOrd = atkTouch.playerOrd;
+        const TouchRecord *atkTouch = resolveTeamShotTouch(atkTeamNum, nullptr, 300);
+        if (atkTouch && !atkTouch->name.empty()) {
+            shooter = atkTouch->name;
+            shooterOrd = atkTouch->playerOrd;
         }
         if (!swos.playingPenalties) {
             bool isPen = (swos.penalty != 0) || (std::strstr(eventType, "PENALTY") != nullptr);
             bool isFk = !isPen && s_lastFreeKickFrame > 0 && s_frameCounter >= s_lastFreeKickFrame && (s_frameCounter - s_lastFreeKickFrame) <= 240;
             bool isCor = !isPen && s_lastCornerFrame > 0 && s_frameCounter >= s_lastCornerFrame && (s_frameCounter - s_lastCornerFrame) <= 180;
-            bool isHdr = recentAtk && atkTouch.wasHeader;
-            bool isVol = !isPen && !isHdr && recentAtk && atkTouch.ballZ >= 6.0f;
-            float sx = recentAtk ? atkTouch.x : swos.ballSprite.x.asFloat();
-            float sy = recentAtk ? atkTouch.y : swos.ballSprite.y.asFloat();
-            float sz = recentAtk ? atkTouch.ballZ : swos.ballSprite.z.asFloat();
+            bool isHdr = atkTouch && atkTouch->wasHeader;
+            bool isVol = !isPen && !isHdr && atkTouch && atkTouch->ballZ >= 6.0f;
+            float sx = atkTouch ? atkTouch->x : swos.ballSprite.x.asFloat();
+            float sy = atkTouch ? atkTouch->y : swos.ballSprite.y.asFloat();
+            float sz = atkTouch ? atkTouch->ballZ : swos.ballSprite.z.asFloat();
             recordShotAnalytics(atkTeamNum, oppTeam, shooterOrd, shooter, {}, sx, sy, sz, isHdr, isPen, isFk, isVol, isCor, "saved");
         }
         detail = teamName + " goalkeeper" + (playerName.empty() ? "" : (" " + playerName)) +
@@ -1112,12 +1290,10 @@ void recordTelemetryMatchEvent(const char *eventType, bool isGoalEvent /* = fals
 
         int atkTeamNum = (attackingInfo == team1Info) ? 1 : 2;
         int shooterOrd = 0;
-        const TouchRecord& atkTouch = s_lastTouchByTeam[atkTeamNum - 1];
-        bool recentAtk = (atkTouch.frameTick > 0 && s_frameCounter >= atkTouch.frameTick &&
-                          (s_frameCounter - atkTouch.frameTick) < 150);
-        if (recentAtk && !atkTouch.name.empty()) {
-            playerName = atkTouch.name;
-            shooterOrd = atkTouch.playerOrd;
+        const TouchRecord *atkTouch = resolveTeamShotTouch(atkTeamNum, nullptr, 300);
+        if (atkTouch && !atkTouch->name.empty()) {
+            playerName = atkTouch->name;
+            shooterOrd = atkTouch->playerOrd;
         }
         bool isPenAwarded = (std::strstr(eventType, "PENALTY AWARDED") != nullptr);
         if (!swos.playingPenalties && !isPenAwarded) {
@@ -1125,11 +1301,11 @@ void recordTelemetryMatchEvent(const char *eventType, bool isGoalEvent /* = fals
             bool isPen = (std::strstr(eventType, "PENALTY MISSED") != nullptr);
             bool isFk = !isPen && s_lastFreeKickFrame > 0 && s_frameCounter >= s_lastFreeKickFrame && (s_frameCounter - s_lastFreeKickFrame) <= 240;
             bool isCor = !isPen && s_lastCornerFrame > 0 && s_frameCounter >= s_lastCornerFrame && (s_frameCounter - s_lastCornerFrame) <= 180;
-            bool isHdr = recentAtk && atkTouch.wasHeader;
-            bool isVol = !isPen && !isHdr && recentAtk && atkTouch.ballZ >= 6.0f;
-            float sx = recentAtk ? atkTouch.x : swos.ballSprite.x.asFloat();
-            float sy = recentAtk ? atkTouch.y : swos.ballSprite.y.asFloat();
-            float sz = recentAtk ? atkTouch.ballZ : swos.ballSprite.z.asFloat();
+            bool isHdr = atkTouch && atkTouch->wasHeader;
+            bool isVol = !isPen && !isHdr && atkTouch && atkTouch->ballZ >= 6.0f;
+            float sx = atkTouch ? atkTouch->x : swos.ballSprite.x.asFloat();
+            float sy = atkTouch ? atkTouch->y : swos.ballSprite.y.asFloat();
+            float sz = atkTouch ? atkTouch->ballZ : swos.ballSprite.z.asFloat();
             recordShotAnalytics(atkTeamNum, teamName, shooterOrd, playerName, {}, sx, sy, sz, isHdr, isPen, isFk, isVol, isCor, isPost ? "post" : "wide");
         }
         detail = teamName + " attacking " + defTeam + "'s goal" +
@@ -1549,6 +1725,9 @@ bool exportMatchTelemetryJsonToPath(const std::string& fullPath)
       << ", \"bottomY\": " << kBottomPitchLine
       << ", \"goalLeftX\": " << kGoalLeft
       << ", \"goalRightX\": " << kGoalRight
+      << ", \"penaltyBoxDepthNorm\": 0.136"
+      << ", \"penaltyBoxLeftNorm\": 0.220"
+      << ", \"penaltyBoxRightNorm\": 0.780"
       << ", \"heatmapCols\": " << kTelemetryHeatmapCols
       << ", \"heatmapRows\": " << kTelemetryHeatmapRows << " },\n";
 
@@ -1645,7 +1824,9 @@ bool exportMatchTelemetryJsonToPath(const std::string& fullPath)
           << ", \"rawZ\": " << fmtFloat(sr.rawZ, 1)
           << ", \"distYards\": " << fmtFloat(sr.distYards, 1) << ", \"angleDeg\": " << fmtFloat(sr.angleDeg, 1)
           << ", \"bodyPart\": \"" << sr.bodyPart << "\", \"situation\": \"" << sr.situation
-          << "\", \"outcome\": \"" << sr.outcome << "\", \"xg\": " << fmtFloat(sr.xg, 3) << " }"
+          << "\", \"outcome\": \"" << sr.outcome
+          << "\", \"outsideBox\": " << (sr.outsideBox ? "true" : "false")
+          << ", \"xg\": " << fmtFloat(sr.xg, 3) << " }"
           << (i + 1 < s_shots.size() ? "," : "") << "\n";
     }
     f << "  ],\n";
