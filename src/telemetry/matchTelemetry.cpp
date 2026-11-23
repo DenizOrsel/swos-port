@@ -28,6 +28,7 @@ struct TouchRecord {
     std::string name;
     float x = 0.0f;
     float y = 0.0f;
+    bool wasHeader = false;
     uint32_t frameTick = 0;
 };
 
@@ -37,9 +38,14 @@ uint32_t s_zoneSamplesMidfield = 0;
 uint32_t s_zoneSamplesTeam2Attack = 0;
 int s_htGoals1 = 0;
 int s_htGoals2 = 0;
+int s_longRangeGoals1 = 0;
+int s_longRangeGoals2 = 0;
+int s_headerGoals1 = 0;
+int s_headerGoals2 = 0;
 
 TouchRecord s_lastTouch;
 TouchRecord s_prevTouch;
+TouchRecord s_lastTouchByTeam[2];
 std::deque<MatchTelemetryEvent> s_recentEvents;
 std::vector<MatchTelemetryEvent> s_allMatchEvents;
 std::map<std::string, int> s_matchAssists;
@@ -402,15 +408,29 @@ void sampleBallTouch()
     if (!pName || pName[0] == '\0')
         return;
 
-    if (s_lastTouch.teamNum != teamNum || s_lastTouch.playerOrd != carrier->playerOrdinal) {
+    bool isHeading = (carrier->state == PlayerState::kStaticHeader ||
+                      carrier->state == PlayerState::kJumpHeader);
+    bool samePlayer = (s_lastTouch.teamNum == teamNum && s_lastTouch.playerOrd == carrier->playerOrdinal);
+    if (!samePlayer) {
         s_prevTouch = s_lastTouch;
     }
+    bool prevHeader = samePlayer && s_lastTouch.wasHeader && (s_frameCounter - s_lastTouch.frameTick) <= 18;
     s_lastTouch.teamNum = teamNum;
     s_lastTouch.playerOrd = carrier->playerOrdinal;
     s_lastTouch.name = pName;
     s_lastTouch.x = swos.ballSprite.x.asFloat();
     s_lastTouch.y = swos.ballSprite.y.asFloat();
+    s_lastTouch.wasHeader = isHeading || prevHeader;
     s_lastTouch.frameTick = s_frameCounter;
+    s_lastTouchByTeam[teamNum - 1] = s_lastTouch;
+}
+
+// Exact SWOS penalty area lines (swos.asm): X in [193..478], upper box Y <= 216, lower box Y >= 682
+bool isInsideSwosPenaltyArea(float x, float y, bool topGoal)
+{
+    if (x < 193.0f || x > 478.0f)
+        return false;
+    return topGoal ? (y <= 216.0f) : (y >= 682.0f);
 }
 
 void sampleTerritoryThirds()
@@ -437,55 +457,74 @@ void sampleTerritoryThirds()
     }
 }
 
-std::string describeGoalMechanics(const Sprite *scorerSprite, const char *eventType)
-{
+struct GoalMechanicsInfo {
     std::string detail;
-    if (swos.goalTypeScored == static_cast<int>(GoalType::kOwnGoal)) {
-        detail = "own goal";
-    } else if (swos.penalty || (eventType && std::strstr(eventType, "PENALTY") != nullptr)) {
-        detail = "penalty kick";
-    } else if (scorerSprite && (scorerSprite->state == PlayerState::kStaticHeader ||
-                                scorerSprite->state == PlayerState::kJumpHeader)) {
-        detail = "header";
+    bool isHeader = false;
+    bool isOutsidePenaltyArea = false;
+};
+
+GoalMechanicsInfo describeGoalMechanics(const Sprite *scorerSprite, const char *eventType, int scoringTeamNum)
+{
+    GoalMechanicsInfo info;
+    const TouchRecord *teamTouch = (scoringTeamNum == 1 || scoringTeamNum == 2)
+        ? &s_lastTouchByTeam[scoringTeamNum - 1]
+        : &s_lastTouch;
+    bool recentTouch = (teamTouch->frameTick > 0 && s_frameCounter >= teamTouch->frameTick &&
+                        (s_frameCounter - teamTouch->frameTick) < 180);
+
+    bool isOwnGoal = (swos.goalTypeScored == static_cast<int>(GoalType::kOwnGoal));
+    bool isPenalty = (swos.penalty != 0) || (eventType && std::strstr(eventType, "PENALTY") != nullptr);
+
+    if (isOwnGoal) {
+        info.detail = "own goal";
+    } else if (isPenalty) {
+        info.detail = "penalty kick";
+    } else if ((scorerSprite && (scorerSprite->state == PlayerState::kStaticHeader ||
+                                 scorerSprite->state == PlayerState::kJumpHeader)) ||
+               (recentTouch && teamTouch->wasHeader)) {
+        info.detail = "header";
+        info.isHeader = true;
     } else {
-        detail = "footed shot (NOT a header)";
+        info.detail = "footed shot (NOT a header)";
     }
 
-    // Distance & height classification from ball/touch position
+    // Exact SWOS penalty-box classification from shooter's last ball touch position
     float bx = swos.ballSprite.x.asFloat();
     float by = swos.ballSprite.y.asFloat();
     float bz = swos.ballSprite.z.asFloat();
-    float distToTopGoal = std::hypot(bx - 336.0f, by - 129.0f);
-    float distToBotGoal = std::hypot(bx - 336.0f, by - 769.0f);
-    float shotDist = (s_lastTouch.frameTick > 0 && s_frameCounter - s_lastTouch.frameTick < 120)
-        ? std::min(std::hypot(s_lastTouch.x - 336.0f, s_lastTouch.y - 129.0f),
-                   std::hypot(s_lastTouch.x - 336.0f, s_lastTouch.y - 769.0f))
-        : std::min(distToTopGoal, distToBotGoal);
+    bool scoredAtTopGoal = (by < static_cast<float>(kPitchCenterY));
+    float shotX = recentTouch ? teamTouch->x : bx;
+    float shotY = recentTouch ? teamTouch->y : by;
+    float goalY = scoredAtTopGoal ? static_cast<float>(kTopPitchLine) : static_cast<float>(kBottomPitchLine);
+    float shotDist = std::hypot(shotX - static_cast<float>(kPitchCenterX), shotY - goalY);
 
-    if (detail.find("penalty") == std::string::npos && detail.find("own") == std::string::npos) {
-        if (shotDist < 55.0f)
-            detail += ", close-range finish";
-        else if (shotDist < 125.0f)
-            detail += ", inside the box";
-        else
-            detail += ", long-range strike from outside the box";
+    if (!isPenalty && !isOwnGoal) {
+        bool outsideBox = recentTouch && !isInsideSwosPenaltyArea(shotX, shotY, scoredAtTopGoal);
+        if (outsideBox) {
+            info.detail += ", long-range strike from outside the penalty area";
+            info.isOutsidePenaltyArea = true;
+        } else if (shotDist < 55.0f) {
+            info.detail += ", close-range finish";
+        } else {
+            info.detail += ", inside the box";
+        }
 
         if (bz > 11.0f)
-            detail += ", high finish";
+            info.detail += ", high finish";
     }
 
     // Assist attribution from prior teammate touch within ~5 seconds (300 frames)
-    if (scorerSprite && swos.goalTypeScored != static_cast<int>(GoalType::kOwnGoal) && !swos.penalty) {
+    if (scorerSprite && !isOwnGoal && !isPenalty) {
         if (s_prevTouch.teamNum == scorerSprite->teamNumber &&
             s_prevTouch.playerOrd != scorerSprite->playerOrdinal &&
             !s_prevTouch.name.empty() &&
             s_frameCounter >= s_prevTouch.frameTick &&
             (s_frameCounter - s_prevTouch.frameTick) <= 300) {
-            detail += ", assisted by " + s_prevTouch.name;
+            info.detail += ", assisted by " + s_prevTouch.name;
             ++s_matchAssists[s_prevTouch.name];
         }
     }
-    return detail;
+    return info;
 }
 
 } // namespace
@@ -520,8 +559,14 @@ void resetMatchTelemetry()
     s_zoneSamplesTeam2Attack = 0;
     s_htGoals1 = 0;
     s_htGoals2 = 0;
+    s_longRangeGoals1 = 0;
+    s_longRangeGoals2 = 0;
+    s_headerGoals1 = 0;
+    s_headerGoals2 = 0;
     s_lastTouch = {};
     s_prevTouch = {};
+    s_lastTouchByTeam[0] = {};
+    s_lastTouchByTeam[1] = {};
     s_recentEvents.clear();
     s_allMatchEvents.clear();
     s_matchAssists.clear();
@@ -599,10 +644,14 @@ void recordTelemetryMatchEvent(const char *eventType, bool isGoalEvent /* = fals
 
     if (isGoalEvent) {
         const TeamGeneralInfo *scoringPtr = swos.lastTeamScored.asAligned();
-        if (swos.lastTeamScoredNumber == 1 || scoringPtr == team1Info)
+        int scoringTeamNum = 0;
+        if (swos.lastTeamScoredNumber == 1 || scoringPtr == team1Info) {
             teamName = t1;
-        else if (swos.lastTeamScoredNumber == 2 || scoringPtr == team2Info)
+            scoringTeamNum = 1;
+        } else if (swos.lastTeamScoredNumber == 2 || scoringPtr == team2Info) {
             teamName = t2;
+            scoringTeamNum = 2;
+        }
 
         const Sprite *scorerSprite = swos.currentScorer.asAligned();
         if (scorerSprite && scorerSprite->playerOrdinal >= 1 && scorerSprite->playerOrdinal <= kNumPlayersInTeam) {
@@ -610,7 +659,15 @@ void recordTelemetryMatchEvent(const char *eventType, bool isGoalEvent /* = fals
             if (tg.players[scorerSprite->playerOrdinal - 1].shortName[0] != '\0')
                 playerName = tg.players[scorerSprite->playerOrdinal - 1].shortName;
         }
-        detail = describeGoalMechanics(scorerSprite, eventType);
+        GoalMechanicsInfo mech = describeGoalMechanics(scorerSprite, eventType, scoringTeamNum);
+        detail = mech.detail;
+        if (scoringTeamNum == 1) {
+            if (mech.isOutsidePenaltyArea) ++s_longRangeGoals1;
+            if (mech.isHeader) ++s_headerGoals1;
+        } else if (scoringTeamNum == 2) {
+            if (mech.isOutsidePenaltyArea) ++s_longRangeGoals2;
+            if (mech.isHeader) ++s_headerGoals2;
+        }
         const char *concedingTeam = (teamName == t1) ? t2 : t1;
         const TeamGame& concedingTg = (teamName == t1) ? swos.bottomTeamInGame : swos.topTeamInGame;
         if (concedingTg.players[0].shortName[0] != '\0')
@@ -679,6 +736,16 @@ std::pair<int, int> getHalfTimeTelemetryGoals()
     return { s_htGoals1, s_htGoals2 };
 }
 
+std::pair<int, int> getLongRangeTelemetryGoals()
+{
+    return { s_longRangeGoals1, s_longRangeGoals2 };
+}
+
+std::pair<int, int> getHeaderTelemetryGoals()
+{
+    return { s_headerGoals1, s_headerGoals2 };
+}
+
 MatchTelemetrySnapshot captureMatchTelemetrySnapshot()
 {
     MatchTelemetrySnapshot snap;
@@ -725,6 +792,10 @@ MatchTelemetrySnapshot captureMatchTelemetrySnapshot()
     snap.htGoals2 = s_htGoals2;
     snap.penGoals1 = swos.team1PenaltyGoals;
     snap.penGoals2 = swos.team2PenaltyGoals;
+    snap.longRangeGoals1 = s_longRangeGoals1;
+    snap.longRangeGoals2 = s_longRangeGoals2;
+    snap.headerGoals1 = s_headerGoals1;
+    snap.headerGoals2 = s_headerGoals2;
     snap.timePressureTag = computeTimePressureTag(snap.minute, snap.goals1, snap.goals2, snap.playingPenalties);
 
     const auto stats = getStats();

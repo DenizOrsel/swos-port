@@ -15,6 +15,9 @@ enum class SponsorChallengeType : uint8_t {
     kPossessionWin = 4,    // Win and possession >= thresholdValue (55..65)
     kShotsOnTarget = 5,    // Club records >= thresholdValue (6..12) shots on target
     kWinByMargin = 6,      // Club wins by >= thresholdValue (2..3) goals
+    kTeamGoals = 7,        // Club scores >= thresholdValue (2..4) total goals
+    kLongRangeGoal = 8,    // Club scores >= thresholdValue (1..2) goal(s) from outside penalty area
+    kHeaderGoal = 9,       // Club scores >= thresholdValue (1..2) goal(s) with a header
 };
 
 struct SponsorChallenge {
@@ -72,6 +75,8 @@ struct SponsorMatchResult {
     int opponentHtGoals = 0;
     int clubPossessionPct = 50;
     int clubShotsOnTarget = 0;
+    int clubLongRangeGoals = 0;
+    int clubHeaderGoals = 0;
     // (shirtNumber, shortName) for each goal scored by the human club (excluding own goals)
     std::vector<std::pair<int, std::string>> scorerEntries;
 };

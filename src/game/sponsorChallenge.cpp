@@ -134,6 +134,14 @@ SponsorChallengeType parseChallengeTypeString(const std::string& raw)
     std::string u = toUpperAscii(trimCopy(raw));
     if (u.find("CLEAN_SHEET") != std::string::npos || u.find("SHUTOUT") != std::string::npos)
         return SponsorChallengeType::kCleanSheetWin;
+    if (u.find("LONG_RANGE") != std::string::npos || u.find("OUTSIDE_BOX") != std::string::npos ||
+        u.find("OUTSIDE_PENALTY") != std::string::npos)
+        return SponsorChallengeType::kLongRangeGoal;
+    if (u.find("HEADER") != std::string::npos || u.find("HEADED") != std::string::npos)
+        return SponsorChallengeType::kHeaderGoal;
+    if (u.find("TEAM_GOAL") != std::string::npos || u.find("TOTAL_GOAL") != std::string::npos ||
+        u.find("SCORE_GOAL") != std::string::npos)
+        return SponsorChallengeType::kTeamGoals;
     if (u.find("PLAYER_GOAL") != std::string::npos || u.find("STRIKER") != std::string::npos)
         return SponsorChallengeType::kPlayerGoals;
     if (u.find("FIRST_HALF") != std::string::npos || u.find("HALF") != std::string::npos)
@@ -195,6 +203,9 @@ std::string defaultTitleForType(SponsorChallengeType type)
     case SponsorChallengeType::kPossessionWin: return "DOMINANT POSSESSION";
     case SponsorChallengeType::kShotsOnTarget: return "TARGET PRACTICE";
     case SponsorChallengeType::kWinByMargin: return "STATEMENT WIN";
+    case SponsorChallengeType::kTeamGoals: return "GOAL RUSH";
+    case SponsorChallengeType::kLongRangeGoal: return "LONG RANGE STRIKE";
+    case SponsorChallengeType::kHeaderGoal: return "AERIAL DOMINANCE";
     default: return "MATCH BONUS";
     }
 }
@@ -218,6 +229,16 @@ std::string defaultDescriptionForChallenge(const SponsorChallenge& c)
         return "Record at least " + std::to_string(c.thresholdValue) + " shots on target.";
     case SponsorChallengeType::kWinByMargin:
         return "Win the match by at least " + std::to_string(c.thresholdValue) + " goals.";
+    case SponsorChallengeType::kTeamGoals:
+        return "Score at least " + std::to_string(c.thresholdValue) + " goals in the match.";
+    case SponsorChallengeType::kLongRangeGoal:
+        if (c.thresholdValue <= 1)
+            return "Score at least 1 goal from outside the penalty area.";
+        return "Score at least " + std::to_string(c.thresholdValue) + " goals from outside the penalty area.";
+    case SponsorChallengeType::kHeaderGoal:
+        if (c.thresholdValue <= 1)
+            return "Score at least 1 goal with a header.";
+        return "Score at least " + std::to_string(c.thresholdValue) + " goals with a header.";
     default:
         return "Complete today's sponsor objective.";
     }
@@ -587,6 +608,12 @@ int16_t clampSponsorThreshold(SponsorChallengeType type, int16_t rawThreshold)
         return std::clamp<int16_t>(rawThreshold, 6, 12);
     case SponsorChallengeType::kWinByMargin:
         return std::clamp<int16_t>(rawThreshold, 2, 3);
+    case SponsorChallengeType::kTeamGoals:
+        return std::clamp<int16_t>(rawThreshold, 2, 4);
+    case SponsorChallengeType::kLongRangeGoal:
+        return std::clamp<int16_t>(rawThreshold, 1, 2);
+    case SponsorChallengeType::kHeaderGoal:
+        return std::clamp<int16_t>(rawThreshold, 1, 2);
     default:
         return 0;
     }
@@ -626,6 +653,15 @@ bool evaluateSponsorChallenge(const SponsorChallenge& challenge, const SponsorMa
 
     case SponsorChallengeType::kWinByMargin:
         return (result.clubGoals - result.opponentGoals) >= std::max<int>(1, challenge.thresholdValue);
+
+    case SponsorChallengeType::kTeamGoals:
+        return result.clubGoals >= std::max<int>(1, challenge.thresholdValue);
+
+    case SponsorChallengeType::kLongRangeGoal:
+        return result.clubLongRangeGoals >= std::max<int>(1, challenge.thresholdValue);
+
+    case SponsorChallengeType::kHeaderGoal:
+        return result.clubHeaderGoals >= std::max<int>(1, challenge.thresholdValue);
 
     default:
         return false;
@@ -677,12 +713,19 @@ std::vector<SponsorChallenge> generateOfflineSponsorChallenges(
     std::vector<SponsorChallenge> out;
 
     SponsorChallenge c1;
-    if ((seed % 2u) == 0u) {
+    uint32_t pick1 = seed % 3u;
+    if (pick1 == 0u) {
         c1.type = SponsorChallengeType::kCleanSheetWin;
         c1.title = "SHUTOUT VICTORY";
         c1.thresholdValue = 0;
         c1.rewardAmount = clampSponsorRewardForDivision(baseLow + 3000, divisionTier);
         c1.description = "Beat " + opponentName + " without conceding a single goal.";
+    } else if (pick1 == 1u) {
+        c1.type = SponsorChallengeType::kTeamGoals;
+        c1.title = "GOAL RUSH";
+        c1.thresholdValue = clampSponsorThreshold(c1.type, static_cast<int16_t>(2 + ((seed / 3u) % 2u)));
+        c1.rewardAmount = clampSponsorRewardForDivision(baseLow + (c1.thresholdValue >= 3 ? 8000 : 3000), divisionTier);
+        c1.description = defaultDescriptionForChallenge(c1);
     } else {
         c1.type = SponsorChallengeType::kFirstHalfGoals;
         c1.title = "BLITZKRIEG HALF";
@@ -694,7 +737,8 @@ std::vector<SponsorChallenge> generateOfflineSponsorChallenges(
 
     const SponsorStarterInfo *star = pickBestScorerStarter(starters);
     SponsorChallenge c2;
-    if (star) {
+    uint32_t pick2 = (seed / 2u) % 3u;
+    if (pick2 == 0u && star) {
         c2.type = SponsorChallengeType::kPlayerGoals;
         c2.title = "STAR STRIKER";
         c2.targetShirtNumber = static_cast<int16_t>(star->shirtNumber);
@@ -703,11 +747,17 @@ std::vector<SponsorChallenge> generateOfflineSponsorChallenges(
         c2.rewardAmount = clampSponsorRewardForDivision(
             c2.thresholdValue >= 2 ? (baseMid + 6000) : baseMid, divisionTier);
         c2.description = defaultDescriptionForChallenge(c2);
+    } else if (pick2 == 1u) {
+        c2.type = SponsorChallengeType::kHeaderGoal;
+        c2.title = "AERIAL DOMINANCE";
+        c2.thresholdValue = 1;
+        c2.rewardAmount = clampSponsorRewardForDivision(baseMid + 4000, divisionTier);
+        c2.description = defaultDescriptionForChallenge(c2);
     } else {
-        c2.type = SponsorChallengeType::kShotsOnTarget;
-        c2.title = "TARGET PRACTICE";
-        c2.thresholdValue = 7;
-        c2.rewardAmount = clampSponsorRewardForDivision(baseMid, divisionTier);
+        c2.type = SponsorChallengeType::kLongRangeGoal;
+        c2.title = "LONG RANGE STRIKE";
+        c2.thresholdValue = 1;
+        c2.rewardAmount = clampSponsorRewardForDivision(baseMid + 5000, divisionTier);
         c2.description = defaultDescriptionForChallenge(c2);
     }
     out.push_back(std::move(c2));
@@ -821,6 +871,9 @@ std::vector<SponsorChallenge> parseLlmSponsorChallenges(
                 parsed.push_back(std::move(fb));
         }
         static constexpr SponsorChallengeType kAllTypes[] = {
+            SponsorChallengeType::kTeamGoals,
+            SponsorChallengeType::kLongRangeGoal,
+            SponsorChallengeType::kHeaderGoal,
             SponsorChallengeType::kCleanSheetWin,
             SponsorChallengeType::kFirstHalfGoals,
             SponsorChallengeType::kPossessionWin,
@@ -834,8 +887,10 @@ std::vector<SponsorChallenge> parseLlmSponsorChallenges(
                 SponsorChallenge c;
                 c.type = t;
                 c.title = defaultTitleForType(t);
-                c.thresholdValue = clampSponsorThreshold(t, t == SponsorChallengeType::kPossessionWin ? 58 :
-                                                            (t == SponsorChallengeType::kShotsOnTarget ? 7 : 2));
+                int16_t defThresh = (t == SponsorChallengeType::kPossessionWin) ? 58 :
+                                    (t == SponsorChallengeType::kShotsOnTarget) ? 7 :
+                                    (t == SponsorChallengeType::kLongRangeGoal || t == SponsorChallengeType::kHeaderGoal) ? 1 : 2;
+                c.thresholdValue = clampSponsorThreshold(t, defThresh);
                 c.rewardAmount = clampSponsorRewardForDivision(20000, divisionTier);
                 c.description = defaultDescriptionForChallenge(c);
                 parsed.push_back(std::move(c));
@@ -907,13 +962,26 @@ void beginSponsorChallengeGeneration(const TeamGame *topTeam, const TeamGame *bo
     int32_t minR = (s_matchDivisionTier <= 0) ? 15000 : (s_matchDivisionTier == 1 ? 10000 : 5000);
     int32_t maxR = (s_matchDivisionTier <= 0) ? 50000 : (s_matchDivisionTier == 1 ? 30000 : 18000);
 
+    static const char *const kFeaturedTrios[6] = {
+        "CHALLENGE_TEAM_GOALS, CHALLENGE_LONG_RANGE_GOAL, CHALLENGE_CLEAN_SHEET_WIN",
+        "CHALLENGE_HEADER_GOAL, CHALLENGE_PLAYER_GOALS, CHALLENGE_POSSESSION_WIN",
+        "CHALLENGE_LONG_RANGE_GOAL, CHALLENGE_FIRST_HALF_GOALS, CHALLENGE_WIN_BY_MARGIN",
+        "CHALLENGE_HEADER_GOAL, CHALLENGE_TEAM_GOALS, CHALLENGE_SHOTS_ON_TARGET",
+        "CHALLENGE_TEAM_GOALS, CHALLENGE_HEADER_GOAL, CHALLENGE_CLEAN_SHEET_WIN",
+        "CHALLENGE_LONG_RANGE_GOAL, CHALLENGE_PLAYER_GOALS, CHALLENGE_TEAM_GOALS",
+    };
+    const char *suggestedMix = kFeaturedTrios[s_matchSeed % 6u];
+
     std::string prompt = "Club: " + s_matchClubName + " (Division tier " + std::to_string(s_matchDivisionTier + 1) +
                          ", Bank: " + formatSponsorPounds(readCurrentClubBalance()) + ").\n" +
                          "Opponent: " + s_matchOpponentName + ".\n" +
                          "Starting outfield XI: " + starterList + ".\n" +
                          "Create 3 distinct 1997 matchday sponsor bonus challenges for " + s_matchClubName + ".\n" +
-                         "Allowed TYPE values (pick 3 DIFFERENT types):\n" +
-                         "- CHALLENGE_CLEAN_SHEET_WIN (threshold 0)\n" +
+                         "Allowed TYPE values (pick 3 DIFFERENT types; for today's variety prefer using: " + suggestedMix + "):\n" +
+                         "- CHALLENGE_TEAM_GOALS (club scores at least X goals in the match; threshold 2, 3, or 4)\n" +
+                         "- CHALLENGE_LONG_RANGE_GOAL (score from outside the penalty area; threshold 1)\n" +
+                         "- CHALLENGE_HEADER_GOAL (score a goal with a header; threshold 1)\n" +
+                         "- CHALLENGE_CLEAN_SHEET_WIN (win without conceding; threshold 0)\n" +
                          "- CHALLENGE_PLAYER_GOALS (threshold 1 or 2, PLAYER_NAME must be an exact surname from Starting outfield XI)\n" +
                          "- CHALLENGE_FIRST_HALF_GOALS (threshold 1, 2, or 3)\n" +
                          "- CHALLENGE_POSSESSION_WIN (threshold 55 to 65)\n" +
@@ -922,8 +990,8 @@ void beginSponsorChallengeGeneration(const TeamGame *topTeam, const TeamGame *bo
                          "Scale REWARD between " + std::to_string(minR) + " and " + std::to_string(maxR) + " (integer pounds).\n" +
                          "Format STRICTLY one challenge per line as:\n" +
                          "TYPE|TITLE|DESCRIPTION|PLAYER_NAME|THRESHOLD|REWARD\n" +
-                         "- TITLE: punchy 2-3 word 1997 sponsor challenge name (max 22 chars)\n" +
-                         "- DESCRIPTION: crisp 1-sentence objective matching the exact threshold/player (max 70 chars)\n" +
+                         "- TITLE: punchy 2-3 word 1997 sponsor challenge name (max 20 chars)\n" +
+                         "- DESCRIPTION: crisp 1-sentence objective matching the exact threshold/player (max 85 chars)\n" +
                          "- PLAYER_NAME: exact player surname for CHALLENGE_PLAYER_GOALS, otherwise NONE\n" +
                          "Output ONLY the 3 lines. No intro, no markdown, no numbering.";
 
@@ -980,6 +1048,8 @@ void onMatchFinishedSponsorChallenge()
     result.opponentHtGoals = s_humanIsTeam1 ? snap.htGoals2 : snap.htGoals1;
     result.clubPossessionPct = s_humanIsTeam1 ? snap.possession1 : snap.possession2;
     result.clubShotsOnTarget = s_humanIsTeam1 ? snap.onTarget1 : snap.onTarget2;
+    result.clubLongRangeGoals = s_humanIsTeam1 ? snap.longRangeGoals1 : snap.longRangeGoals2;
+    result.clubHeaderGoals = s_humanIsTeam1 ? snap.headerGoals1 : snap.headerGoals2;
 
     for (int i = 0; i < kNumPlayersInTeam; ++i) {
         const auto& pl = humanTg.players[i];
@@ -1067,7 +1137,6 @@ static std::string describeSingleChallengeProgress(const SponsorChallenge& c, in
     int totalPoss = stats.team1.ballPossession + stats.team2.ballPossession;
     int poss1Pct = totalPoss > 0 ? (100 * stats.team1.ballPossession) / totalPoss : 50;
     int poss = s_humanIsTeam1 ? poss1Pct : (100 - poss1Pct);
-    int oppPoss = 100 - poss;
     int sot = s_humanIsTeam1 ? stats.team1.onTarget : stats.team2.onTarget;
 
     switch (c.type) {
@@ -1113,7 +1182,7 @@ static std::string describeSingleChallengeProgress(const SponsorChallenge& c, in
     case SponsorChallengeType::kPossessionWin:
         if (clubG > oppG && poss >= c.thresholdValue)
             outColorMode = 1;
-        return std::to_string(poss) + "%-" + std::to_string(oppPoss) + "% (" + std::to_string(c.thresholdValue) + "%+)";
+        return std::to_string(poss) + "% (" + std::to_string(c.thresholdValue) + "%+)";
     case SponsorChallengeType::kShotsOnTarget:
         if (sot >= c.thresholdValue)
             outColorMode = 1;
@@ -1123,6 +1192,24 @@ static std::string describeSingleChallengeProgress(const SponsorChallenge& c, in
         if (diff >= c.thresholdValue)
             outColorMode = 1;
         return (diff >= 0 ? "+" : "") + std::to_string(diff) + "/+" + std::to_string(c.thresholdValue);
+    }
+    case SponsorChallengeType::kTeamGoals:
+        if (clubG >= c.thresholdValue)
+            outColorMode = 1;
+        return std::to_string(clubG) + "/" + std::to_string(c.thresholdValue) + " G";
+    case SponsorChallengeType::kLongRangeGoal: {
+        auto [lr1, lr2] = getLongRangeTelemetryGoals();
+        int lrG = s_humanIsTeam1 ? lr1 : lr2;
+        if (lrG >= c.thresholdValue)
+            outColorMode = 1;
+        return std::to_string(lrG) + "/" + std::to_string(c.thresholdValue) + " LONG";
+    }
+    case SponsorChallengeType::kHeaderGoal: {
+        auto [hd1, hd2] = getHeaderTelemetryGoals();
+        int hdG = s_humanIsTeam1 ? hd1 : hd2;
+        if (hdG >= c.thresholdValue)
+            outColorMode = 1;
+        return std::to_string(hdG) + "/" + std::to_string(c.thresholdValue) + " HEAD";
     }
     default:
         return "ACTIVE";
@@ -1159,14 +1246,21 @@ std::vector<std::pair<std::string, int>> formatActiveSponsorChallengeHudLines()
     int allGreen = 0;
     bool anyRed = false;
 
+    constexpr int kMaxHudLineUnits = 148;
     for (const auto& c : s_state.activeChallenges) {
         int mode = 0;
         std::string status = describeSingleChallengeProgress(c, mode);
         if (mode == 1) ++allGreen;
         if (mode == 2) anyRed = true;
         int32_t kStake = c.rewardAmount / 1000;
-        std::string titleShort = c.title.size() > 13 ? c.title.substr(0, 13) : c.title;
-        std::string text = titleShort + " [" + status + "] +/-" + std::to_string(kStake) + "K";
+        std::string suffix = " [" + status + "] +/-" + std::to_string(kStake) + "K";
+        std::string titleShort = c.title;
+        while (!titleShort.empty() && measureCompactTextUnits(titleShort + suffix) > kMaxHudLineUnits) {
+            titleShort.pop_back();
+            while (!titleShort.empty() && titleShort.back() == ' ')
+                titleShort.pop_back();
+        }
+        std::string text = titleShort.empty() ? ("[" + status + "] +/-" + std::to_string(kStake) + "K") : (titleShort + suffix);
         lines.emplace_back(std::move(text), mode);
     }
 

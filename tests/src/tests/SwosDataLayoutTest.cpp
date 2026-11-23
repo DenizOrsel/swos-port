@@ -391,6 +391,26 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
         res.opponentGoals = 1;
         assertFalse(evaluateSponsorChallenge(c, res));
 
+        c.type = SponsorChallengeType::kTeamGoals;
+        c.thresholdValue = 3;
+        assertTrue(evaluateSponsorChallenge(c, res));
+        c.thresholdValue = 4;
+        assertFalse(evaluateSponsorChallenge(c, res));
+
+        res.clubLongRangeGoals = 1;
+        c.type = SponsorChallengeType::kLongRangeGoal;
+        c.thresholdValue = 1;
+        assertTrue(evaluateSponsorChallenge(c, res));
+        c.thresholdValue = 2;
+        assertFalse(evaluateSponsorChallenge(c, res));
+
+        res.clubHeaderGoals = 1;
+        c.type = SponsorChallengeType::kHeaderGoal;
+        c.thresholdValue = 1;
+        assertTrue(evaluateSponsorChallenge(c, res));
+        c.thresholdValue = 2;
+        assertFalse(evaluateSponsorChallenge(c, res));
+
         std::vector<SponsorStarterInfo> starters = {
             { 9, "MARSCHALL", true, false, 12 },
             { 10, "KUKA", true, false, 7 },
@@ -410,6 +430,16 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
         assertEqual(parsed[1].targetPlayerName, std::string("MARSCHALL"));
         assertEqual(parsed[1].targetShirtNumber, int16_t{ 9 });
         assertEqual(parsed[2].thresholdValue, int16_t{ 61 });
+
+        auto parsedSpecial = parseLlmSponsorChallenges(
+            "CHALLENGE_TEAM_GOALS|GOAL RUSH|Score at least 3 goals.|NONE|3|22000\n"
+            "CHALLENGE_LONG_RANGE_GOAL|OUTSIDE BOX|Score from outside the box.|NONE|1|28000\n"
+            "CHALLENGE_HEADER_GOAL|AIR RAID|Score with a header.|NONE|1|26000",
+            "KAISERSLAUTERN", "ARSENAL", 0, starters, 9);
+        assertEqual(parsedSpecial.size(), size_t{ 3 });
+        assertTrue(parsedSpecial[0].type == SponsorChallengeType::kTeamGoals && parsedSpecial[0].thresholdValue == 3);
+        assertTrue(parsedSpecial[1].type == SponsorChallengeType::kLongRangeGoal && parsedSpecial[1].thresholdValue == 1);
+        assertTrue(parsedSpecial[2].type == SponsorChallengeType::kHeaderGoal && parsedSpecial[2].thresholdValue == 1);
 
         // Multi-select batch evaluation: symmetric fail penalty + All-In +50% Clean Sweep Jackpot
         SponsorChallenge b1{ true, SponsorChallengeType::kCleanSheetWin, "SHUTOUT", "", 15000, -1, "", 0 };

@@ -41,6 +41,10 @@ struct MatchTelemetrySnapshot {
     int htGoals2 = 0;
     int penGoals1 = 0;
     int penGoals2 = 0;
+    int longRangeGoals1 = 0;
+    int longRangeGoals2 = 0;
+    int headerGoals1 = 0;
+    int headerGoals2 = 0;
 
     int shots1 = 0;
     int shots2 = 0;
@@ -72,5 +76,7 @@ void finalizeMatchTelemetry();
 
 MatchTelemetrySnapshot captureMatchTelemetrySnapshot();
 std::pair<int, int> getHalfTimeTelemetryGoals();
+std::pair<int, int> getLongRangeTelemetryGoals();
+std::pair<int, int> getHeaderTelemetryGoals();
 std::string formatTelemetryPromptBlock(const MatchTelemetrySnapshot& snap);
 std::string computeTimePressureTag(int minute, int goals1, int goals2, bool playingPenalties);
