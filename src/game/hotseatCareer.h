@@ -314,6 +314,13 @@ struct HotseatPlayerContext {
     uint16_t sponsorChallengesCompleted = 0;
     uint16_t sponsorChallengesFailed = 0;
     int64_t sponsorTotalBonusEarned = 0;
+
+    // LLM Press Conference & Coach Charisma career state (serialized in PRSS trailer)
+    int16_t pressCharismaPoints = 50;
+    uint16_t pressInterviewsCompleted = 0;
+    int64_t pressLastSeasonBonus = 0;
+    uint8_t pressLastPreMatchStance = 0;
+    std::string pressLastPreMatchQuote;
 };
 
 struct WizardPlayerInfo {

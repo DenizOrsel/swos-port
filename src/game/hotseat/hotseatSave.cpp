@@ -526,6 +526,27 @@ bool HotseatCareerManager::saveToFile(const std::string& path)
         }
     }
 
+    static constexpr char kPressTrailerTag[4] = { 'P', 'R', 'S', 'S' };
+    out.write(kPressTrailerTag, 4);
+    if (!out.good())
+        return false;
+    for (int i = 0; i < m_numPlayers; ++i) {
+        const auto& p = m_players[i];
+        uint16_t quoteLen = static_cast<uint16_t>(std::min<size_t>(p.pressLastPreMatchQuote.size(), 96));
+        if (!writeBinary(out, p.pressCharismaPoints) ||
+            !writeBinary(out, p.pressInterviewsCompleted) ||
+            !writeBinary(out, p.pressLastSeasonBonus) ||
+            !writeBinary(out, p.pressLastPreMatchStance) ||
+            !writeBinary(out, quoteLen)) {
+            return false;
+        }
+        if (quoteLen > 0) {
+            out.write(p.pressLastPreMatchQuote.data(), quoteLen);
+            if (!out.good())
+                return false;
+        }
+    }
+
     out.flush();
     if (!out.good())
         return false;
@@ -781,6 +802,32 @@ bool HotseatCareerManager::loadFromFile(const std::string& path)
                     logWarn("HotseatCareerManager: Corrupted SPNS sponsor challenge trailer in %s", path.c_str());
                     return false;
                 }
+            }
+            char pressTag[4] = {};
+            if (in.read(pressTag, 4) && std::memcmp(pressTag, "PRSS", 4) == 0) {
+                for (int i = 0; i < m_numPlayers; ++i) {
+                    auto& p = m_players[i];
+                    uint16_t quoteLen = 0;
+                    if (!readBinary(in, p.pressCharismaPoints) ||
+                        !readBinary(in, p.pressInterviewsCompleted) ||
+                        !readBinary(in, p.pressLastSeasonBonus) ||
+                        !readBinary(in, p.pressLastPreMatchStance) ||
+                        !readBinary(in, quoteLen) ||
+                        quoteLen > 96) {
+                        reset();
+                        logWarn("HotseatCareerManager: Corrupted PRSS press charisma trailer in %s", path.c_str());
+                        return false;
+                    }
+                    p.pressCharismaPoints = std::clamp<int16_t>(p.pressCharismaPoints, 0, 100);
+                    p.pressLastPreMatchQuote.assign(quoteLen, '\0');
+                    if (quoteLen > 0 && !in.read(p.pressLastPreMatchQuote.data(), quoteLen)) {
+                        reset();
+                        logWarn("HotseatCareerManager: Truncated PRSS quote in %s", path.c_str());
+                        return false;
+                    }
+                }
+            } else {
+                in.clear();
             }
         } else {
             in.clear();

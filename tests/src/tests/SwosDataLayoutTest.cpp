@@ -8,6 +8,7 @@
 #include "llmReportMenu.h"
 #include "matchTelemetry.h"
 #include "sponsorChallenge.h"
+#include "pressCharisma.h"
 #include "supporterStream.h"
 
 static SwosDataLayoutTest t;
@@ -495,6 +496,100 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
         assertEqual(bonus, int64_t{ 115000 });
         std::remove(tmpSch);
         resetSponsorChallengeState();
+    }
+
+    // 8. LLM Press Conference & Coach Charisma tiers, formulas, parser, offline templates, and sidecar persistence
+    {
+        // Tier boundaries & multipliers
+        assertTrue(getCharismaTier(0) == CharismaTier::kToxic);
+        assertTrue(getCharismaTier(19) == CharismaTier::kToxic);
+        assertTrue(getCharismaTier(20) == CharismaTier::kUninspiring);
+        assertTrue(getCharismaTier(44) == CharismaTier::kUninspiring);
+        assertTrue(getCharismaTier(45) == CharismaTier::kRespectable);
+        assertTrue(getCharismaTier(69) == CharismaTier::kRespectable);
+        assertTrue(getCharismaTier(70) == CharismaTier::kCharismatic);
+        assertTrue(getCharismaTier(89) == CharismaTier::kCharismatic);
+        assertTrue(getCharismaTier(90) == CharismaTier::kIconic);
+        assertTrue(getCharismaTier(100) == CharismaTier::kIconic);
+
+        assertEqual(computeSeasonCharismaBonus(2000000, 15), int64_t{ 0 });       // Toxic 0.00x
+        assertEqual(computeSeasonCharismaBonus(2000000, 40), int64_t{ 200000 });  // Uninspiring 0.25x * 0.40
+        assertEqual(computeSeasonCharismaBonus(2000000, 50), int64_t{ 500000 });  // Respectable 0.50x * 0.50
+        assertEqual(computeSeasonCharismaBonus(2000000, 80), int64_t{ 1600000 }); // Charismatic 1.00x * 0.80
+        assertEqual(computeSeasonCharismaBonus(2000000, 100), int64_t{ 3000000 });// Iconic 1.50x * 1.00
+
+        assertTrue(std::abs(getPressAttendanceMultiplier(10) - 0.90) < 0.001);
+        assertTrue(std::abs(getPressAttendanceMultiplier(30) - 0.95) < 0.001);
+        assertTrue(std::abs(getPressAttendanceMultiplier(55) - 1.00) < 0.001);
+        assertTrue(std::abs(getPressAttendanceMultiplier(80) - 1.08) < 0.001);
+        assertTrue(std::abs(getPressAttendanceMultiplier(95) - 1.15) < 0.001);
+
+        // Delta & CP clamping
+        assertEqual(applyCharismaDelta(50, 25), int16_t{ 58 });
+        assertEqual(applyCharismaDelta(50, -25), int16_t{ 42 });
+        assertEqual(applyCharismaDelta(98, 8), int16_t{ 100 });
+        assertEqual(applyCharismaDelta(3, -8), int16_t{ 0 });
+
+        // Classic derby detection
+        assertTrue(detectClassicDerby("FENERBAHCE", "GALATASARAY", 0, 0));
+        assertTrue(detectClassicDerby("AJAX", "FEYENOORD", 0, 0));
+        assertTrue(detectClassicDerby("TEAM A", "TEAM B", 1, 2));
+        assertFalse(detectClassicDerby("FENERBAHCE", "SERVETTE", 5, 10));
+
+        // Offline template generation (pre-match derby + post-match confident backfire)
+        PressMatchContext ctx;
+        ctx.phase = PressPhase::kPreMatch;
+        ctx.clubName = "FENERBAHCE";
+        ctx.opponentName = "GALATASARAY";
+        ctx.isDerby = true;
+        auto preOffline = generateOfflinePressPrompt(ctx, 3);
+        assertTrue(preOffline.isReady);
+        assertTrue(!preOffline.question.empty());
+        assertTrue(preOffline.question.find("GALATASARAY") != std::string::npos);
+
+        ctx.phase = PressPhase::kPostMatch;
+        ctx.preMatchStance = ManagerialStance::kConfident;
+        ctx.preMatchQuote = "Nobody can stop us!";
+        ctx.clubGoals = 0;
+        ctx.opponentGoals = 3;
+        auto postOffline = generateOfflinePressPrompt(ctx, 1);
+        assertTrue(postOffline.isReady);
+        assertTrue(postOffline.question.find("0-3") != std::string::npos);
+
+        // Pipe-delimited LLM parser with clamping + Turkish Latin transliteration
+        auto parsedPress = parseLlmPressPrompt(
+            "Murat Kaya (Spor)|Şampiyonluk yolunda büyük derbiye hazır mısınız?\n"
+            "HUMBLE|Rakibe saygımız büyük, sahada savaşacağız.|3|Basın saygılı yaklaşımı beğendi.\n"
+            "CONFIDENT|Bu maçı kesin kazanacağız!|15|Taraftarlar coştu!\n"
+            "TACTICAL|Orta sahayı kontrol edip hızlı çıkacağız.|2|Analistler taktiği övdü.\n"
+            "HOSTILE|Saçma sorulara vaktim yok!|-20|Basın odasında gerginlik çıktı.",
+            ctx, 7);
+        assertTrue(parsedPress.isReady);
+        assertEqual(parsedPress.journalistName, std::string("Murat Kaya (Spor)"));
+        assertTrue(parsedPress.question.find("Sampiyonluk") != std::string::npos);
+        assertEqual(parsedPress.options[1].charismaDelta, int8_t{ 8 });  // clamped from +15
+        assertEqual(parsedPress.options[3].charismaDelta, int8_t{ -8 }); // clamped from -20
+
+        // Sidecar .prs save/load round-trip
+        resetPressCharismaState();
+        setPressCareerTotals(78, 9, 1250000, static_cast<uint8_t>(ManagerialStance::kConfident), "We will dominate!");
+        const char *tmpPrs = "tmp_test_press.prs";
+        assertTrue(savePressCharismaSidecar(tmpPrs));
+        resetPressCharismaState();
+        assertTrue(loadPressCharismaSidecar(tmpPrs));
+        int16_t cp = 0;
+        uint16_t ints = 0;
+        int64_t sBonus = 0;
+        uint8_t stance = 0;
+        std::string quote;
+        getPressCareerTotals(cp, ints, sBonus, stance, quote);
+        assertEqual(cp, int16_t{ 78 });
+        assertEqual(ints, uint16_t{ 9 });
+        assertEqual(sBonus, int64_t{ 1250000 });
+        assertEqual(stance, static_cast<uint8_t>(ManagerialStance::kConfident));
+        assertEqual(quote, std::string("We will dominate!"));
+        std::remove(tmpPrs);
+        resetPressCharismaState();
     }
 
     setLlmTransportForTest(nullptr);

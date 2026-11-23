@@ -4,6 +4,7 @@
 #include "dirent.h"
 #include "hotseatCareer.h"
 #include "sponsorChallenge.h"
+#include "pressCharisma.h"
 
 #ifdef _WIN32
 # include <direct.h>
@@ -163,6 +164,11 @@ static void loadFileImp()
                     if (!loadSponsorChallengeSidecar(fullSchPath)) {
                         resetSponsorChallengeState();
                     }
+                    std::string prsPath = fname.substr(0, fname.size() - 4) + ".prs";
+                    std::string fullPrsPath = isAbsolutePath(prsPath.c_str()) ? prsPath : (m_rootDir + prsPath);
+                    if (!loadPressCharismaSidecar(fullPrsPath)) {
+                        resetPressCharismaState();
+                    }
                 }
             }
         }
@@ -228,6 +234,9 @@ static int writeFileImp()
                     std::string schPath = fname.substr(0, fname.size() - 4) + ".sch";
                     std::string fullSchPath = isAbsolutePath(schPath.c_str()) ? schPath : (m_rootDir + schPath);
                     saveSponsorChallengeSidecar(fullSchPath);
+                    std::string prsPath = fname.substr(0, fname.size() - 4) + ".prs";
+                    std::string fullPrsPath = isAbsolutePath(prsPath.c_str()) ? prsPath : (m_rootDir + prsPath);
+                    savePressCharismaSidecar(fullPrsPath);
                 }
             }
         }

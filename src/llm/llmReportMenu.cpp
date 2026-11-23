@@ -212,6 +212,7 @@ static void drawLlmReportMenu()
         }
     }
     bool isSponsorReport = (s_header == "POST-MATCH SPONSOR REPORT");
+    bool isCharismaReport = (s_header == "SEASON CHARISMA & MEDIA BONUS");
 
     for (int i = startIdx; i < endIdx; ++i) {
         const auto& line = s_lines[i];
@@ -231,7 +232,11 @@ static void drawLlmReportMenu()
                 (upper.rfind("UPDATED BANK", 0) == 0) ||
                 (upper.rfind("CAREER SPONSOR", 0) == 0) ||
                 (upper.rfind("SPONSOR CHALLENGE", 0) == 0));
-            bool isHighlight = isHeadline || isSponsorSummary;
+            bool isCharismaSummary = isCharismaReport && (
+                (i == 0) ||
+                (upper.rfind("CHARISMA & MEDIA BONUS", 0) == 0) ||
+                (upper.rfind("UPDATED CLUB BALANCE", 0) == 0));
+            bool isHighlight = isHeadline || isSponsorSummary || isCharismaSummary;
 
             SDL_Color col = isWon ? greenCol : (isFailed ? redCol : (isHighlight ? yellowCol : whiteCol));
             bool bold = isWon || isFailed || isHighlight;

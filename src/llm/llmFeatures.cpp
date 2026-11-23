@@ -4,6 +4,7 @@
 #include "llmReportMenu.h"
 #include "matchTelemetry.h"
 #include "sponsorChallenge.h"
+#include "pressCharisma.h"
 #include "supporterStream.h"
 #include "continueAbortMenu.h"
 #include "controls.h"
@@ -545,6 +546,9 @@ void beginPostMatchNewspaperRequest()
     std::string sponsorNote = formatLastSponsorChallengeOutcomeForNewspaper();
     if (!sponsorNote.empty())
         prompt += "\n" + sponsorNote;
+    std::string pressNote = formatPressContextForNewspaper();
+    if (!pressNote.empty())
+        prompt += "\n" + pressNote;
     prompt += "\nWrite an authentic, lively 1997 football back-page newspaper report + board reaction:\n"
               "Line 1: Punchy tabloid headline (all caps style, witty, referencing the actual result)\n"
               "Paragraph 2: 3 vivid sentences summarizing how the match unfolded using the real scorers, shots, possession, and pitch condition (only if listed above). Do NOT invent players, goals, or weather.\n"
@@ -681,6 +685,10 @@ void onViewResultMatchCompletedLlm()
         if (waitForLlmWithIndicator(reqId, cfg.timeoutMs, "PRINTING DAILY ECHO", reply)) {
             showWrappedSwosPrompt("DAILY SOCCER ECHO", reply);
         }
+    }
+
+    if (swos.g_gameType == kGameTypeCareer) {
+        onViewResultMatchPressConference();
     }
 
     if (swos.g_gameType == kGameTypeCareer && cfg.features.dressingRoomVoices) {

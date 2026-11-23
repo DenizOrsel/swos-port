@@ -1,0 +1,85 @@
+//
+// Native Pre-Match & Post-Match Press Conference Menu
+//
+
+#include "common.mh"
+
+Menu pressConferenceMenu
+{
+    onInit: initPressConferenceMenu
+    onDraw: drawPressConferenceMenu
+    initialEntry: opt1
+
+    Entry header {
+        x: 24
+        y: 0
+        width: 256
+        height: 14
+
+        color: kHeaderColor
+        text: @kAlloc
+    }
+
+    Entry opt1 {
+        x: 8
+        y: 72
+        width: 288
+        height: 24
+
+        color: @kDarkBlue
+        text: @kAlloc
+        downEntry: opt2
+        onSelect: selectPressOption1
+    }
+
+    Entry opt2 {
+        x: 8
+        y: 99
+        width: 288
+        height: 24
+
+        color: @kDarkBlue
+        text: @kAlloc
+        upEntry: opt1
+        downEntry: opt3
+        onSelect: selectPressOption2
+    }
+
+    Entry opt3 {
+        x: 8
+        y: 126
+        width: 288
+        height: 24
+
+        color: @kDarkBlue
+        text: @kAlloc
+        upEntry: opt2
+        downEntry: opt4
+        onSelect: selectPressOption3
+    }
+
+    Entry opt4 {
+        x: 8
+        y: 153
+        width: 288
+        height: 24
+
+        color: @kDarkBlue
+        text: @kAlloc
+        upEntry: opt3
+        downEntry: skipBtn
+        onSelect: selectPressOption4
+    }
+
+    Entry skipBtn {
+        x: 92
+        y: 181
+        width: 120
+        height: 15
+
+        color: kExitColor
+        text: @kAlloc
+        upEntry: opt4
+        onSelect: skipOrContinuePressConference
+    }
+}

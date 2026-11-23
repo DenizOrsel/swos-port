@@ -26,6 +26,7 @@ struct LlmFeaturesConfig {
     bool livePunditTicker = true;
     bool supporterStream = true;
     bool sponsorChallenges = true;
+    bool pressConferences = true;
     bool cpuTacticalManager = false;
 };
 

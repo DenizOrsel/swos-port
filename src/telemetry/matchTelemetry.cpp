@@ -9,6 +9,7 @@
 #include "pitchConstants.h"
 #include "result.h"
 #include "sponsorChallenge.h"
+#include "pressCharisma.h"
 #include "stats.h"
 #include "swos.h"
 
@@ -828,6 +829,7 @@ MatchTelemetrySnapshot captureMatchTelemetrySnapshot()
     snap.topScorersSummary = extractTopScorersAndAssistsSummary();
     snap.upcomingFixturesSummary = extractUpcomingFixturesSummary();
     snap.activeSponsorChallengeSummary = formatActiveSponsorChallengeForTelemetry();
+    snap.pressCharismaSummary = formatPressContextForTelemetry();
     snap.recentEvents.assign(s_recentEvents.begin(), s_recentEvents.end());
     return snap;
 }
@@ -876,6 +878,8 @@ std::string formatTelemetryPromptBlock(const MatchTelemetrySnapshot& snap)
         out += "\n" + snap.upcomingFixturesSummary;
     if (!snap.activeSponsorChallengeSummary.empty())
         out += "\n" + snap.activeSponsorChallengeSummary;
+    if (!snap.pressCharismaSummary.empty())
+        out += "\n" + snap.pressCharismaSummary;
 
     if (!snap.recentEvents.empty()) {
         out += "\nRecent events:";

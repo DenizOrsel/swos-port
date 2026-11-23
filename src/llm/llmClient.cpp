@@ -115,6 +115,7 @@ void writeAiIni(const std::string& path, const LlmConfig& cfg)
     ini.SetBoolValue("features", "livePunditTicker", cfg.features.livePunditTicker);
     ini.SetBoolValue("features", "supporterStream", cfg.features.supporterStream);
     ini.SetBoolValue("features", "sponsorChallenges", cfg.features.sponsorChallenges);
+    ini.SetBoolValue("features", "pressConferences", cfg.features.pressConferences);
     ini.SetBoolValue("features", "cpuTacticalManager", cfg.features.cpuTacticalManager);
 
     ini.SetBoolValue("telemetry", "enabled", cfg.telemetry.enabled);
@@ -459,6 +460,7 @@ bool loadLlmConfig(const char *iniPath /* = nullptr */)
     s_config.features.livePunditTicker = ini.GetBoolValue("features", "livePunditTicker", s_config.features.livePunditTicker);
     s_config.features.supporterStream = ini.GetBoolValue("features", "supporterStream", s_config.features.supporterStream);
     s_config.features.sponsorChallenges = ini.GetBoolValue("features", "sponsorChallenges", s_config.features.sponsorChallenges);
+    s_config.features.pressConferences = ini.GetBoolValue("features", "pressConferences", s_config.features.pressConferences);
     s_config.features.cpuTacticalManager = ini.GetBoolValue("features", "cpuTacticalManager", s_config.features.cpuTacticalManager);
 
     s_config.telemetry.enabled = ini.GetBoolValue("telemetry", "enabled", s_config.telemetry.enabled);

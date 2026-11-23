@@ -42,6 +42,7 @@
 #include "llmFeatures.h"
 #include "matchTelemetry.h"
 #include "sponsorChallenge.h"
+#include "pressCharisma.h"
 #include "supporterStream.h"
 #include "util.h"
 #include "FixedPoint.h"
@@ -150,8 +151,10 @@ void gameLoop(TeamGame *topTeam, TeamGame *bottomTeam)
         onMatchFinishedSponsorChallenge();
         finalizeMatchTelemetry();
         beginPostMatchNewspaperRequest();
+        beginPostMatchPressConference(swos.statsTeam1Goals, swos.statsTeam2Goals);
         showPostMatchSponsorPayoutIfNeeded();
         showPostMatchNewspaperIfReady();
+        showPostMatchPressConferenceIfReady();
         onCareerMatchCompletedLlm(swos.statsTeam1Goals, swos.statsTeam2Goals);
     }
 }
@@ -163,13 +166,17 @@ void showStadiumScreenAndFadeOutMusic(TeamGame *topTeam, TeamGame *bottomTeam, i
             initMatch(topTeam, bottomTeam, true);
             beginPreMatchScoutingRequest(topTeam, bottomTeam);
             beginSponsorChallengeGeneration(topTeam, bottomTeam);
+            beginPreMatchPressConference(topTeam, bottomTeam);
         });
         showPreMatchScoutingIfReady();
         showPreMatchSponsorChallengeMenuIfReady();
+        showPreMatchPressConferenceIfReady();
     } else {
         initMatch(topTeam, bottomTeam, true);
         beginSponsorChallengeGeneration(topTeam, bottomTeam);
+        beginPreMatchPressConference(topTeam, bottomTeam);
         showPreMatchSponsorChallengeMenuIfReady();
+        showPreMatchPressConferenceIfReady();
     }
 
     waitForMusicToFadeOut();

@@ -1,5 +1,6 @@
 #include "hotseatInternal.h"
 #include "llmFeatures.h"
+#include "pressCharisma.h"
 
 namespace SWOS {
 
@@ -24,6 +25,7 @@ void activateEuroCupForVmSelectedTeam()
 void InitCareerVariables_OnEnter()
 {
     resetCareerLlmSnapshots();
+    resetPressCharismaState();
     auto& mgr = HotseatCareerManager::get();
     if (!mgr.isInitializingSeason()) {
         mgr.reset();
@@ -33,6 +35,7 @@ void InitCareerVariables_OnEnter()
 void CareerInitVars_OnEnter()
 {
     resetCareerLlmSnapshots();
+    resetPressCharismaState();
     auto& mgr = HotseatCareerManager::get();
     if (mgr.isActive() && !mgr.isInitializingSeason()) {
         mgr.reset();
@@ -81,12 +84,14 @@ void cseg_8B8B8_OnEnter()
 void cseg_94DB1_OnEnter()
 {
     HotseatCareerManager::get().onWeeklyTickForAllPlayers();
+    applyPendingMatchdayGateReceiptsCharismaBonus();
     checkCareerSquadTransfersLlm();
     onCareerWeeklyTickLlm();
 }
 
 void cseg_3C07C_OnEnter()
 {
+    onEndOfSeasonPressCharismaBonus();
     HotseatCareerManager::get().onSeasonFinishedForAllPlayers();
 }
 
@@ -106,6 +111,7 @@ void Hotseat_OnAfterProcessCareerFile()
 void Hotseat_OnAfterPlayMatch()
 {
     HotseatCareerManager::get().onAfterPlayMatch();
+    applyPendingMatchdayGateReceiptsCharismaBonus();
     onViewResultMatchCompletedLlm();
 }
 
