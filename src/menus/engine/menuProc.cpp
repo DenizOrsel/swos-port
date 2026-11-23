@@ -5,6 +5,7 @@
 #include "menuMouse.h"
 #include "music.h"
 #include "render.h"
+#include "stadiumFacilities.h"
 
 static void selectEntryWithControlMask(MenuEntry *entry);
 static MenuEntry *handleSwitchingToNextEntry(const MenuEntry *activeEntry, MenuEntry *nextEntry);
@@ -19,6 +20,9 @@ void menuProc()
     drawMenu();
 
     updateMouse();
+
+    if (handleCareerHubStadiumInput())
+        return;
 
     menuCheckControls();
     updateSongState();

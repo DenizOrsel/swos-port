@@ -1,5 +1,6 @@
 #include "pressCharisma.h"
 #include "achievements.h"
+#include "stadiumFacilities.h"
 #include "compactFont.h"
 #include "controls.h"
 #include "darkRectangle.h"
@@ -698,6 +699,11 @@ std::string buildPressLlmPrompt(const PressMatchContext& ctx)
          getCharismaReputationTitle(getCharismaTier(ctx.currentCharisma)) + ")\n";
     if (!ctx.recentForm.empty())
         p += "Recent Form: " + formatRecentFormLine(ctx.recentForm) + "\n";
+    std::string stadCtx = formatStadiumContextForTelemetry();
+    if (!stadCtx.empty()) {
+        p += stadCtx + "\n";
+        p += "(You may naturally reference, praise, or criticize the club's stadium, ticket prices, pitch quality, training/medical/VIP facilities, sellout atmosphere, or ongoing construction if relevant.)\n";
+    }
 
     if (ctx.phase == PressPhase::kPostMatch) {
         int diff = ctx.clubGoals - ctx.opponentGoals;
@@ -1279,6 +1285,12 @@ void applyPendingMatchdayGateReceiptsCharismaBonus()
 {
     if (!s_gateReceiptsPending || swos.g_gameType != kGameTypeCareer || swos.g_trainingGame)
         return;
+
+    // Avoid double-counting Coach Charisma when Stadium & Facilities handles home gate receipts directly
+    if (isStadiumManagingHomeGateReceipts()) {
+        s_gateReceiptsPending = false;
+        return;
+    }
 
     const auto& cfg = getLlmConfig();
     if (!cfg.features.pressConferences) {

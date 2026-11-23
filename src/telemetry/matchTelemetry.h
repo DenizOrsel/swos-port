@@ -67,6 +67,7 @@ struct MatchTelemetrySnapshot {
     std::string upcomingFixturesSummary;
     std::string activeSponsorChallengeSummary;
     std::string pressCharismaSummary;
+    std::string stadiumFacilitiesSummary;
     std::vector<MatchTelemetryEvent> recentEvents;
 };
 

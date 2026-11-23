@@ -9,6 +9,7 @@
 #include "gameFieldMapping.h"
 #include "timer.h"
 #include "hotseatCareer.h"
+#include "stadiumFacilities.h"
 
 constexpr int kTooSmallHeightForFrame = 8;
 
@@ -116,6 +117,7 @@ void drawMenu(bool updateScreen /* = true */)
     }
 
     drawSelectedFrame();
+    drawCareerHubStadiumButton();
     if (updateScreen)
         flipInMenu();
 

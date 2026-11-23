@@ -6,6 +6,7 @@
 #include <vector>
 #include <map>
 #include <iosfwd>
+#include "stadiumFacilities.h"
 
 constexpr int kMaxHotseatPlayers = 32;
 constexpr int kLegacyV7MaxHotseatPlayers = 4;
@@ -321,6 +322,9 @@ struct HotseatPlayerContext {
     int64_t pressLastSeasonBonus = 0;
     uint8_t pressLastPreMatchStance = 0;
     std::string pressLastPreMatchQuote;
+
+    // Stadium & Facilities state (serialized in STAD trailer)
+    StadiumData stadium;
 };
 
 struct WizardPlayerInfo {

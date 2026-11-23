@@ -547,6 +547,41 @@ bool HotseatCareerManager::saveToFile(const std::string& path)
         }
     }
 
+    static constexpr char kStadiumTrailerTag[4] = { 'S', 'T', 'A', 'D' };
+    out.write(kStadiumTrailerTag, 4);
+    if (!out.good())
+        return false;
+    for (int i = 0; i < m_numPlayers; ++i) {
+        const auto& st = m_players[i].stadium;
+        uint8_t initB = st.initialized ? 1 : 0;
+        uint8_t projAct = st.activeProject.isActive ? 1 : 0;
+        uint8_t projMod = static_cast<uint8_t>(st.activeProject.module);
+        uint8_t pol = static_cast<uint8_t>(st.ticketPolicy);
+        if (!writeBinary(out, initB) ||
+            !writeBinary(out, st.teamId))
+            return false;
+        out.write(st.stadiumName, sizeof(st.stadiumName));
+        if (!writeBinary(out, st.capacityLevel) ||
+            !writeBinary(out, st.maxCapacity) ||
+            !writeBinary(out, st.pitchLevel) ||
+            !writeBinary(out, st.trainingLevel) ||
+            !writeBinary(out, st.medicalLevel) ||
+            !writeBinary(out, st.commercialLevel) ||
+            !writeBinary(out, pol) ||
+            !writeBinary(out, st.ticketPrice) ||
+            !writeBinary(out, projAct) ||
+            !writeBinary(out, projMod) ||
+            !writeBinary(out, st.activeProject.targetLevel) ||
+            !writeBinary(out, st.activeProject.matchesRemaining) ||
+            !writeBinary(out, st.activeProject.costPaid) ||
+            !writeBinary(out, st.seasonTotalAttendance) ||
+            !writeBinary(out, st.seasonGateRevenue) ||
+            !writeBinary(out, st.seasonUpkeepPaid) ||
+            !writeBinary(out, st.seasonHomeMatches)) {
+            return false;
+        }
+    }
+
     out.flush();
     if (!out.good())
         return false;
@@ -825,6 +860,53 @@ bool HotseatCareerManager::loadFromFile(const std::string& path)
                         logWarn("HotseatCareerManager: Truncated PRSS quote in %s", path.c_str());
                         return false;
                     }
+                }
+                char stadTag[4] = {};
+                if (in.read(stadTag, 4) && std::memcmp(stadTag, "STAD", 4) == 0) {
+                    for (int i = 0; i < m_numPlayers; ++i) {
+                        auto& st = m_players[i].stadium;
+                        uint8_t initB = 0, pol = 1, projAct = 0, projMod = 0;
+                        if (!readBinary(in, initB) || !readBinary(in, st.teamId)) {
+                            reset();
+                            logWarn("HotseatCareerManager: Corrupted STAD trailer in %s", path.c_str());
+                            return false;
+                        }
+                        in.read(st.stadiumName, sizeof(st.stadiumName));
+                        st.stadiumName[sizeof(st.stadiumName) - 1] = '\0';
+                        if (!readBinary(in, st.capacityLevel) ||
+                            !readBinary(in, st.maxCapacity) ||
+                            !readBinary(in, st.pitchLevel) ||
+                            !readBinary(in, st.trainingLevel) ||
+                            !readBinary(in, st.medicalLevel) ||
+                            !readBinary(in, st.commercialLevel) ||
+                            !readBinary(in, pol) ||
+                            !readBinary(in, st.ticketPrice) ||
+                            !readBinary(in, projAct) ||
+                            !readBinary(in, projMod) ||
+                            !readBinary(in, st.activeProject.targetLevel) ||
+                            !readBinary(in, st.activeProject.matchesRemaining) ||
+                            !readBinary(in, st.activeProject.costPaid) ||
+                            !readBinary(in, st.seasonTotalAttendance) ||
+                            !readBinary(in, st.seasonGateRevenue) ||
+                            !readBinary(in, st.seasonUpkeepPaid) ||
+                            !readBinary(in, st.seasonHomeMatches)) {
+                            reset();
+                            logWarn("HotseatCareerManager: Corrupted STAD payload in %s", path.c_str());
+                            return false;
+                        }
+                        st.initialized = (initB != 0);
+                        st.capacityLevel = std::clamp<uint8_t>(st.capacityLevel, 1, 10);
+                        st.maxCapacity = getStadiumCapacityForLevel(st.capacityLevel);
+                        st.pitchLevel = std::clamp<uint8_t>(st.pitchLevel, 1, 5);
+                        st.trainingLevel = std::clamp<uint8_t>(st.trainingLevel, 1, 5);
+                        st.medicalLevel = std::clamp<uint8_t>(st.medicalLevel, 1, 5);
+                        st.commercialLevel = std::clamp<uint8_t>(st.commercialLevel, 1, 5);
+                        st.ticketPolicy = static_cast<TicketPolicy>(std::clamp<uint8_t>(pol, 0, 2));
+                        st.activeProject.isActive = (projAct != 0);
+                        st.activeProject.module = static_cast<StadiumModuleType>(std::clamp<uint8_t>(projMod, 0, 4));
+                    }
+                } else {
+                    in.clear();
                 }
             } else {
                 in.clear();

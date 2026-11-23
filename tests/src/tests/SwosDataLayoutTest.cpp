@@ -11,6 +11,7 @@
 #include "pressCharisma.h"
 #include "supporterStream.h"
 #include "achievements.h"
+#include "stadiumFacilities.h"
 
 static SwosDataLayoutTest t;
 
@@ -812,6 +813,124 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
         assertTrue(getAchievementProfile().records[static_cast<uint16_t>(AchievementId::kBackToBackPromotion)].unlocked);
         std::remove(tmpAch);
         resetAchievementsProfileForTest();
+    }
+
+    // 10. Stadium & Facilities System: seeding, 96/97 ticket pricing, upgrades, attendance/revenue, pitch/medical/training, sidecar persistence
+    {
+        resetStadiumFacilitiesState();
+
+        // Authentic stadium seeding across divisions
+        StadiumData fb = stadiumInitForClub("FENERBAHCE", 0, 28, 101);
+        assertTrue(fb.initialized);
+        assertEqual(std::string(fb.stadiumName), std::string("SUKRU SARACOGLU"));
+        assertEqual(fb.capacityLevel, uint8_t{ 5 });
+        assertEqual(fb.maxCapacity, uint32_t{ 45000 });
+        assertEqual(fb.ticketPrice, int32_t{ 10 }); // 1996/97 Div 0 Standard = GBP 10
+
+        StadiumData div4 = stadiumInitForClub("SMALL TOWN FC", 3, 8, 202);
+        assertEqual(div4.capacityLevel, uint8_t{ 1 });
+        assertEqual(div4.maxCapacity, uint32_t{ 5000 });
+        assertEqual(div4.pitchLevel, uint8_t{ 1 });
+        assertEqual(div4.ticketPrice, int32_t{ 5 }); // 1996/97 Div 4 Standard = GBP 5
+
+        // Division ticket price table (96/97 SWOS scale)
+        assertEqual(getStadiumTicketPriceForDivision(0, TicketPolicy::kCheap), int32_t{ 7 });
+        assertEqual(getStadiumTicketPriceForDivision(0, TicketPolicy::kStandard), int32_t{ 10 });
+        assertEqual(getStadiumTicketPriceForDivision(0, TicketPolicy::kExpensive), int32_t{ 15 });
+        assertEqual(getStadiumTicketPriceForDivision(3, TicketPolicy::kCheap), int32_t{ 3 });
+        assertEqual(getStadiumTicketPriceForDivision(3, TicketPolicy::kExpensive), int32_t{ 7 });
+
+        // Upgrade quotes & validation edge cases
+        int64_t cash = 120000;
+        auto qPoor = stadiumGetUpgradeQuote(div4, StadiumModuleType::kCapacity, cash);
+        assertTrue(qPoor.status == StadiumUpgradeStatus::kInsufficientFunds);
+        assertEqual(qPoor.cost, int32_t{ 150000 });
+        assertFalse(stadiumStartUpgrade(div4, cash, StadiumModuleType::kCapacity));
+        assertEqual(cash, int64_t{ 120000 });
+
+        cash = 500000;
+        auto qOk = stadiumGetUpgradeQuote(div4, StadiumModuleType::kCapacity, cash);
+        assertTrue(qOk.status == StadiumUpgradeStatus::kOk);
+        assertEqual(qOk.buildMatches, uint8_t{ 2 });
+        assertTrue(stadiumStartUpgrade(div4, cash, StadiumModuleType::kCapacity));
+        assertEqual(cash, int64_t{ 350000 });
+        assertTrue(div4.activeProject.isActive);
+
+        // Concurrent construction blocked
+        auto qBusy = stadiumGetUpgradeQuote(div4, StadiumModuleType::kPitch, cash);
+        assertTrue(qBusy.status == StadiumUpgradeStatus::kConstructionInProgress);
+        assertFalse(stadiumStartUpgrade(div4, cash, StadiumModuleType::kPitch));
+
+        // Construction countdown & completion
+        StadiumModuleType doneMod = StadiumModuleType::kPitch;
+        uint8_t doneLvl = 0;
+        assertFalse(stadiumAdvanceConstruction(div4, doneMod, doneLvl));
+        assertEqual(div4.activeProject.matchesRemaining, uint8_t{ 1 });
+        assertTrue(stadiumAdvanceConstruction(div4, doneMod, doneLvl));
+        assertTrue(doneMod == StadiumModuleType::kCapacity);
+        assertEqual(doneLvl, uint8_t{ 2 });
+        assertEqual(div4.capacityLevel, uint8_t{ 2 });
+        assertEqual(div4.maxCapacity, uint32_t{ 12000 });
+        assertFalse(div4.activeProject.isActive);
+
+        // Max level check
+        StadiumData maxed = fb;
+        maxed.capacityLevel = 10;
+        maxed.maxCapacity = getStadiumCapacityForLevel(10);
+        maxed.pitchLevel = 5;
+        assertEqual(maxed.maxCapacity, uint32_t{ 85000 });
+        assertTrue(stadiumGetUpgradeQuote(maxed, StadiumModuleType::kCapacity, 99999999).status == StadiumUpgradeStatus::kMaxLevel);
+        assertTrue(stadiumGetUpgradeQuote(maxed, StadiumModuleType::kPitch, 99999999).status == StadiumUpgradeStatus::kMaxLevel);
+
+        // Dynamic attendance, derby boost, charisma multiplier, commercial bonus, upkeep
+        StadiumMatchdayReport derbyRep = stadiumCalculateMatchday(fb, 0, 1, 2, true, 95, "GALATASARAY");
+        assertEqual(derbyRep.attendance, uint32_t{ 45000 }); // capped at maxCapacity
+        assertTrue(derbyRep.isSellout);
+        assertTrue(derbyRep.isDerby);
+        assertEqual(derbyRep.ticketRevenue, int64_t{ 450000 }); // 45,000 * GBP 10
+        assertEqual(derbyRep.commercialBonusPct, 30);          // Level 3 -> +30%
+        assertEqual(derbyRep.commercialRevenue, int64_t{ 135000 });
+        assertEqual(derbyRep.netProfit, derbyRep.ticketRevenue + derbyRep.commercialRevenue - derbyRep.upkeepCost);
+
+        // Ticket price elasticity: Expensive lowers attendance vs Cheap
+        StadiumData cheapClub = fb;
+        cheapClub.ticketPolicy = TicketPolicy::kCheap;
+        StadiumData expClub = fb;
+        expClub.ticketPolicy = TicketPolicy::kExpensive;
+        auto repCheap = stadiumCalculateMatchday(cheapClub, 0, 10, 10, false, 50, "MIDCLUB");
+        auto repExp = stadiumCalculateMatchday(expClub, 0, 10, 10, false, 50, "MIDCLUB");
+        assertTrue(repCheap.attendance > repExp.attendance);
+
+        // Pitch quality override, medical injury reduction, training growth bonus
+        assertEqual(applyStadiumPitchQualityOverrideForLevel(1, 3), 1); // L3 keeps Muddy
+        assertEqual(applyStadiumPitchQualityOverrideForLevel(1, 4), 4); // L4 Muddy -> Normal
+        assertEqual(applyStadiumPitchQualityOverrideForLevel(2, 5), 5); // L5 Wet -> Dry
+        assertEqual(computeMedicalReducedInjuryDays(10, 5), uint8_t{ 5 }); // L5 -> -50%
+        assertEqual(computeMedicalReducedInjuryDays(2, 5), uint8_t{ 1 });  // min 1 match
+        assertTrue(std::abs(getTrainingGrowthBonusFraction(5) - 0.25) < 0.001);
+
+        // Sidecar .std save/load round-trip
+        div4.ticketPolicy = TicketPolicy::kExpensive;
+        div4.ticketPrice = 7;
+        div4.seasonTotalAttendance = 42000;
+        div4.seasonGateRevenue = 315000;
+        div4.seasonUpkeepPaid = 20000;
+        div4.seasonHomeMatches = 4;
+        setCurrentCareerStadium(div4);
+        const char *tmpStd = "tmp_test_stadium.std";
+        assertTrue(saveStadiumSidecar(tmpStd));
+        resetStadiumFacilitiesState();
+        assertTrue(loadStadiumSidecar(tmpStd));
+        const auto& loaded = getCurrentCareerStadium();
+        assertTrue(loaded.initialized);
+        assertEqual(loaded.capacityLevel, uint8_t{ 2 });
+        assertEqual(loaded.maxCapacity, uint32_t{ 12000 });
+        assertTrue(loaded.ticketPolicy == TicketPolicy::kExpensive);
+        assertEqual(loaded.seasonTotalAttendance, uint32_t{ 42000 });
+        assertEqual(loaded.seasonGateRevenue, int64_t{ 315000 });
+        assertEqual(loaded.seasonHomeMatches, uint16_t{ 4 });
+        std::remove(tmpStd);
+        resetStadiumFacilitiesState();
     }
 
     setLlmTransportForTest(nullptr);

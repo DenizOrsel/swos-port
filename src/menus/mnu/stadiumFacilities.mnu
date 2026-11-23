@@ -1,0 +1,123 @@
+//
+// Native SWOS Career Stadium & Facilities Management Screen
+//
+
+#include "common.mh"
+
+Menu stadiumFacilitiesMenu
+{
+    onInit: initStadiumFacilitiesMenu
+    onDraw: drawStadiumFacilitiesMenu
+    initialEntry: modCapBtn
+
+    Entry header {
+        x: 26
+        y: 0
+        width: 252
+        height: 14
+
+        color: kHeaderColor
+        text: "STADIUM & FACILITIES"
+    }
+
+    Entry modCapBtn {
+        x: 0
+        y: 35
+        width: 304
+        height: 19
+
+        downEntry: modPitchBtn
+        onSelect: selectStadiumModuleCap
+    }
+
+    Entry modPitchBtn {
+        x: 0
+        y: 56
+        width: 304
+        height: 19
+
+        upEntry: modCapBtn
+        downEntry: modTrainBtn
+        onSelect: selectStadiumModulePitch
+    }
+
+    Entry modTrainBtn {
+        x: 0
+        y: 77
+        width: 304
+        height: 19
+
+        upEntry: modPitchBtn
+        downEntry: modMedBtn
+        onSelect: selectStadiumModuleTrain
+    }
+
+    Entry modMedBtn {
+        x: 0
+        y: 98
+        width: 304
+        height: 19
+
+        upEntry: modTrainBtn
+        downEntry: modCommBtn
+        onSelect: selectStadiumModuleMed
+    }
+
+    Entry modCommBtn {
+        x: 0
+        y: 119
+        width: 304
+        height: 19
+
+        upEntry: modMedBtn
+        downEntry: ticketPolicyBtn
+        onSelect: selectStadiumModuleComm
+    }
+
+    Entry ticketPolicyBtn {
+        x: 0
+        y: 141
+        width: 304
+        height: 17
+
+        upEntry: modCommBtn
+        downEntry: backBtn
+        onSelect: cycleStadiumTicketPolicy
+    }
+
+    Entry confirmYesBtn {
+        x: 34
+        y: 182
+        width: 112
+        height: 14
+
+        color: @kGreen
+        text: "CONFIRM UPGRADE"
+        rightEntry: confirmNoBtn
+        onSelect: confirmStadiumUpgradeYes
+    }
+
+    Entry confirmNoBtn {
+        x: 158
+        y: 182
+        width: 112
+        height: 14
+
+        color: kExitColor
+        text: "CANCEL"
+        leftEntry: confirmYesBtn
+        onSelect: confirmStadiumUpgradeNo
+    }
+
+    Entry backBtn {
+        x: 94
+        y: 182
+        width: 116
+        height: 14
+
+        color: kExitColor
+        text: "BACK TO CLUB"
+        upEntry: ticketPolicyBtn
+        onSelect: closeStadiumFacilitiesMenu
+    }
+}

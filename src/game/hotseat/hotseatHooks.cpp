@@ -2,6 +2,7 @@
 #include "llmFeatures.h"
 #include "pressCharisma.h"
 #include "achievements.h"
+#include "stadiumFacilities.h"
 
 namespace SWOS {
 
@@ -30,6 +31,7 @@ void InitCareerVariables_OnEnter()
 {
     resetCareerLlmSnapshots();
     resetPressCharismaState();
+    resetStadiumFacilitiesState();
     s_prevNationalSelector = 0;
     s_lastSeasonEndLeague = -1;
     auto& mgr = HotseatCareerManager::get();
@@ -42,6 +44,7 @@ void CareerInitVars_OnEnter()
 {
     resetCareerLlmSnapshots();
     resetPressCharismaState();
+    resetStadiumFacilitiesState();
     s_prevNationalSelector = 0;
     s_lastSeasonEndLeague = -1;
     auto& mgr = HotseatCareerManager::get();
@@ -107,6 +110,7 @@ void cseg_94DB1_OnEnter()
 void cseg_3C07C_OnEnter()
 {
     onEndOfSeasonPressCharismaBonus();
+    onEndOfSeasonStadiumProgression();
     if (swos.g_gameType == kGameTypeCareer) {
         uint16_t seasonIdx = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCurrentSeasonShowing]);
         uint16_t oldLeague = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerTeamLeague]);

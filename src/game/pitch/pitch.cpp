@@ -14,6 +14,7 @@
 #include "pitchEffects.h"
 #include "crowdData.h"
 #include "color.h"
+#include "stadiumFacilities.h"
 
 constexpr int kSwosPatternSize = 16;
 
@@ -520,6 +521,8 @@ static void setPitchType()
     } else {
         m_pitchType = swos.gamePitchType;
     }
+
+    applyStadiumPitchQualityOverride(m_pitchType);
 
     assert(m_pitchType >= kRandom && m_pitchType <= kMaxPitchType);
 }

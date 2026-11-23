@@ -7,6 +7,7 @@
 #include "pressCharisma.h"
 #include "supporterStream.h"
 #include "achievements.h"
+#include "stadiumFacilities.h"
 #include "continueAbortMenu.h"
 #include "controls.h"
 #include "darkRectangle.h"
@@ -687,6 +688,7 @@ void onViewResultMatchCompletedLlm()
         ms.humanDivisionTier = evalTeam1 ? div1 : div2;
         ms.opponentDivisionTier = evalTeam1 ? div2 : div1;
         achievementsOnMatchFinished(ms);
+        onPostMatchStadiumUpdate(false);
     }
 
     const auto& cfg = getLlmConfig();

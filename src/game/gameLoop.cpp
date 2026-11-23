@@ -45,6 +45,7 @@
 #include "pressCharisma.h"
 #include "supporterStream.h"
 #include "achievements.h"
+#include "stadiumFacilities.h"
 #include "util.h"
 #include "FixedPoint.h"
 
@@ -150,6 +151,7 @@ void gameLoop(TeamGame *topTeam, TeamGame *bottomTeam)
         HotseatCareerManager::get().onMatchCompleted();
         markMatchHandledInGameLoop();
         onMatchFinishedSponsorChallenge();
+        onPostMatchStadiumUpdate(true);
         finalizeMatchTelemetry();
         if (!swos.g_trainingGame) {
             MatchTelemetrySnapshot snap = captureMatchTelemetrySnapshot();
@@ -206,6 +208,7 @@ void gameLoop(TeamGame *topTeam, TeamGame *bottomTeam)
         beginPostMatchNewspaperRequest();
         beginPostMatchPressConference(swos.statsTeam1Goals, swos.statsTeam2Goals);
         showPostMatchSponsorPayoutIfNeeded();
+        showPostMatchStadiumReportIfNotable();
         showPostMatchNewspaperIfReady();
         showPostMatchPressConferenceIfReady();
         onCareerMatchCompletedLlm(swos.statsTeam1Goals, swos.statsTeam2Goals);
@@ -217,6 +220,7 @@ void showStadiumScreenAndFadeOutMusic(TeamGame *topTeam, TeamGame *bottomTeam, i
     if (showPreMatchMenus()) {
         showStadiumMenu(topTeam, bottomTeam, maxSubstitutes, [&]() {
             initMatch(topTeam, bottomTeam, true);
+            onPreMatchStadiumSnapshot(topTeam, bottomTeam);
             beginPreMatchScoutingRequest(topTeam, bottomTeam);
             beginSponsorChallengeGeneration(topTeam, bottomTeam);
             beginPreMatchPressConference(topTeam, bottomTeam);
@@ -226,6 +230,7 @@ void showStadiumScreenAndFadeOutMusic(TeamGame *topTeam, TeamGame *bottomTeam, i
         showPreMatchPressConferenceIfReady();
     } else {
         initMatch(topTeam, bottomTeam, true);
+        onPreMatchStadiumSnapshot(topTeam, bottomTeam);
         beginSponsorChallengeGeneration(topTeam, bottomTeam);
         beginPreMatchPressConference(topTeam, bottomTeam);
         showPreMatchSponsorChallengeMenuIfReady();
