@@ -26,6 +26,8 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
+#include <random>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -192,7 +194,9 @@ std::string pickCareerSquadVoice(std::string& outClubName, std::string& outPlaye
     const uint8_t *matchPlayers = &SwosVM::g_memByte[CareerOffsets::kCurrentMatchPlayers];
     bool seenSlot[kCurrentMatchPlayersSize] = {};
     std::vector<std::pair<std::string, std::string>> candidates;
-    for (uint16_t i = 0; i < numPlayers; ++i) {
+    // Pick from the active Playing XI (first 11 slots in currentMatchPlayers)
+    uint16_t xiLimit = std::min<uint16_t>(numPlayers, 11);
+    for (uint16_t i = 0; i < xiLimit; ++i) {
         uint8_t slot = matchPlayers[i];
         if (slot >= kCurrentMatchPlayersSize || seenSlot[slot])
             continue;
@@ -211,9 +215,18 @@ std::string pickCareerSquadVoice(std::string& outClubName, std::string& outPlaye
     if (candidates.empty())
         return {};
 
-    size_t idx = static_cast<size_t>(s_weeklyTickCounter + numPlayers) % candidates.size();
+    static std::mt19937 s_voiceRng(
+        static_cast<uint32_t>(std::random_device{}() ^ static_cast<uint32_t>(std::time(nullptr)) ^ SDL_GetTicks()));
+    static std::string s_lastVoicePlayer;
+
+    std::uniform_int_distribution<size_t> dist(0, candidates.size() - 1);
+    size_t idx = dist(s_voiceRng);
+    if (candidates.size() > 1 && candidates[idx].first == s_lastVoicePlayer) {
+        idx = (idx + 1 + (dist(s_voiceRng) % (candidates.size() - 1))) % candidates.size();
+    }
     outPlayerName = candidates[idx].first;
     outRole = candidates[idx].second;
+    s_lastVoicePlayer = outPlayerName;
     return outPlayerName;
 }
 
@@ -590,16 +603,9 @@ void onCareerMatchCompletedLlm(int topGoals, int botGoals)
     if (pickCareerSquadVoice(club, player, role).empty())
         return;
 
-    const TeamGeneralInfo *team1Info = nullptr;
-    const TeamGeneralInfo *team2Info = nullptr;
-    resolveTeam1AndTeam2(team1Info, team2Info);
-
-    const char *t1 = swos.topTeamInGame.teamName[0] ? swos.topTeamInGame.teamName : "HOME";
-    const char *t2 = swos.bottomTeamInGame.teamName[0] ? swos.bottomTeamInGame.teamName : "AWAY";
-    bool topHuman = (team1Info->playerNumber != 0 || team1Info->playerCoachNumber != 0);
-    bool botHuman = (team2Info->playerNumber != 0 || team2Info->playerCoachNumber != 0);
-
-    std::string prompt = buildMatchPerspectiveContext(t1, t2, topGoals, botGoals, topHuman, botHuman) +
+    LlmMatchContext ctx = buildLlmMatchContext();
+    std::string prompt = buildMatchPerspectiveContext(
+        ctx.team1.c_str(), ctx.team2.c_str(), topGoals, botGoals, ctx.team1Human, ctx.team2Human) +
         "\nSpeaker's club: " + club + ". Player speaking: " + player + " (" + role + "). "
         "Write an expressive 2-3 sentence 1997 post-match dressing room quote from " + player +
         " reacting honestly to this exact result and looking ahead to the next fixture. Start with '" + player + ": '. Plain text only.";

@@ -200,6 +200,19 @@ static void drawLlmReportMenu()
     SDL_Color redCol{ 248, 108, 108, 255 };
     SDL_Color mentionCol{ 118, 244, 232, 255 };
 
+    // Only highlight a separated newspaper headline (Daily Soccer Echo) or structured Sponsor Report summary lines;
+    // normal LLM prose/speech paragraphs always stay uniform white so line 0 never turns yellow mid-sentence.
+    int headlineEndIdx = -1;
+    if (s_header == "DAILY SOCCER ECHO") {
+        for (int k = 1; k <= 2 && k < static_cast<int>(s_lines.size()); ++k) {
+            if (s_lines[k].empty()) {
+                headlineEndIdx = k;
+                break;
+            }
+        }
+    }
+    bool isSponsorReport = (s_header == "POST-MATCH SPONSOR REPORT");
+
     for (int i = startIdx; i < endIdx; ++i) {
         const auto& line = s_lines[i];
         if (!line.empty()) {
@@ -208,15 +221,17 @@ static void drawLlmReportMenu()
             for (char c : line)
                 upper.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
 
-            bool isWon = (upper.rfind("[WON]", 0) == 0);
-            bool isFailed = (upper.rfind("[FAILED]", 0) == 0);
-            bool isHighlight = (i == 0) ||
-                               (upper.rfind("CHAIRMAN:", 0) == 0) ||
-                               (upper.rfind("ALL-IN", 0) == 0) ||
-                               (upper.rfind("NET MATCHDAY", 0) == 0) ||
-                               (upper.rfind("UPDATED BANK", 0) == 0) ||
-                               (upper.rfind("CAREER SPONSOR", 0) == 0) ||
-                               (upper.rfind("SPONSOR CHALLENGE", 0) == 0);
+            bool isWon = isSponsorReport && (upper.rfind("[WON]", 0) == 0);
+            bool isFailed = isSponsorReport && (upper.rfind("[FAILED]", 0) == 0);
+            bool isHeadline = (headlineEndIdx > 0 && i < headlineEndIdx);
+            bool isSponsorSummary = isSponsorReport && (
+                (i == 0) ||
+                (upper.rfind("ALL-IN", 0) == 0) ||
+                (upper.rfind("NET MATCHDAY", 0) == 0) ||
+                (upper.rfind("UPDATED BANK", 0) == 0) ||
+                (upper.rfind("CAREER SPONSOR", 0) == 0) ||
+                (upper.rfind("SPONSOR CHALLENGE", 0) == 0));
+            bool isHighlight = isHeadline || isSponsorSummary;
 
             SDL_Color col = isWon ? greenCol : (isFailed ? redCol : (isHighlight ? yellowCol : whiteCol));
             bool bold = isWon || isFailed || isHighlight;
