@@ -707,9 +707,9 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
     {
         resetAchievementsProfileForTest();
 
-        // Catalog integrity: 50 achievements, 1,710 total points
-        assertEqual(kAchievementCount, uint16_t{ 50 });
-        assertEqual(getTotalPossibleAchievementPoints(), uint32_t{ 1710 });
+        // Catalog integrity: 100 achievements, 3,240 total points
+        assertEqual(kAchievementCount, uint16_t{ 100 });
+        assertEqual(getTotalPossibleAchievementPoints(), uint32_t{ 3240 });
         for (uint16_t i = 0; i < kAchievementCount; ++i) {
             const auto& def = getAchievementDef(static_cast<AchievementId>(i));
             assertEqual(static_cast<uint16_t>(def.id), i);
@@ -907,6 +907,59 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
         assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kVeteran50Matches)].unlocked);
         assertTrue(setAchievementProgress(AchievementId::kCenturion100Goals, 100, false));
         assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kCenturion100Goals)].unlocked);
+
+        // V2 Expansion checks: Defender goal, Smash & Grab, Cold Rainy Night, Brick Wall GK, Own Goal Win,
+        // Clean Sweeps, Multi-Match Contract, Sponsor Millionaire, Medical Save, 3 Home Sellouts, Div Climb
+        {
+            AchievementGoalEvent gDef;
+            gDef.humanScored = true;
+            gDef.scorerIsDefender = true;
+            gDef.scorerMatchGoals = 4;
+            achievementsOnGoalScored(gDef);
+            assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kDefenderGoal)].unlocked);
+            assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kFourGoalHaul)].unlocked);
+
+            AchievementMatchSummary msV2;
+            msV2.humanParticipated = true;
+            msV2.humanWon = true;
+            msV2.isCompetitive = true;
+            msV2.isCupMatch = true;
+            msV2.humanGoals = 4;
+            msV2.opponentGoals = 0;
+            msV2.humanHtGoals = 2;
+            msV2.opponentHtGoals = 0;
+            msV2.humanPossessionPct = 32;
+            msV2.humanShotsOnTarget = 15;
+            msV2.opponentShotsOnTarget = 0;
+            msV2.humanGkSaves = 5;
+            msV2.humanLongRangeGoals = 2;
+            msV2.humanDifferentScorers = 5;
+            msV2.pitchType = 1; // Muddy
+            achievementsOnMatchFinished(msV2);
+            assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kTwoLongRangeInMatch)].unlocked);
+            assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kScoreBothHalves)].unlocked);
+            assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kThreeDifferentScorers)].unlocked);
+            assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kFiveDifferentScorers)].unlocked);
+            assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kColdRainyNight)].unlocked);
+            assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kSmashAndGrab)].unlocked);
+            assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kShotBarrage)].unlocked);
+            assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kBrickWallGk)].unlocked);
+            assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kZeroShotsAllowed)].unlocked);
+            assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kCupCleanSheetWin)].unlocked);
+
+            // Sponsor Clean Sweep + Multi-Match Contract + Millionaire
+            achievementsOnSponsorChallengesResolved(1, true, true, 1000000);
+            assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kFirstSponsorChallenge)].unlocked);
+            assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kFirstCleanSweep)].unlocked);
+            assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kFirstMultiContract)].unlocked);
+            assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kSponsorMillionaire)].unlocked);
+
+            // Medical save & 3 consecutive home sellouts (previous test already logged 2 sellouts!)
+            achievementsOnMedicalIntervention();
+            assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kFirstMedicalSave)].unlocked);
+            achievementsOnStadiumMatchAttendance(5, 25500, 26000);
+            assertTrue(prof.records[static_cast<uint16_t>(AchievementId::kHomeSelloutStreak3)].unlocked);
+        }
 
         // Atomic disk save/load round-trip
         uint32_t expectedUnlocked = prof.unlockedCount;

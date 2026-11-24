@@ -83,6 +83,8 @@ std::pair<int, int> getHeaderTelemetryGoals();
 std::pair<int, int> getEarlyTelemetryGoals();
 std::pair<int, int> getLateTelemetryGoals();
 std::pair<int, int> getSetPieceTelemetryGoals();
+std::pair<int, int> getMatchGkSaves();
+std::pair<int, int> getMatchOwnGoalsConceded();
 std::vector<std::pair<int, std::string>> getMatchAssistEntries(int teamNum);
 std::pair<int, int> getMatchMaxGoalDeficits();
 std::pair<bool, bool> getMatchEarlyRedCards();

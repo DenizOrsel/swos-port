@@ -1714,8 +1714,15 @@ void onMatchFinishedSponsorChallenge()
     s_state.lastMatchNewBalance = readCurrentClubBalance();
     syncTotalsToHotseatIfActive();
 
-    if (newlyCompleted > 0)
-        achievementsOnSponsorChallengesCompleted(static_cast<uint32_t>(newlyCompleted));
+    bool cleanSweepWon = (s_state.lastMatchEval.allInJackpotTriggered && s_state.lastMatchEval.jackpotPct >= 50);
+    bool contractWon = (s_state.lastContractUpdate.status == ContractStepStatus::kCompleted);
+    if (newlyCompleted > 0 || cleanSweepWon || contractWon || netCashDelta > 0) {
+        achievementsOnSponsorChallengesResolved(
+            static_cast<uint32_t>(newlyCompleted),
+            cleanSweepWon,
+            contractWon,
+            netCashDelta > 0 ? static_cast<int64_t>(netCashDelta) : 0);
+    }
 
     logInfo("Sponsor challenges resolved: %d won, %d failed, jackpot=+%d%%, contractStatus=%u, net=%s, balance=%s",
         newlyCompleted, newlyFailed, s_state.lastMatchEval.jackpotPct,
@@ -1741,7 +1748,7 @@ void onViewResultSponsorContractUpdate(int clubGoals, int opponentGoals)
     applyClubBalanceDelta(cu.deltaCash);
     if (cu.status == ContractStepStatus::kCompleted) {
         ++s_state.challengesCompleted;
-        achievementsOnSponsorChallengesCompleted(1);
+        achievementsOnSponsorChallengesResolved(1, false, true, cu.deltaCash > 0 ? cu.deltaCash : 0);
     } else if (cu.status == ContractStepStatus::kFailed) {
         ++s_state.challengesFailed;
     }

@@ -1061,6 +1061,8 @@ void onPostMatchStadiumUpdate(bool isPlayedMatch)
                 logInfo("Medical Center (Lvl %u) %s", static_cast<unsigned>(s_stadium.medicalLevel), note.c_str());
             }
         }
+        if (!medicalNotes.empty())
+            achievementsOnMedicalIntervention();
         s_preMatchInjuryCaptured = false;
     }
 

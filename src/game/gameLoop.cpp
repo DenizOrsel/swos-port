@@ -197,6 +197,22 @@ void gameLoop(TeamGame *topTeam, TeamGame *bottomTeam)
                 ms.maxGoalDeficit = evalTeam1 ? def1 : def2;
                 ms.humanPossessionPct = evalTeam1 ? snap.possession1 : snap.possession2;
                 ms.humanShotsOnTarget = evalTeam1 ? snap.onTarget1 : snap.onTarget2;
+                ms.opponentShotsOnTarget = evalTeam1 ? snap.onTarget2 : snap.onTarget1;
+                auto [saves1, saves2] = getMatchGkSaves();
+                auto [og1, og2] = getMatchOwnGoalsConceded();
+                ms.humanGkSaves = evalTeam1 ? saves1 : saves2;
+                ms.humanLongRangeGoals = evalTeam1 ? snap.longRangeGoals1 : snap.longRangeGoals2;
+                ms.humanConcededOwnGoal = (evalTeam1 ? og1 : og2) > 0;
+                ms.pitchType = getPitchType();
+                {
+                    const TeamGame& hTg = evalTeam1 ? swos.topTeamInGame : swos.bottomTeamInGame;
+                    int uniqScorers = 0;
+                    for (int pi = 0; pi < kNumPlayersInTeam; ++pi) {
+                        if (hTg.players[pi].goalsScored > 0)
+                            ++uniqScorers;
+                    }
+                    ms.humanDifferentScorers = uniqScorers;
+                }
                 ms.humanYellowCards = evalTeam1 ? stats.team1.bookings : stats.team2.bookings;
                 ms.humanRedCards = evalTeam1 ? stats.team1.sendingsOff : stats.team2.sendingsOff;
                 ms.hadRedCardBefore60 = evalTeam1 ? red1 : red2;

@@ -118,6 +118,8 @@ int s_lateGoals1 = 0;
 int s_lateGoals2 = 0;
 int s_setPieceGoals1 = 0;
 int s_setPieceGoals2 = 0;
+int s_ownGoalsConceded1 = 0;
+int s_ownGoalsConceded2 = 0;
 int s_maxDeficit1 = 0;
 int s_maxDeficit2 = 0;
 bool s_redBefore60_1 = false;
@@ -1112,6 +1114,8 @@ void resetMatchTelemetry()
     s_lateGoals2 = 0;
     s_setPieceGoals1 = 0;
     s_setPieceGoals2 = 0;
+    s_ownGoalsConceded1 = 0;
+    s_ownGoalsConceded2 = 0;
     s_maxDeficit1 = 0;
     s_maxDeficit2 = 0;
     s_redBefore60_1 = false;
@@ -1300,6 +1304,18 @@ void recordTelemetryMatchEvent(const char *eventType, bool isGoalEvent /* = fals
             achGoal.isVolley = (!achGoal.isOwnGoal && !achGoal.isPenalty && !achGoal.isHeader &&
                 goalTouch && goalTouch->ballZ >= 6.0f);
             achGoal.scorerIsGoalkeeper = (scorerSprite && scorerSprite->playerOrdinal == 1);
+            if (scorerSprite && scorerSprite->playerOrdinal >= 1 && scorerSprite->playerOrdinal <= kNumPlayersInTeam) {
+                const TeamGame& tg = (scorerSprite->teamNumber == 1) ? swos.topTeamInGame : swos.bottomTeamInGame;
+                auto pos = tg.players[scorerSprite->playerOrdinal - 1].position;
+                achGoal.scorerIsDefender = (pos == PlayerPosition::kDefender ||
+                                            pos == PlayerPosition::kLeftBack ||
+                                            pos == PlayerPosition::kRightBack);
+            }
+            if (achGoal.isOwnGoal) {
+                // scoringTeamNum received the goal -> the opposing side conceded an own goal
+                if (scoringTeamNum == 1) ++s_ownGoalsConceded2;
+                else if (scoringTeamNum == 2) ++s_ownGoalsConceded1;
+            }
             achGoal.matchMinute = static_cast<int>(gameTimeInMinutes());
             if (!achGoal.isOwnGoal) {
                 if (scoringTeamNum == 1) {
@@ -1464,6 +1480,16 @@ std::pair<int, int> getLateTelemetryGoals()
 std::pair<int, int> getSetPieceTelemetryGoals()
 {
     return { s_setPieceGoals1, s_setPieceGoals2 };
+}
+
+std::pair<int, int> getMatchGkSaves()
+{
+    return { s_playerAnalytics[0][0].gkSaves, s_playerAnalytics[1][0].gkSaves };
+}
+
+std::pair<int, int> getMatchOwnGoalsConceded()
+{
+    return { s_ownGoalsConceded1, s_ownGoalsConceded2 };
 }
 
 std::vector<std::pair<int, std::string>> getMatchAssistEntries(int teamNum)

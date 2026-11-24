@@ -36,12 +36,13 @@ using namespace AchievementsMenu;
 namespace {
 
 constexpr uint32_t kProfileMagic = 0x53574F53u; // 'SWOS'
-constexpr uint16_t kProfileVersion = 2;         // V2 adds transfer purchase price map + consecutive promotion streak
+constexpr uint16_t kProfileVersion = 3;         // V3 expands 50 -> 100 achievements + lifetime streaks/ladders
 constexpr const char *kDefaultProfileFilename = "swos_achievements.dat";
-constexpr size_t kToastQueueMax = 8;
+constexpr size_t kToastQueueMax = 10;
 constexpr Uint32 kToastDurationMs = 3500;
 
 static const std::array<AchievementDef, kAchievementCount> kCatalog = {{
+    // --- Original 50 Achievements (0..49) ---
     // Category A: First Steps & Match Basics (01..08)
     { AchievementId::kFirstKickoff,       "ACH_FIRST_KICKOFF",       "Jumpers for Goalposts",  "Complete your very first match in any game mode.",                    AchievementCategory::kBasics, 10, 1, false },
     { AchievementId::kFriendlyWin,        "ACH_FRIENDLY_WIN",        "Warm-Up Act",            "Win a Friendly match.",                                               AchievementCategory::kBasics, 10, 1, false },
@@ -103,6 +104,69 @@ static const std::array<AchievementDef, kAchievementCount> kCatalog = {{
     { AchievementId::kMaxFacilities,      "ACH_MAX_FACILITIES",      "Five-Star Complex",      "Upgrade Pitch, Training, Medical, and Commercial all to Level 5.",    AchievementCategory::kManagement, 50, 1, false },
     { AchievementId::kIconicCharisma,     "ACH_ICONIC_CHARISMA",     "Box Office Boss",        "Reach 90+ Coach Charisma Points (Iconic tier) in Career Mode.",       AchievementCategory::kManagement, 30, 1, false },
     { AchievementId::kSponsorStreak,      "ACH_SPONSOR_STREAK",      "Sponsor's Darling",      "Complete 10 Pre-Match Sponsor Challenges in Career Mode.",            AchievementCategory::kManagement, 30, 10, false },
+
+    // --- V2 Expansion: 50 New Achievements (50..99) ---
+    // Category A+: Ladders (51..60)
+    { AchievementId::kTenMatches,         "ACH_TEN_MATCHES",         "Getting Warmed Up",      "Complete 10 matches across any game mode.",                           AchievementCategory::kBasics, 10, 10, false },
+    { AchievementId::kCenturyMatches,     "ACH_CENTURY_MATCHES",     "Touchline Veteran",      "Complete 100 matches across any game mode.",                          AchievementCategory::kBasics, 30, 100, false },
+    { AchievementId::kLegend250Matches,   "ACH_LEGEND_250_MATCHES",  "SWOS Immortal",          "Complete 250 matches across any game mode.",                          AchievementCategory::kBasics, 50, 250, false },
+    { AchievementId::kTenWins,            "ACH_TEN_WINS",            "Winning Habit",          "Win 10 matches across any game mode.",                                AchievementCategory::kBasics, 10, 10, false },
+    { AchievementId::kFiftyWins,          "ACH_FIFTY_WINS",          "Serial Winner",          "Win 50 matches across any game mode.",                                AchievementCategory::kBasics, 30, 50, false },
+    { AchievementId::kHundredWins,        "ACH_HUNDRED_WINS",        "Centurion Manager",      "Win 100 matches across any game mode.",                               AchievementCategory::kBasics, 50, 100, false },
+    { AchievementId::kGoals250,           "ACH_GOALS_250",           "Goal Factory",           "Score 250 cumulative goals across all matches.",                      AchievementCategory::kBasics, 30, 250, false },
+    { AchievementId::kGoals500,           "ACH_GOALS_500",           "Relentless Firepower",   "Score 500 cumulative goals across all matches.",                      AchievementCategory::kBasics, 50, 500, false },
+    { AchievementId::kGoals1000,          "ACH_GOALS_1000",          "Millennium Striker",     "Score 1,000 cumulative goals across all matches.",                    AchievementCategory::kBasics, 100, 1000, false },
+    { AchievementId::kCleanSheets15,      "ACH_CLEAN_SHEETS_15",     "Safe Pair of Hands",     "Keep 15 clean sheet victories across all matches.",                   AchievementCategory::kBasics, 20, 15, false },
+
+    // Category B+: Pitch Craft & Telemetry Specials (61..71)
+    { AchievementId::kTwoLongRangeInMatch,"ACH_TWO_LONG_RANGE_MATCH","Long-Range Masterclass", "Score 2 or more outside-the-box goals in a single match.",            AchievementCategory::kPitchCraft, 30, 1, false },
+    { AchievementId::kTenLongRangeCareer, "ACH_TEN_LONG_RANGE",      "Rocket Boots",           "Score 10 cumulative goals from outside the 18-yard box.",             AchievementCategory::kPitchCraft, 30, 10, false },
+    { AchievementId::kTenHeadersCareer,   "ACH_TEN_HEADERS",         "Air Supremacy",          "Score 10 cumulative headed goals across all matches.",                AchievementCategory::kPitchCraft, 30, 10, false },
+    { AchievementId::kFiveFreeKicksCareer,"ACH_FIVE_FREE_KICKS",     "Set-Piece Maestro",      "Score 5 cumulative direct free-kick goals.",                          AchievementCategory::kPitchCraft, 30, 5, false },
+    { AchievementId::kDefenderGoal,       "ACH_DEFENDER_GOAL",       "Up From the Back",       "Score a goal with a defender (DEF, RB, or LB).",                      AchievementCategory::kPitchCraft, 20, 1, false },
+    { AchievementId::kFourGoalHaul,       "ACH_FOUR_GOAL_HAUL",      "Poker Face",             "Score 4 goals with a single player in one match.",                    AchievementCategory::kPitchCraft, 30, 1, false },
+    { AchievementId::kFiveHatTricks,      "ACH_FIVE_HAT_TRICKS",     "Match Ball Collector",   "Score 5 cumulative hat-tricks across all matches.",                   AchievementCategory::kPitchCraft, 50, 5, false },
+    { AchievementId::kScoreBothHalves,    "ACH_SCORE_BOTH_HALVES",   "Relentless Tempo",       "Score in both the 1st half and 2nd half of a victory.",               AchievementCategory::kPitchCraft, 10, 1, false },
+    { AchievementId::kThreeDifferentScorers,"ACH_THREE_SCORERS",     "Team Effort",            "Have 3 or more different players score for you in one match.",        AchievementCategory::kPitchCraft, 20, 1, false },
+    { AchievementId::kFiveDifferentScorers,"ACH_FIVE_SCORERS",       "Everyone Invited",       "Have 5 or more different players score for you in one match.",        AchievementCategory::kPitchCraft, 30, 1, false },
+    { AchievementId::kColdRainyNight,     "ACH_COLD_RAINY_NIGHT",    "Cold Rainy Night",       "Win a competitive match on a Frozen, Muddy, or Wet pitch.",           AchievementCategory::kPitchCraft, 20, 1, false },
+
+    // Category C+: Streaks, Shutdowns & Drama (72..80)
+    { AchievementId::kWinStreak3,         "ACH_WIN_STREAK_3",        "Three on the Bounce",    "Win 3 matches in a row.",                                             AchievementCategory::kComebacks, 10, 3, false },
+    { AchievementId::kWinStreak5,         "ACH_WIN_STREAK_5",        "Red Hot Form",           "Win 5 matches in a row.",                                             AchievementCategory::kComebacks, 20, 5, false },
+    { AchievementId::kWinStreak10,        "ACH_WIN_STREAK_10",       "Juggernaut",             "Win 10 matches in a row.",                                            AchievementCategory::kComebacks, 50, 10, false },
+    { AchievementId::kUnbeatenRun10,      "ACH_UNBEATEN_RUN_10",     "Hard to Beat",           "Go 10 consecutive matches unbeaten (wins or draws).",                 AchievementCategory::kComebacks, 30, 10, false },
+    { AchievementId::kSmashAndGrab,       "ACH_SMASH_AND_GRAB",      "Smash and Grab",         "Win a competitive match with 35% or less ball possession.",           AchievementCategory::kComebacks, 30, 1, false },
+    { AchievementId::kShotBarrage,        "ACH_SHOT_BARRAGE",        "Siege Mentality",        "Record 15 or more shots on target in a single match.",                AchievementCategory::kComebacks, 20, 1, false },
+    { AchievementId::kBrickWallGk,        "ACH_BRICK_WALL_GK",       "Brick Wall",             "Win a clean sheet while your goalkeeper makes 5 or more saves.",      AchievementCategory::kComebacks, 30, 1, false },
+    { AchievementId::kZeroShotsAllowed,   "ACH_ZERO_SHOTS_ALLOWED",  "Total Shutdown",         "Win a match without allowing a single opponent shot on target.",      AchievementCategory::kComebacks, 30, 1, false },
+    { AchievementId::kOwnGoalAndWin,      "ACH_OWN_GOAL_AND_WIN",    "Laugh It Off",           "Concede an own goal and still go on to win the match.",               AchievementCategory::kComebacks, 20, 1, true },
+
+    // Category D+: Cup & Thriller Specials (81..83)
+    { AchievementId::kCupCleanSheetWin,   "ACH_CUP_CLEAN_SHEET",     "Cup Composure",          "Win a cup match without conceding a goal.",                           AchievementCategory::kCupGlory, 20, 1, false },
+    { AchievementId::kShootoutCleanSheet, "ACH_SHOOTOUT_CLEAN_SHEET","Spot-Kick Fortress",     "Win a penalty shootout after a 0-0 draw.",                            AchievementCategory::kCupGlory, 30, 1, false },
+    { AchievementId::kHighScoringThriller,"ACH_SEVEN_GOAL_CLASSIC",  "Seven-Goal Classic",     "Win a competitive match with 7 or more combined goals.",              AchievementCategory::kCupGlory, 20, 1, false },
+
+    // Category E+: Career Climb Milestones (84..89)
+    { AchievementId::kCareerThreeSeasons, "ACH_CAREER_3_SEASONS",    "Established Gaffer",     "Complete 3 seasons in Career Mode.",                                  AchievementCategory::kCareer, 20, 3, false },
+    { AchievementId::kCareerFiveSeasons,  "ACH_CAREER_5_SEASONS",    "Club Stalwart",          "Complete 5 seasons in Career Mode.",                                  AchievementCategory::kCareer, 30, 5, false },
+    { AchievementId::kReachDiv3,          "ACH_REACH_DIV3",          "Out of the Basement",    "Earn promotion into Division 3 in Career Mode.",                      AchievementCategory::kCareer, 20, 1, false },
+    { AchievementId::kReachDiv2,          "ACH_REACH_DIV2",          "Championship Bound",     "Earn promotion into Division 2 in Career Mode.",                      AchievementCategory::kCareer, 30, 1, false },
+    { AchievementId::kReachTopFlight,     "ACH_REACH_TOP_FLIGHT",    "Promised Land",          "Earn promotion into the Top Flight (Division 1) in Career Mode.",     AchievementCategory::kCareer, 50, 1, false },
+    { AchievementId::kCleanSheets30,      "ACH_CLEAN_SHEETS_30",     "Catenaccio",             "Keep 30 cumulative clean sheet victories.",                           AchievementCategory::kCareer, 50, 30, false },
+
+    // Category F+: Sponsor, Contract, Stadium, Medical & Transfer Ladders (90..100)
+    { AchievementId::kFirstSponsorChallenge,"ACH_FIRST_SPONSOR",     "Sponsor Approved",       "Complete your first Pre-Match Sponsor Challenge.",                    AchievementCategory::kManagement, 10, 1, false },
+    { AchievementId::kSponsor25,          "ACH_SPONSOR_25",          "Commercial Magnet",      "Complete 25 Pre-Match Sponsor Challenges in Career Mode.",            AchievementCategory::kManagement, 30, 25, false },
+    { AchievementId::kSponsor50,          "ACH_SPONSOR_50",          "Boardroom Legend",       "Complete 50 Pre-Match Sponsor Challenges in Career Mode.",            AchievementCategory::kManagement, 50, 50, false },
+    { AchievementId::kFirstCleanSweep,    "ACH_FIRST_CLEAN_SWEEP",   "All-In Payday",          "Trigger a Sponsor Clean Sweep Jackpot (+50% or +75%).",               AchievementCategory::kManagement, 30, 1, false },
+    { AchievementId::kThreeCleanSweeps,   "ACH_THREE_CLEAN_SWEEPS",  "High Roller",            "Trigger 3 Sponsor Clean Sweep Jackpots.",                             AchievementCategory::kManagement, 50, 3, false },
+    { AchievementId::kFirstMultiContract, "ACH_FIRST_MULTI_CONTRACT","Long-Term Deal",         "Complete a Multi-Match Sponsor Contract (M1-M5).",                    AchievementCategory::kManagement, 30, 1, false },
+    { AchievementId::kSponsorMillionaire, "ACH_SPONSOR_MILLIONAIRE", "Sponsor Millionaire",    "Earn GBP 1,000,000 cumulative profit from Sponsor Challenges.",       AchievementCategory::kManagement, 50, 1000000, false },
+    { AchievementId::kStadiumBuilder5,    "ACH_STADIUM_BUILDER_5",   "Master Architect",       "Complete 5 Stadium or Facility upgrades.",                            AchievementCategory::kManagement, 30, 5, false },
+    { AchievementId::kHomeSelloutStreak3, "ACH_HOME_SELLOUT_3",      "Hot Ticket",             "Sell out 3 consecutive home matches (95%+ fill).",                    AchievementCategory::kManagement, 20, 3, false },
+    { AchievementId::kFirstMedicalSave,   "ACH_FIRST_MEDICAL_SAVE",  "Magic Sponge",           "Have your Medical Center prevent or shorten a player injury.",        AchievementCategory::kManagement, 20, 1, false },
+    { AchievementId::kFiveSignings,       "ACH_FIVE_SIGNINGS",       "Squad Overhaul",         "Sign 5 players from the transfer market in Career Mode.",             AchievementCategory::kManagement, 20, 5, false },
 }};
 
 struct ToastItem {
@@ -231,6 +295,25 @@ bool saveAchievementsLocked(const std::string& customPath)
             out.write(kv.first.data(), nLen);
         if (!writePod(out, kv.second))
             return false;
+    }
+
+    // V3 extra lifetime counters for 100-achievement ladders & streaks
+    if (!writePod(out, s_profile.totalWins) ||
+        !writePod(out, s_profile.totalCleanSheets) ||
+        !writePod(out, s_profile.currentWinStreak) ||
+        !writePod(out, s_profile.currentUnbeatenStreak) ||
+        !writePod(out, s_profile.totalLongRangeGoals) ||
+        !writePod(out, s_profile.totalHeaderGoals) ||
+        !writePod(out, s_profile.totalFreeKickGoals) ||
+        !writePod(out, s_profile.totalHatTricks) ||
+        !writePod(out, s_profile.totalCleanSweeps) ||
+        !writePod(out, s_profile.totalMultiContractsCompleted) ||
+        !writePod(out, s_profile.totalSponsorCashEarned) ||
+        !writePod(out, s_profile.totalStadiumUpgrades) ||
+        !writePod(out, s_profile.consecutiveHomeSellouts) ||
+        !writePod(out, s_profile.totalMedicalSaves) ||
+        !writePod(out, s_profile.totalTransfersSigned)) {
+        return false;
     }
 
     out.flush();
@@ -433,7 +516,7 @@ static void drawAchievementsMenu()
 
         // Category filter label
         std::string catLabel = (s_browserCategory < 0)
-            ? "CATEGORY: ALL (50)"
+            ? ("CATEGORY: ALL (" + std::to_string(kAchievementCount) + ")")
             : (std::string("CATEGORY: ") + getAchievementCategoryName(static_cast<AchievementCategory>(s_browserCategory)) +
                " (" + std::to_string(filtered.size()) + ")");
         float catPx = fitScaleForWidth(catLabel, px, 196.0f * gameScale);
@@ -484,17 +567,20 @@ static void drawAchievementsMenu()
                 ptsStr, pointsTierColor(def.points), rec.unlocked ? 255 : 180, rec.unlocked);
 
             // Description line below (auto-fitted so it never overflows the dark panel)
-            float descPx = fitScaleForWidth(def.description, px, maxDescPixelW);
+            const char *descText = (def.isSecret && !rec.unlocked)
+                ? "Secret Achievement - unlock during gameplay to reveal!"
+                : def.description;
+            float descPx = fitScaleForWidth(descText, px, maxDescPixelW);
             drawCompactText(r, atlas, rx + 8.0f * gameScale, ry + 10.5f * gameScale, descPx,
-                def.description, rec.unlocked ? whiteCol : mutedCol, rec.unlocked ? 235 : 200, false);
+                descText, rec.unlocked ? whiteCol : mutedCol, rec.unlocked ? 235 : 200, false);
         }
 
         // Scroll indicator in bottom of list box
         if (!filtered.empty()) {
             int firstShown = s_browserScroll + 1;
             int lastShown = std::min<int>(static_cast<int>(filtered.size()), s_browserScroll + kRowsPerPage);
-            char rangeBuf[64];
-            std::snprintf(rangeBuf, sizeof(rangeBuf), "Showing %d-%d of %zu  |  Arrows: Browse  ESC: Back",
+            char rangeBuf[72];
+            std::snprintf(rangeBuf, sizeof(rangeBuf), "Showing %d-%d of %zu  |  Arrows/PgUp-Dn: Browse  ESC: Back",
                 firstShown, lastShown, filtered.size());
             float footPx = fitScaleForWidth(rangeBuf, px * 0.88f, 300.0f * gameScale);
             drawCompactTextCentered(r, atlas, offX + 160.0f * gameScale, offY + 172.0f * gameScale, footPx,
@@ -504,7 +590,7 @@ static void drawAchievementsMenu()
         SDL_RenderSetScale(r, origSX, origSY);
     }
 
-    // Keyboard shortcuts: Left/Right switch category, Up/Down scroll 1 row, ESC closes
+    // Keyboard shortcuts: Left/Right switch category, Up/Down scroll 1 row, PgUp/PgDn scroll page, ESC closes
     const Uint8 *keys = SDL_GetKeyboardState(nullptr);
     if (keys) {
         bool down[5] = {
@@ -514,10 +600,11 @@ static void drawAchievementsMenu()
             keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_PAGEDOWN],
             keys[SDL_SCANCODE_ESCAPE] != 0,
         };
+        int step = (keys[SDL_SCANCODE_PAGEUP] || keys[SDL_SCANCODE_PAGEDOWN]) ? kRowsPerPage : 1;
         if (down[0] && !s_prevNavKeys[0]) achievementsPrevCategory();
         if (down[1] && !s_prevNavKeys[1]) achievementsNextCategory();
-        if (down[2] && !s_prevNavKeys[2]) { s_browserScroll = std::max(0, s_browserScroll - 1); }
-        if (down[3] && !s_prevNavKeys[3]) { ++s_browserScroll; clampBrowserScroll(); }
+        if (down[2] && !s_prevNavKeys[2]) { s_browserScroll = std::max(0, s_browserScroll - step); }
+        if (down[3] && !s_prevNavKeys[3]) { s_browserScroll += step; clampBrowserScroll(); }
         if (down[4] && !s_prevNavKeys[4]) SetExitMenuFlag();
         for (int i = 0; i < 5; ++i)
             s_prevNavKeys[i] = down[i];
@@ -610,7 +697,9 @@ bool loadAchievements(const std::string& customPath)
         return false;
     }
 
-    for (uint16_t i = 0; i < kAchievementCount; ++i) {
+    // V1/V2 saves stored 50 records; V3 stores 100 records — migrate seamlessly without losing any unlocks!
+    uint16_t storedCount = (version <= 2) ? kLegacyV2AchievementCount : kAchievementCount;
+    for (uint16_t i = 0; i < storedCount; ++i) {
         uint8_t u = 0;
         if (!readPod(in, u) ||
             !readPod(in, s_profile.records[i].currentProgress) ||
@@ -638,6 +727,43 @@ bool loadAchievements(const std::string& customPath)
                     s_playerBuyFees[std::move(name)] = fee;
             }
         }
+    }
+
+    if (version >= 3) {
+        readPod(in, s_profile.totalWins);
+        readPod(in, s_profile.totalCleanSheets);
+        readPod(in, s_profile.currentWinStreak);
+        readPod(in, s_profile.currentUnbeatenStreak);
+        readPod(in, s_profile.totalLongRangeGoals);
+        readPod(in, s_profile.totalHeaderGoals);
+        readPod(in, s_profile.totalFreeKickGoals);
+        readPod(in, s_profile.totalHatTricks);
+        readPod(in, s_profile.totalCleanSweeps);
+        readPod(in, s_profile.totalMultiContractsCompleted);
+        readPod(in, s_profile.totalSponsorCashEarned);
+        readPod(in, s_profile.totalStadiumUpgrades);
+        readPod(in, s_profile.consecutiveHomeSellouts);
+        readPod(in, s_profile.totalMedicalSaves);
+        readPod(in, s_profile.totalTransfersSigned);
+    } else {
+        // Retroactively seed V3 progress bars from already-saved V1/V2 lifetime totals
+        auto syncLadder = [&](AchievementId id, uint32_t val) {
+            uint16_t idx = static_cast<uint16_t>(id);
+            uint32_t target = kCatalog[idx].targetProgress;
+            s_profile.records[idx].currentProgress = std::min(target, val);
+            if (val >= target)
+                s_profile.records[idx].unlocked = true;
+        };
+        syncLadder(AchievementId::kTenMatches, s_profile.totalMatchesPlayed);
+        syncLadder(AchievementId::kCenturyMatches, s_profile.totalMatchesPlayed);
+        syncLadder(AchievementId::kLegend250Matches, s_profile.totalMatchesPlayed);
+        syncLadder(AchievementId::kGoals250, s_profile.totalGoalsScored);
+        syncLadder(AchievementId::kGoals500, s_profile.totalGoalsScored);
+        syncLadder(AchievementId::kGoals1000, s_profile.totalGoalsScored);
+        if (s_profile.sponsorChallengesCompleted >= 1)
+            s_profile.records[static_cast<uint16_t>(AchievementId::kFirstSponsorChallenge)].unlocked = true;
+        syncLadder(AchievementId::kSponsor25, s_profile.sponsorChallengesCompleted);
+        syncLadder(AchievementId::kSponsor50, s_profile.sponsorChallengesCompleted);
     }
 
     recomputeProfileTotalsLocked();
@@ -710,6 +836,20 @@ size_t getPendingAchievementToastCount()
 
 // --- Domain Event Evaluators ---
 
+static bool updateLadderLocked(AchievementId id, uint32_t curValue)
+{
+    uint16_t idx = static_cast<uint16_t>(id);
+    if (idx >= kAchievementCount)
+        return false;
+    auto& rec = s_profile.records[idx];
+    uint32_t target = std::max<uint32_t>(1, kCatalog[idx].targetProgress);
+    if (curValue > rec.currentProgress)
+        rec.currentProgress = std::min(target, curValue);
+    if (!rec.unlocked && rec.currentProgress >= target)
+        return unlockAchievementLocked(id, false);
+    return false;
+}
+
 void achievementsOnGoalScored(const AchievementGoalEvent& ev)
 {
     if (!ev.humanScored || ev.isOwnGoal)
@@ -721,26 +861,48 @@ void achievementsOnGoalScored(const AchievementGoalEvent& ev)
     dirty |= unlockAchievementLocked(AchievementId::kFirstGoal, false);
     if (ev.isPenalty)
         dirty |= unlockAchievementLocked(AchievementId::kPenaltyGoal, false);
-    if (ev.isHeader)
+    if (ev.isHeader) {
+        ++s_profile.totalHeaderGoals;
         dirty |= unlockAchievementLocked(AchievementId::kHeaderGoal, false);
-    if (ev.isOutsideBox && !ev.isPenalty)
+        dirty |= updateLadderLocked(AchievementId::kTenHeadersCareer, s_profile.totalHeaderGoals);
+        dirty = true;
+    }
+    if (ev.isOutsideBox && !ev.isPenalty) {
+        ++s_profile.totalLongRangeGoals;
         dirty |= unlockAchievementLocked(AchievementId::kOutsideBoxGoal, false);
-    if (ev.isFreeKick && !ev.isPenalty)
+        dirty |= updateLadderLocked(AchievementId::kTenLongRangeCareer, s_profile.totalLongRangeGoals);
+        dirty = true;
+    }
+    if (ev.isFreeKick && !ev.isPenalty) {
+        ++s_profile.totalFreeKickGoals;
         dirty |= unlockAchievementLocked(AchievementId::kFreeKickGoal, false);
+        dirty |= updateLadderLocked(AchievementId::kFiveFreeKicksCareer, s_profile.totalFreeKickGoals);
+        dirty = true;
+    }
     if (ev.isVolley && !ev.isPenalty && !ev.isHeader)
         dirty |= unlockAchievementLocked(AchievementId::kVolleyOrOverhead, false);
     if (ev.withinCornerWindow)
         dirty |= unlockAchievementLocked(AchievementId::kCornerDirectOrQuick, false);
     if (ev.scorerIsGoalkeeper)
         dirty |= unlockAchievementLocked(AchievementId::kGoalkeeperGoal, false);
+    if (ev.scorerIsDefender)
+        dirty |= unlockAchievementLocked(AchievementId::kDefenderGoal, false);
     if (ev.matchMinute > 0 && ev.matchMinute <= 2)
         dirty |= unlockAchievementLocked(AchievementId::kEarlyBlitz, false);
     if (ev.matchMinute >= 89 && ev.isGoAheadGoal)
         dirty |= unlockAchievementLocked(AchievementId::kFergieTime, false);
     if (ev.isExtraTime && ev.isGoAheadGoal)
         dirty |= unlockAchievementLocked(AchievementId::kExtraTimeWinner, false);
-    if (ev.scorerMatchGoals >= 3)
+    if (ev.scorerMatchGoals == 3) {
+        ++s_profile.totalHatTricks;
         dirty |= unlockAchievementLocked(AchievementId::kHatTrick, false);
+        dirty |= updateLadderLocked(AchievementId::kFiveHatTricks, s_profile.totalHatTricks);
+        dirty = true;
+    } else if (ev.scorerMatchGoals > 3) {
+        dirty |= unlockAchievementLocked(AchievementId::kHatTrick, false);
+    }
+    if (ev.scorerMatchGoals >= 4)
+        dirty |= unlockAchievementLocked(AchievementId::kFourGoalHaul, false);
     if (ev.scorerMatchGoals >= 6)
         dirty |= unlockAchievementLocked(AchievementId::kDoubleHatTrick, false);
 
@@ -763,28 +925,61 @@ void achievementsOnMatchFinished(const AchievementMatchSummary& s)
     if (s.humanGoals > 0)
         unlockAchievementLocked(AchievementId::kFirstGoal, false);
 
-    // Cumulative match & goal milestones
-    {
-        auto& mRec = s_profile.records[static_cast<uint16_t>(AchievementId::kVeteran50Matches)];
-        mRec.currentProgress = std::min<uint32_t>(50, s_profile.totalMatchesPlayed);
-        if (!mRec.unlocked && mRec.currentProgress >= 50)
-            unlockAchievementLocked(AchievementId::kVeteran50Matches, false);
+    // Cumulative match & goal ladders
+    updateLadderLocked(AchievementId::kTenMatches, s_profile.totalMatchesPlayed);
+    updateLadderLocked(AchievementId::kVeteran50Matches, s_profile.totalMatchesPlayed);
+    updateLadderLocked(AchievementId::kCenturyMatches, s_profile.totalMatchesPlayed);
+    updateLadderLocked(AchievementId::kLegend250Matches, s_profile.totalMatchesPlayed);
 
-        auto& gRec = s_profile.records[static_cast<uint16_t>(AchievementId::kCenturion100Goals)];
-        gRec.currentProgress = std::min<uint32_t>(100, s_profile.totalGoalsScored);
-        if (!gRec.unlocked && gRec.currentProgress >= 100)
-            unlockAchievementLocked(AchievementId::kCenturion100Goals, false);
-    }
+    updateLadderLocked(AchievementId::kCenturion100Goals, s_profile.totalGoalsScored);
+    updateLadderLocked(AchievementId::kGoals250, s_profile.totalGoalsScored);
+    updateLadderLocked(AchievementId::kGoals500, s_profile.totalGoalsScored);
+    updateLadderLocked(AchievementId::kGoals1000, s_profile.totalGoalsScored);
 
+    // Single-match telemetry craft specials (win or draw/loss)
+    if (s.humanLongRangeGoals >= 2)
+        unlockAchievementLocked(AchievementId::kTwoLongRangeInMatch, false);
+    if (s.humanDifferentScorers >= 3)
+        unlockAchievementLocked(AchievementId::kThreeDifferentScorers, false);
+    if (s.humanDifferentScorers >= 5)
+        unlockAchievementLocked(AchievementId::kFiveDifferentScorers, false);
+    if (s.humanShotsOnTarget >= 15)
+        unlockAchievementLocked(AchievementId::kShotBarrage, false);
+
+    // Win / Unbeaten streaks
+    bool drew = (!s.humanWon && s.humanGoals == s.opponentGoals);
     if (s.humanWon) {
+        ++s_profile.totalWins;
+        ++s_profile.currentWinStreak;
+        ++s_profile.currentUnbeatenStreak;
+
+        updateLadderLocked(AchievementId::kTenWins, s_profile.totalWins);
+        updateLadderLocked(AchievementId::kFiftyWins, s_profile.totalWins);
+        updateLadderLocked(AchievementId::kHundredWins, s_profile.totalWins);
+        updateLadderLocked(AchievementId::kWinStreak3, s_profile.currentWinStreak);
+        updateLadderLocked(AchievementId::kWinStreak5, s_profile.currentWinStreak);
+        updateLadderLocked(AchievementId::kWinStreak10, s_profile.currentWinStreak);
+        updateLadderLocked(AchievementId::kUnbeatenRun10, s_profile.currentUnbeatenStreak);
+
         if (s.isFriendly)
             unlockAchievementLocked(AchievementId::kFriendlyWin, false);
         if (s.isCareer)
             unlockAchievementLocked(AchievementId::kCareerFirstWin, false);
-        if (s.opponentGoals == 0)
+        if (s.opponentGoals == 0) {
+            ++s_profile.totalCleanSheets;
             unlockAchievementLocked(AchievementId::kCleanSheet, false);
-        if (s.wonOnPenalties)
+            updateLadderLocked(AchievementId::kCleanSheets15, s_profile.totalCleanSheets);
+            updateLadderLocked(AchievementId::kCleanSheets30, s_profile.totalCleanSheets);
+            if (s.isCupMatch)
+                unlockAchievementLocked(AchievementId::kCupCleanSheetWin, false);
+            if (s.humanGkSaves >= 5)
+                unlockAchievementLocked(AchievementId::kBrickWallGk, false);
+        }
+        if (s.wonOnPenalties) {
             unlockAchievementLocked(AchievementId::kPenaltyShootoutWin, false);
+            if (s.humanGoals == 0 && s.opponentGoals == 0)
+                unlockAchievementLocked(AchievementId::kShootoutCleanSheet, false);
+        }
         if (s.wonInExtraTime)
             unlockAchievementLocked(AchievementId::kExtraTimeWinner, false);
         if (s.isCompetitive && s.humanYellowCards == 0 && s.humanRedCards == 0)
@@ -793,14 +988,26 @@ void achievementsOnMatchFinished(const AchievementMatchSummary& s)
             unlockAchievementLocked(AchievementId::kDownToTenWin, false);
         if (s.humanHtGoals < s.opponentHtGoals)
             unlockAchievementLocked(AchievementId::kHalftimeComeback, false);
+        if (s.humanHtGoals >= 1 && (s.humanGoals - s.humanHtGoals) >= 1)
+            unlockAchievementLocked(AchievementId::kScoreBothHalves, false);
         if (s.maxGoalDeficit >= 2)
             unlockAchievementLocked(AchievementId::kTwoGoalComeback, false);
         if (s.maxGoalDeficit >= 3)
             unlockAchievementLocked(AchievementId::kThreeGoalComeback, false);
         if (s.isCompetitive && (s.humanGoals - s.opponentGoals) >= 5)
             unlockAchievementLocked(AchievementId::kFiveGoalRout, false);
+        if (s.isCompetitive && (s.humanGoals + s.opponentGoals) >= 7)
+            unlockAchievementLocked(AchievementId::kHighScoringThriller, false);
         if (s.humanPossessionPct >= 65)
             unlockAchievementLocked(AchievementId::kPossessionMaster, false);
+        if (s.isCompetitive && s.humanPossessionPct > 0 && s.humanPossessionPct <= 35)
+            unlockAchievementLocked(AchievementId::kSmashAndGrab, false);
+        if (s.opponentShotsOnTarget == 0)
+            unlockAchievementLocked(AchievementId::kZeroShotsAllowed, false);
+        if (s.humanConcededOwnGoal)
+            unlockAchievementLocked(AchievementId::kOwnGoalAndWin, false);
+        if (s.isCompetitive && s.pitchType >= 0 && s.pitchType <= 2)
+            unlockAchievementLocked(AchievementId::kColdRainyNight, false);
         if (s.humanGoals >= 3 && s.humanShotsOnTarget > 0 && (s.humanGoals * 4) >= (s.humanShotsOnTarget * 3))
             unlockAchievementLocked(AchievementId::kClinicalFinishing, false);
 
@@ -822,6 +1029,13 @@ void achievementsOnMatchFinished(const AchievementMatchSummary& s)
             unlockAchievementLocked(AchievementId::kEuropeanCupWin, false);
         if (s.isWorldCupFinalWin)
             unlockAchievementLocked(AchievementId::kWorldCupWin, false);
+    } else if (drew) {
+        s_profile.currentWinStreak = 0;
+        ++s_profile.currentUnbeatenStreak;
+        updateLadderLocked(AchievementId::kUnbeatenRun10, s_profile.currentUnbeatenStreak);
+    } else {
+        s_profile.currentWinStreak = 0;
+        s_profile.currentUnbeatenStreak = 0;
     }
 
     if (s.isCompetitive && s.humanGoals >= 10)
@@ -836,7 +1050,9 @@ void achievementsOnCareerTransfer(bool isSigning, int32_t feePounds, const std::
     std::string key = normalizePlayerKey(playerName);
 
     if (isSigning) {
+        ++s_profile.totalTransfersSigned;
         unlockAchievementLocked(AchievementId::kFirstSigning, false);
+        updateLadderLocked(AchievementId::kFiveSignings, s_profile.totalTransfersSigned);
         if (feePounds >= 1000000)
             unlockAchievementLocked(AchievementId::kMillionPoundSigning, false);
         if (!key.empty() && feePounds >= 0) {
@@ -868,6 +1084,12 @@ void achievementsOnCareerSeasonEnd(const AchievementSeasonSummary& season)
         unlockAchievementLocked(AchievementId::kPromotion, false);
         if (s_consecutivePromotions >= 2)
             unlockAchievementLocked(AchievementId::kBackToBackPromotion, false);
+        if (season.newDivisionTier == 2)
+            unlockAchievementLocked(AchievementId::kReachDiv3, false);
+        else if (season.newDivisionTier == 1)
+            unlockAchievementLocked(AchievementId::kReachDiv2, false);
+        else if (season.newDivisionTier == 0)
+            unlockAchievementLocked(AchievementId::kReachTopFlight, false);
     } else if (season.newDivisionTier >= 0) {
         s_consecutivePromotions = 0;
     }
@@ -884,12 +1106,10 @@ void achievementsOnCareerSeasonEnd(const AchievementSeasonSummary& season)
         unlockAchievementLocked(AchievementId::kContinentalTreble, false);
 
     if (season.completedCareerSeasons > 0) {
-        auto& sRec = s_profile.records[static_cast<uint16_t>(AchievementId::kCareerTenSeasons)];
         uint32_t val = static_cast<uint32_t>(season.completedCareerSeasons);
-        if (val > sRec.currentProgress)
-            sRec.currentProgress = std::min<uint32_t>(10, val);
-        if (!sRec.unlocked && sRec.currentProgress >= 10)
-            unlockAchievementLocked(AchievementId::kCareerTenSeasons, false);
+        updateLadderLocked(AchievementId::kCareerThreeSeasons, val);
+        updateLadderLocked(AchievementId::kCareerFiveSeasons, val);
+        updateLadderLocked(AchievementId::kCareerTenSeasons, val);
     }
 
     saveAchievementsLocked({});
@@ -908,34 +1128,81 @@ void achievementsOnCharismaChanged(int16_t charismaPoints)
 
 void achievementsOnSponsorChallengesCompleted(uint32_t newlyCompletedCount)
 {
-    if (newlyCompletedCount == 0)
+    achievementsOnSponsorChallengesResolved(newlyCompletedCount, false, false, 0);
+}
+
+void achievementsOnSponsorChallengesResolved(
+    uint32_t newlyCompletedCount,
+    bool cleanSweepTriggered,
+    bool multiContractCompleted,
+    int64_t positiveNetProfit)
+{
+    if (newlyCompletedCount == 0 && !cleanSweepTriggered && !multiContractCompleted && positiveNetProfit <= 0)
         return;
+
     std::lock_guard<std::mutex> lock(s_achMutex);
-    s_profile.sponsorChallengesCompleted += newlyCompletedCount;
-    auto& rec = s_profile.records[static_cast<uint16_t>(AchievementId::kSponsorStreak)];
-    rec.currentProgress = std::min<uint32_t>(10, s_profile.sponsorChallengesCompleted);
-    if (!rec.unlocked && rec.currentProgress >= 10)
-        unlockAchievementLocked(AchievementId::kSponsorStreak, false);
+    if (newlyCompletedCount > 0) {
+        s_profile.sponsorChallengesCompleted += newlyCompletedCount;
+        unlockAchievementLocked(AchievementId::kFirstSponsorChallenge, false);
+        updateLadderLocked(AchievementId::kSponsorStreak, s_profile.sponsorChallengesCompleted);
+        updateLadderLocked(AchievementId::kSponsor25, s_profile.sponsorChallengesCompleted);
+        updateLadderLocked(AchievementId::kSponsor50, s_profile.sponsorChallengesCompleted);
+    }
+    if (cleanSweepTriggered) {
+        ++s_profile.totalCleanSweeps;
+        unlockAchievementLocked(AchievementId::kFirstCleanSweep, false);
+        updateLadderLocked(AchievementId::kThreeCleanSweeps, s_profile.totalCleanSweeps);
+    }
+    if (multiContractCompleted) {
+        ++s_profile.totalMultiContractsCompleted;
+        unlockAchievementLocked(AchievementId::kFirstMultiContract, false);
+    }
+    if (positiveNetProfit > 0) {
+        s_profile.totalSponsorCashEarned += static_cast<uint64_t>(positiveNetProfit);
+        uint32_t clampedCash = static_cast<uint32_t>(std::min<uint64_t>(s_profile.totalSponsorCashEarned, 1000000ULL));
+        updateLadderLocked(AchievementId::kSponsorMillionaire, clampedCash);
+    }
     saveAchievementsLocked({});
 }
 
-// --- Stadium & Facilities Hooks (Ready for Stadium System Integration) ---
+// --- Stadium & Facilities Hooks ---
 
 void achievementsOnStadiumUpgradeCompleted()
 {
-    unlockAchievement(AchievementId::kStadiumFirstUpgrade, true);
+    std::lock_guard<std::mutex> lock(s_achMutex);
+    ++s_profile.totalStadiumUpgrades;
+    unlockAchievementLocked(AchievementId::kStadiumFirstUpgrade, false);
+    updateLadderLocked(AchievementId::kStadiumBuilder5, s_profile.totalStadiumUpgrades);
+    saveAchievementsLocked({});
 }
 
 void achievementsOnStadiumMatchAttendance(int capacityLevel, int attendance, int maxCapacity)
 {
+    std::lock_guard<std::mutex> lock(s_achMutex);
+    bool soldOut = (maxCapacity > 0 && attendance * 100 >= maxCapacity * 95);
+    if (soldOut) {
+        ++s_profile.consecutiveHomeSellouts;
+        updateLadderLocked(AchievementId::kHomeSelloutStreak3, s_profile.consecutiveHomeSellouts);
+    } else {
+        s_profile.consecutiveHomeSellouts = 0;
+    }
     if (capacityLevel >= 10 && maxCapacity >= 85000 && attendance >= maxCapacity)
-        unlockAchievement(AchievementId::kFortress85k, true);
+        unlockAchievementLocked(AchievementId::kFortress85k, false);
+    saveAchievementsLocked({});
 }
 
 void achievementsOnFacilitiesUpdated(int pitchLevel, int trainingLevel, int medicalLevel, int commercialLevel)
 {
     if (pitchLevel >= 5 && trainingLevel >= 5 && medicalLevel >= 5 && commercialLevel >= 5)
         unlockAchievement(AchievementId::kMaxFacilities, true);
+}
+
+void achievementsOnMedicalIntervention()
+{
+    std::lock_guard<std::mutex> lock(s_achMutex);
+    ++s_profile.totalMedicalSaves;
+    unlockAchievementLocked(AchievementId::kFirstMedicalSave, false);
+    saveAchievementsLocked({});
 }
 
 // --- Live Retro Unlock Toast Overlay (rendered from render.cpp updateScreen) ---
