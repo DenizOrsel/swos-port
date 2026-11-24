@@ -933,7 +933,7 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
         assertTrue(fb.initialized);
         assertEqual(std::string(fb.stadiumName), std::string("SUKRU SARACOGLU"));
         assertEqual(fb.capacityLevel, uint8_t{ 5 });
-        assertEqual(fb.maxCapacity, uint32_t{ 45000 });
+        assertEqual(fb.maxCapacity, uint32_t{ 26000 });
         assertEqual(fb.ticketPrice, int32_t{ 10 }); // 1996/97 Div 0 Standard = GBP 10
 
         StadiumData div4 = stadiumInitForClub("SMALL TOWN FC", 3, 8, 202);
@@ -949,20 +949,40 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
         assertEqual(getStadiumTicketPriceForDivision(3, TicketPolicy::kCheap), int32_t{ 3 });
         assertEqual(getStadiumTicketPriceForDivision(3, TicketPolicy::kExpensive), int32_t{ 7 });
 
-        // Upgrade quotes & validation edge cases
-        int64_t cash = 120000;
+        // Last-5 match form dynamic ticket pricing (+2 hot streak / -2 cold slump)
+        StadiumData formClub = div4;
+        assertEqual(getStadiumFormScore(formClub), 0);
+        assertEqual(getEffectiveStadiumTicketPrice(formClub, 3), int32_t{ 5 });
+        for (int w = 0; w < 5; ++w) stadiumRecordMatchForm(formClub, 2, 0);
+        assertEqual(std::string(formClub.recentForm), std::string("WWWWW"));
+        assertEqual(getStadiumFormScore(formClub), 5);
+        assertEqual(getStadiumFormTicketAdjustment(formClub), int32_t{ 2 });
+        assertEqual(getEffectiveStadiumTicketPrice(formClub, 3), int32_t{ 7 }); // 5 + 2
+        for (int l = 0; l < 5; ++l) stadiumRecordMatchForm(formClub, 0, 2);
+        assertEqual(std::string(formClub.recentForm), std::string("LLLLL"));
+        assertEqual(getStadiumFormTicketAdjustment(formClub), int32_t{ -2 });
+        assertEqual(getEffectiveStadiumTicketPrice(formClub, 3), int32_t{ 3 }); // 5 - 2
+
+        // Upgrade quotes & validation edge cases (V2: L2 = 200K & 10 matches, Facilities L2 = 125K & 8 matches)
+        int64_t cash = 150000;
         auto qPoor = stadiumGetUpgradeQuote(div4, StadiumModuleType::kCapacity, cash);
         assertTrue(qPoor.status == StadiumUpgradeStatus::kInsufficientFunds);
-        assertEqual(qPoor.cost, int32_t{ 150000 });
+        assertEqual(qPoor.cost, int32_t{ 200000 });
+        assertEqual(qPoor.buildMatches, uint8_t{ 10 });
         assertFalse(stadiumStartUpgrade(div4, cash, StadiumModuleType::kCapacity));
-        assertEqual(cash, int64_t{ 120000 });
+        assertEqual(cash, int64_t{ 150000 });
+
+        auto qMed = stadiumGetUpgradeQuote(div4, StadiumModuleType::kMedical, cash);
+        assertTrue(qMed.status == StadiumUpgradeStatus::kOk);
+        assertEqual(qMed.cost, int32_t{ 125000 });
+        assertEqual(qMed.buildMatches, uint8_t{ 8 });
 
         cash = 500000;
         auto qOk = stadiumGetUpgradeQuote(div4, StadiumModuleType::kCapacity, cash);
         assertTrue(qOk.status == StadiumUpgradeStatus::kOk);
-        assertEqual(qOk.buildMatches, uint8_t{ 2 });
+        assertEqual(qOk.buildMatches, uint8_t{ 10 });
         assertTrue(stadiumStartUpgrade(div4, cash, StadiumModuleType::kCapacity));
-        assertEqual(cash, int64_t{ 350000 });
+        assertEqual(cash, int64_t{ 300000 });
         assertTrue(div4.activeProject.isActive);
 
         // Concurrent construction blocked
@@ -970,16 +990,17 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
         assertTrue(qBusy.status == StadiumUpgradeStatus::kConstructionInProgress);
         assertFalse(stadiumStartUpgrade(div4, cash, StadiumModuleType::kPitch));
 
-        // Construction countdown & completion
+        // 10-match construction countdown & completion
         StadiumModuleType doneMod = StadiumModuleType::kPitch;
         uint8_t doneLvl = 0;
-        assertFalse(stadiumAdvanceConstruction(div4, doneMod, doneLvl));
+        for (int step = 0; step < 9; ++step)
+            assertFalse(stadiumAdvanceConstruction(div4, doneMod, doneLvl));
         assertEqual(div4.activeProject.matchesRemaining, uint8_t{ 1 });
         assertTrue(stadiumAdvanceConstruction(div4, doneMod, doneLvl));
         assertTrue(doneMod == StadiumModuleType::kCapacity);
         assertEqual(doneLvl, uint8_t{ 2 });
         assertEqual(div4.capacityLevel, uint8_t{ 2 });
-        assertEqual(div4.maxCapacity, uint32_t{ 12000 });
+        assertEqual(div4.maxCapacity, uint32_t{ 8000 });
         assertFalse(div4.activeProject.isActive);
 
         // Max level check
@@ -991,14 +1012,16 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
         assertTrue(stadiumGetUpgradeQuote(maxed, StadiumModuleType::kCapacity, 99999999).status == StadiumUpgradeStatus::kMaxLevel);
         assertTrue(stadiumGetUpgradeQuote(maxed, StadiumModuleType::kPitch, 99999999).status == StadiumUpgradeStatus::kMaxLevel);
 
-        // Dynamic attendance, derby boost, charisma multiplier, commercial bonus, upkeep
+        // Dynamic attendance, derby boost, charisma multiplier, VIP boxes + merch bonus, upkeep
         StadiumMatchdayReport derbyRep = stadiumCalculateMatchday(fb, 0, 1, 2, true, 95, "GALATASARAY");
-        assertEqual(derbyRep.attendance, uint32_t{ 45000 }); // capped at maxCapacity
+        assertEqual(derbyRep.attendance, uint32_t{ 26000 }); // capped at maxCapacity
         assertTrue(derbyRep.isSellout);
         assertTrue(derbyRep.isDerby);
-        assertEqual(derbyRep.ticketRevenue, int64_t{ 450000 }); // 45,000 * GBP 10
-        assertEqual(derbyRep.commercialBonusPct, 30);          // Level 3 -> +30%
-        assertEqual(derbyRep.commercialRevenue, int64_t{ 135000 });
+        assertEqual(derbyRep.ticketRevenue, int64_t{ 260000 }); // 26,000 * GBP 10
+        assertEqual(derbyRep.commercialBonusPct, 30);          // Level 3 -> +30% merch
+        assertEqual(derbyRep.vipBoxRevenue, int64_t{ getStadiumVipBoxIncome(3, 0) });
+        assertEqual(derbyRep.merchRevenue, int64_t{ 78000 });
+        assertEqual(derbyRep.commercialRevenue, derbyRep.vipBoxRevenue + derbyRep.merchRevenue);
         assertEqual(derbyRep.netProfit, derbyRep.ticketRevenue + derbyRep.commercialRevenue - derbyRep.upkeepCost);
 
         // Ticket price elasticity: Expensive lowers attendance vs Cheap
@@ -1010,17 +1033,27 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
         auto repExp = stadiumCalculateMatchday(expClub, 0, 10, 10, false, 50, "MIDCLUB");
         assertTrue(repCheap.attendance > repExp.attendance);
 
-        // Pitch quality override, medical injury reduction, training growth bonus
+        // Pitch quality override, medical prevention/reduction/rehab, VIP sponsor bonus, training growth bonus
         assertEqual(applyStadiumPitchQualityOverrideForLevel(1, 3), 1); // L3 keeps Muddy
         assertEqual(applyStadiumPitchQualityOverrideForLevel(1, 4), 4); // L4 Muddy -> Normal
         assertEqual(applyStadiumPitchQualityOverrideForLevel(2, 5), 5); // L5 Wet -> Dry
+        assertEqual(getMedicalInjuryPreventionPct(1), 0);
+        assertEqual(getMedicalInjuryPreventionPct(5), 55);
+        assertEqual(getMedicalRecoveryBoostPct(3), 20);
+        assertEqual(getMedicalRecoveryBoostPct(5), 50);
         assertEqual(computeMedicalReducedInjuryDays(10, 5), uint8_t{ 5 }); // L5 -> -50%
         assertEqual(computeMedicalReducedInjuryDays(2, 5), uint8_t{ 1 });  // min 1 match
+        assertEqual(getStadiumCommercialSponsorBonusPct(1), 0);
+        assertEqual(getStadiumCommercialSponsorBonusPct(3), 15);
+        assertEqual(getStadiumCommercialSponsorBonusPct(5), 30);
         assertTrue(std::abs(getTrainingGrowthBonusFraction(5) - 0.25) < 0.001);
 
-        // Sidecar .std save/load round-trip
+        // Sidecar .std save/load round-trip (including recentForm!)
         div4.ticketPolicy = TicketPolicy::kExpensive;
         div4.ticketPrice = 7;
+        stadiumRecordMatchForm(div4, 3, 0);
+        stadiumRecordMatchForm(div4, 1, 1);
+        stadiumRecordMatchForm(div4, 2, 0);
         div4.seasonTotalAttendance = 42000;
         div4.seasonGateRevenue = 315000;
         div4.seasonUpkeepPaid = 20000;
@@ -1033,8 +1066,9 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
         const auto& loaded = getCurrentCareerStadium();
         assertTrue(loaded.initialized);
         assertEqual(loaded.capacityLevel, uint8_t{ 2 });
-        assertEqual(loaded.maxCapacity, uint32_t{ 12000 });
+        assertEqual(loaded.maxCapacity, uint32_t{ 8000 });
         assertTrue(loaded.ticketPolicy == TicketPolicy::kExpensive);
+        assertEqual(std::string(loaded.recentForm), std::string("WDW"));
         assertEqual(loaded.seasonTotalAttendance, uint32_t{ 42000 });
         assertEqual(loaded.seasonGateRevenue, int64_t{ 315000 });
         assertEqual(loaded.seasonHomeMatches, uint16_t{ 4 });

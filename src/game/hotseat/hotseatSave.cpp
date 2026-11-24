@@ -611,6 +611,16 @@ bool HotseatCareerManager::saveToFile(const std::string& path)
             return false;
     }
 
+    static constexpr char kStadiumFormTrailerTag[4] = { 'S', 'T', 'F', 'M' };
+    out.write(kStadiumFormTrailerTag, 4);
+    if (!out.good())
+        return false;
+    for (int i = 0; i < m_numPlayers; ++i) {
+        out.write(m_players[i].stadium.recentForm, sizeof(m_players[i].stadium.recentForm));
+        if (!out.good())
+            return false;
+    }
+
     out.flush();
     if (!out.good())
         return false;
@@ -967,6 +977,21 @@ bool HotseatCareerManager::loadFromFile(const std::string& path)
                             }
                             mc.isActive = (actB != 0 && typB >= 1 && typB <= 5);
                             mc.type = mc.isActive ? static_cast<MultiMatchContractType>(typB) : MultiMatchContractType::kNone;
+                        }
+                        char stfmTag[4] = {};
+                        if (in.read(stfmTag, 4) && std::memcmp(stfmTag, "STFM", 4) == 0) {
+                            for (int i = 0; i < m_numPlayers; ++i) {
+                                auto& rf = m_players[i].stadium.recentForm;
+                                in.read(rf, sizeof(rf));
+                                rf[sizeof(rf) - 1] = '\0';
+                                if (!in.good()) {
+                                    std::memset(rf, 0, sizeof(rf));
+                                    in.clear();
+                                    break;
+                                }
+                            }
+                        } else {
+                            in.clear();
                         }
                     } else {
                         in.clear();

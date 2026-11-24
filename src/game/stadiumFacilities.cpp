@@ -36,27 +36,48 @@ constexpr uint8_t kMaxCapacityLevel = 10;
 constexpr uint8_t kMaxFacilityLevel = 5;
 
 constexpr std::array<uint32_t, 10> kCapacityByLevel = {
-    5000, 12000, 20000, 30000, 45000, 52000, 60000, 68000, 76000, 85000
+    5000, 8000, 12500, 18500, 26000, 36000, 48000, 60000, 72000, 85000
 };
 
-// Target level 2..10 upgrade cost in GBP
+// Target level 2..10 upgrade cost in GBP (tuned for meaningful Division 4 -> Top Flight progression)
 constexpr std::array<int32_t, 9> kCapacityUpgradeCosts = {
-    150000, 400000, 850000, 1600000, 2500000, 4000000, 6000000, 8500000, 12000000
+    200000, 450000, 900000, 1600000, 2600000, 4000000, 6000000, 8500000, 12000000
 };
 
 // Target level 2..5 upgrade cost in GBP for Pitch, Training, Medical, Commercial
 constexpr std::array<int32_t, 4> kFacilityUpgradeCosts = {
-    100000, 250000, 500000, 1000000
+    125000, 275000, 550000, 1100000
 };
 
-// Build duration (matches) by target level 2..10
-constexpr std::array<uint8_t, 9> kBuildMatchesByTargetLevel = {
-    2, 3, 4, 5, 6, 6, 7, 7, 8
+// Realistic build duration (matches): Capacity L2..L10 (10..28 matches), Facilities L2..L5 (8..18 matches)
+constexpr std::array<uint8_t, 9> kCapacityBuildMatchesByTarget = {
+    10, 12, 14, 16, 18, 20, 22, 25, 28
+};
+constexpr std::array<uint8_t, 4> kFacilityBuildMatchesByTarget = {
+    8, 10, 14, 18
 };
 
 // Stand matchday upkeep by capacity level 1..10
 constexpr std::array<int32_t, 10> kStandUpkeepByLevel = {
-    2000, 5000, 12000, 22000, 38000, 55000, 75000, 95000, 118000, 140000
+    2000, 4500, 9500, 18000, 30000, 48000, 68000, 90000, 115000, 140000
+};
+
+// Guaranteed flat VIP corporate box baseline per home match (Div 4 base; scaled by division tier)
+constexpr std::array<int32_t, 5> kVipBaseBoxIncome = {
+    1500, 4000, 8000, 14000, 22000
+};
+
+// Commercial/VIP bonus % applied on top of Career Sponsor Challenge & Contract payouts (L1..L5)
+constexpr std::array<int, 5> kCommercialSponsorBonusPct = {
+    0, 8, 15, 22, 30
+};
+
+// Medical Center injury prevention % (new knocks turned into 0-match minor knocks) & weekly rehab boost % (L1..L5)
+constexpr std::array<int, 5> kMedicalPreventionPct = {
+    0, 15, 28, 42, 55
+};
+constexpr std::array<int, 5> kMedicalRecoveryBoostPct = {
+    0, 0, 20, 35, 50
 };
 
 // 1996/97 SWOS-balanced division ticket prices (GBP): [divisionTier 0..3][TicketPolicy 0..2]
@@ -435,6 +456,98 @@ int32_t getStadiumTicketPriceForDivision(int divisionTier, TicketPolicy policy)
     return kTicketPricesByDivision[divIdx][polIdx];
 }
 
+int getStadiumFormScore(const StadiumData& stadium)
+{
+    int score = 0;
+    for (int i = 0; i < 5 && stadium.recentForm[i] != '\0'; ++i) {
+        char ch = static_cast<char>(std::toupper(static_cast<unsigned char>(stadium.recentForm[i])));
+        if (ch == 'W') ++score;
+        else if (ch == 'L') --score;
+    }
+    return score;
+}
+
+int32_t getStadiumFormTicketAdjustment(const StadiumData& stadium)
+{
+    int score = getStadiumFormScore(stadium);
+    if (score >= 4) return 2;
+    if (score == 3) return 1;
+    if (score <= -4) return -2;
+    if (score == -3) return -1;
+    return 0;
+}
+
+int32_t getEffectiveStadiumTicketPrice(const StadiumData& stadium, int divisionTier)
+{
+    int32_t base = getStadiumTicketPriceForDivision(divisionTier, stadium.ticketPolicy);
+    return std::max<int32_t>(2, base + getStadiumFormTicketAdjustment(stadium));
+}
+
+double getStadiumFormDemandMultiplier(const StadiumData& stadium)
+{
+    int score = getStadiumFormScore(stadium);
+    if (score >= 4) return 1.12;
+    if (score == 3) return 1.06;
+    if (score <= -4) return 0.88;
+    if (score == -3) return 0.94;
+    return 1.00;
+}
+
+void stadiumRecordMatchForm(StadiumData& stadium, int clubGoals, int opponentGoals)
+{
+    char tag = (clubGoals > opponentGoals) ? 'W' : ((clubGoals < opponentGoals) ? 'L' : 'D');
+    size_t len = 0;
+    while (len < 5 && stadium.recentForm[len] != '\0')
+        ++len;
+    if (len < 5) {
+        stadium.recentForm[len] = tag;
+        stadium.recentForm[len + 1] = '\0';
+    } else {
+        for (int i = 0; i < 4; ++i)
+            stadium.recentForm[i] = stadium.recentForm[i + 1];
+        stadium.recentForm[4] = tag;
+        stadium.recentForm[5] = '\0';
+    }
+}
+
+int32_t getStadiumVipBoxIncome(uint8_t commercialLevel, int divisionTier)
+{
+    int idx = std::clamp<int>(static_cast<int>(commercialLevel) - 1, 0, 4);
+    int div = std::clamp(divisionTier, 0, 3);
+    static constexpr double kDivScale[4] = { 3.2, 2.0, 1.3, 1.0 };
+    double raw = static_cast<double>(kVipBaseBoxIncome[static_cast<size_t>(idx)]) * kDivScale[div];
+    int32_t rounded = static_cast<int32_t>(std::llround(raw / 500.0) * 500LL);
+    return std::max<int32_t>(500, rounded);
+}
+
+int getStadiumCommercialSponsorBonusPct(uint8_t commercialLevel)
+{
+    int idx = std::clamp<int>(static_cast<int>(commercialLevel) - 1, 0, 4);
+    return kCommercialSponsorBonusPct[static_cast<size_t>(idx)];
+}
+
+int getCurrentCareerCommercialSponsorBonusPct()
+{
+    if (swos.g_gameType != kGameTypeCareer || swos.g_trainingGame || HotseatInternal::isVmNationalSelector())
+        return 0;
+    ensureCurrentCareerStadiumInitialized();
+    if (!s_stadium.initialized)
+        return 0;
+    return getStadiumCommercialSponsorBonusPct(s_stadium.commercialLevel);
+}
+
+int getMedicalInjuryPreventionPct(uint8_t medicalLevel)
+{
+    int idx = std::clamp<int>(static_cast<int>(medicalLevel) - 1, 0, 4);
+    return kMedicalPreventionPct[static_cast<size_t>(idx)];
+}
+
+int getMedicalRecoveryBoostPct(uint8_t medicalLevel)
+{
+    int idx = std::clamp<int>(static_cast<int>(medicalLevel) - 1, 0, 4);
+    return kMedicalRecoveryBoostPct[static_cast<size_t>(idx)];
+}
+
 int32_t getStadiumMatchdayUpkeep(const StadiumData& stadium)
 {
     int capIdx = std::clamp<int>(static_cast<int>(stadium.capacityLevel) - 1, 0, 9);
@@ -546,11 +659,11 @@ StadiumUpgradeQuote stadiumGetUpgradeQuote(const StadiumData& stadium, StadiumMo
     int costIdx = static_cast<int>(q.targetLevel) - 2;
     if (module == StadiumModuleType::kCapacity) {
         q.cost = kCapacityUpgradeCosts[static_cast<size_t>(std::clamp(costIdx, 0, 8))];
-        q.buildMatches = kBuildMatchesByTargetLevel[static_cast<size_t>(std::clamp(costIdx, 0, 8))];
+        q.buildMatches = kCapacityBuildMatchesByTarget[static_cast<size_t>(std::clamp(costIdx, 0, 8))];
         q.previewText = formatNumberCommas(getStadiumCapacityForLevel(q.targetLevel)) + " seats";
     } else {
         q.cost = kFacilityUpgradeCosts[static_cast<size_t>(std::clamp(costIdx, 0, 3))];
-        q.buildMatches = kBuildMatchesByTargetLevel[static_cast<size_t>(std::clamp(costIdx, 0, 3))];
+        q.buildMatches = kFacilityBuildMatchesByTarget[static_cast<size_t>(std::clamp(costIdx, 0, 3))];
         switch (module) {
         case StadiumModuleType::kPitch:
             q.previewText = std::string(getPitchQualityLabel(q.targetLevel)) +
@@ -559,12 +672,21 @@ StadiumUpgradeQuote stadiumGetUpgradeQuote(const StadiumData& stadium, StadiumMo
         case StadiumModuleType::kTraining:
             q.previewText = "+" + std::to_string(q.targetLevel * 5) + "% annual skill growth";
             break;
-        case StadiumModuleType::kMedical:
-            q.previewText = "-" + std::to_string(q.targetLevel * 10) + "% injury duration";
+        case StadiumModuleType::kMedical: {
+            int prevPct = getMedicalInjuryPreventionPct(q.targetLevel);
+            int rehabPct = getMedicalRecoveryBoostPct(q.targetLevel);
+            q.previewText = std::to_string(prevPct) + "% prevent, -" + std::to_string(q.targetLevel * 10) + "% time" +
+                            (rehabPct > 0 ? (", " + std::to_string(rehabPct) + "% rehab") : "");
             break;
-        case StadiumModuleType::kCommercial:
-            q.previewText = "+" + std::to_string(q.targetLevel * 10) + "% matchday hospitality";
+        }
+        case StadiumModuleType::kCommercial: {
+            int div = readVmDivisionTier();
+            int32_t vip = getStadiumVipBoxIncome(q.targetLevel, div);
+            int sponPct = getStadiumCommercialSponsorBonusPct(q.targetLevel);
+            q.previewText = formatPoundsShort(vip) + " VIP boxes + " + std::to_string(q.targetLevel * 10) +
+                            "% merch + +" + std::to_string(sponPct) + "% Sponsors";
             break;
+        }
         default:
             break;
         }
@@ -654,20 +776,25 @@ StadiumMatchdayReport stadiumCalculateMatchday(
     else if (stadium.ticketPolicy == TicketPolicy::kExpensive)
         mPrice = 0.78;
 
-    // Coach Charisma multiplier M_charisma (0.90 .. 1.15)
+    // Coach Charisma multiplier M_charisma (0.90 .. 1.15) & Last-5 Form demand multiplier (0.88 .. 1.12)
     double mCharisma = getPressAttendanceMultiplier(charismaPoints);
+    double mForm = getStadiumFormDemandMultiplier(stadium);
 
-    double rawAtt = std::floor(static_cast<double>(rep.maxCapacity) * fBase * mOpp * mPrice * mCharisma);
+    double rawAtt = std::floor(static_cast<double>(rep.maxCapacity) * fBase * mOpp * mPrice * mCharisma * mForm);
     rep.attendance = static_cast<uint32_t>(std::clamp<double>(rawAtt, 1000.0, static_cast<double>(rep.maxCapacity)));
     rep.fillPct = static_cast<int>(std::lround((static_cast<double>(rep.attendance) * 100.0) /
                                                static_cast<double>(rep.maxCapacity)));
     rep.isSellout = (rep.fillPct >= 95);
 
-    rep.ticketPrice = getStadiumTicketPriceForDivision(divisionTier, stadium.ticketPolicy);
+    rep.baseTicketPrice = getStadiumTicketPriceForDivision(divisionTier, stadium.ticketPolicy);
+    rep.formTicketDelta = getStadiumFormTicketAdjustment(stadium);
+    rep.ticketPrice = getEffectiveStadiumTicketPrice(stadium, divisionTier);
     rep.ticketRevenue = static_cast<int64_t>(rep.attendance) * static_cast<int64_t>(rep.ticketPrice);
     rep.commercialBonusPct = std::clamp<int>(static_cast<int>(stadium.commercialLevel), 1, 5) * 10;
-    rep.commercialRevenue = static_cast<int64_t>(std::llround(
+    rep.vipBoxRevenue = static_cast<int64_t>(getStadiumVipBoxIncome(stadium.commercialLevel, divisionTier));
+    rep.merchRevenue = static_cast<int64_t>(std::llround(
         static_cast<double>(rep.ticketRevenue) * (static_cast<double>(rep.commercialBonusPct) / 100.0)));
+    rep.commercialRevenue = rep.vipBoxRevenue + rep.merchRevenue;
     rep.upkeepCost = static_cast<int64_t>(getStadiumMatchdayUpkeep(stadium));
     rep.netProfit = rep.ticketRevenue + rep.commercialRevenue - rep.upkeepCost;
 
@@ -741,7 +868,7 @@ void ensureCurrentCareerStadiumInitialized()
             static_cast<unsigned>(s_stadium.pitchLevel), static_cast<unsigned>(s_stadium.trainingLevel),
             static_cast<unsigned>(s_stadium.medicalLevel), static_cast<unsigned>(s_stadium.commercialLevel));
     } else {
-        s_stadium.ticketPrice = getStadiumTicketPriceForDivision(div, s_stadium.ticketPolicy);
+        s_stadium.ticketPrice = getEffectiveStadiumTicketPrice(s_stadium, div);
     }
 }
 
@@ -870,11 +997,30 @@ void onPostMatchStadiumUpdate(bool isPlayedMatch)
     }
     s_matchTrackingActive = false;
 
-    // 1. Medical Center: reduce any newly incurred injuries in human career squad
+    // 0. Record last-5 match form & update dynamic effective ticket price
+    {
+        int g1 = isPlayedMatch
+            ? static_cast<int>(swos.statsTeam1Goals)
+            : static_cast<int>(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[379094]));
+        int g2 = isPlayedMatch
+            ? static_cast<int>(swos.statsTeam2Goals)
+            : static_cast<int>(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[379096]));
+        int clubG = s_matchHumanIsHome ? g1 : g2;
+        int oppG = s_matchHumanIsHome ? g2 : g1;
+        stadiumRecordMatchForm(s_stadium, clubG, oppG);
+        s_stadium.ticketPrice = getEffectiveStadiumTicketPrice(s_stadium, s_matchClubDivision);
+    }
+
+    // 1. Medical Center: prevent knocks (L2-L5), shorten new injuries (L1-L5), & boost weekly rehab (L3-L5)
+    std::vector<std::string> medicalNotes;
     if (s_preMatchInjuryCaptured) {
         const uint8_t *matchPlayers = &SwosVM::g_memByte[CareerOffsets::kCurrentMatchPlayers];
         uint16_t numPlayers = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCareerNumPlayers]);
         uint16_t count = std::min<uint16_t>(numPlayers, kCurrentMatchPlayersSize);
+        int preventPct = getMedicalInjuryPreventionPct(s_stadium.medicalLevel);
+        int rehabPct = getMedicalRecoveryBoostPct(s_stadium.medicalLevel);
+        uint32_t medSeed = static_cast<uint32_t>(SDL_GetTicks() ^ (s_stadium.seasonHomeMatches * 131u + 17u));
+
         for (uint16_t i = 0; i < count; ++i) {
             uint8_t slot = matchPlayers[i];
             if (slot >= kCurrentMatchPlayersSize)
@@ -886,14 +1032,33 @@ void onPostMatchStadiumUpdate(bool isPlayedMatch)
             auto *pf = reinterpret_cast<PlayerFile *>(&SwosVM::g_memByte[ofs]);
             uint8_t prevInj = (s_preMatchInjuryBytes[slot] >> 4) & 0x0Fu;
             uint8_t curInj = (pf->cardsInjuries >> 4) & 0x0Fu;
-            if (curInj > prevInj && curInj > 1) {
-                uint8_t reduced = computeMedicalReducedInjuryDays(curInj, s_stadium.medicalLevel);
-                if (reduced < curInj) {
-                    pf->cardsInjuries = static_cast<uint8_t>((pf->cardsInjuries & 0x0Fu) | ((reduced & 0x0Fu) << 4));
-                    logInfo("Medical Center (Lvl %u) shortened %s's injury from %u to %u matches",
-                        static_cast<unsigned>(s_stadium.medicalLevel), pf->playerName,
-                        static_cast<unsigned>(curInj), static_cast<unsigned>(reduced));
+            uint32_t roll = (medSeed + static_cast<uint32_t>(slot + 3) * 2654435761u) % 100u;
+
+            if (curInj > prevInj) {
+                if (preventPct > 0 && static_cast<int>(roll) < preventPct) {
+                    pf->cardsInjuries = static_cast<uint8_t>(pf->cardsInjuries & 0x0Fu);
+                    std::string note = std::string("KNOCK CLEARED: ") + pf->playerName +
+                                       " cleared fit by Medical Lab (0 matches missed!)";
+                    medicalNotes.push_back(note);
+                    logInfo("Medical Center (Lvl %u) %s", static_cast<unsigned>(s_stadium.medicalLevel), note.c_str());
+                } else if (curInj > 1) {
+                    uint8_t reduced = computeMedicalReducedInjuryDays(curInj, s_stadium.medicalLevel);
+                    if (reduced < curInj) {
+                        pf->cardsInjuries = static_cast<uint8_t>((pf->cardsInjuries & 0x0Fu) | ((reduced & 0x0Fu) << 4));
+                        std::string note = std::string("INJURY SHORTENED: ") + pf->playerName +
+                                           " recovery cut from " + std::to_string(curInj) +
+                                           " to " + std::to_string(reduced) + " matches";
+                        medicalNotes.push_back(note);
+                        logInfo("Medical Center (Lvl %u) %s", static_cast<unsigned>(s_stadium.medicalLevel), note.c_str());
+                    }
                 }
+            } else if (prevInj > 1 && curInj > 1 && rehabPct > 0 && static_cast<int>(roll) < rehabPct) {
+                uint8_t faster = static_cast<uint8_t>(curInj - 1);
+                pf->cardsInjuries = static_cast<uint8_t>((pf->cardsInjuries & 0x0Fu) | ((faster & 0x0Fu) << 4));
+                std::string note = std::string("REHAB BOOST: ") + pf->playerName +
+                                   " ahead of schedule (-1 match -> " + std::to_string(faster) + " left)";
+                medicalNotes.push_back(note);
+                logInfo("Medical Center (Lvl %u) %s", static_cast<unsigned>(s_stadium.medicalLevel), note.c_str());
             }
         }
         s_preMatchInjuryCaptured = false;
@@ -957,26 +1122,35 @@ void onPostMatchStadiumUpdate(bool isPlayedMatch)
             static_cast<int>(rep.attendance),
             static_cast<int>(rep.maxCapacity));
 
+        rep.medicalNotes = medicalNotes;
+        if (!medicalNotes.empty()) {
+            if (!rep.notableReason.empty())
+                rep.notableReason += " + ";
+            rep.notableReason += "MEDICAL LAB REPORT";
+        }
         s_lastReport = rep;
-        // User preference #2: show popup ONLY on notable home matches (sellout, derby, or upgrade completed)
-        s_pendingNotableReportPopup = isPlayedMatch && (rep.isSellout || rep.isDerby || rep.constructionCompleted);
+        // Show popup on notable home matches (sellout, derby, upgrade completed, or visible Medical Center save!)
+        s_pendingNotableReportPopup = isPlayedMatch &&
+            (rep.isSellout || rep.isDerby || rep.constructionCompleted || !medicalNotes.empty());
 
-        logInfo("Stadium home gate (%s vs %s): %u/%u (%d%%), Ticket=%s, VIP(+%d%%)=%s, Upkeep=-%s, Net=%s",
+        logInfo("Stadium home gate (%s vs %s): %u/%u (%d%%), Ticket=%s, VIP=%s+Merch(+%d%%)=%s, Upkeep=-%s, Net=%s",
             rep.stadiumName.c_str(), rep.opponentName.c_str(),
             static_cast<unsigned>(rep.attendance), static_cast<unsigned>(rep.maxCapacity), rep.fillPct,
-            formatPoundsExact(rep.ticketRevenue).c_str(), rep.commercialBonusPct,
-            formatPoundsExact(rep.commercialRevenue).c_str(), formatPoundsExact(rep.upkeepCost).c_str(),
+            formatPoundsExact(rep.ticketRevenue).c_str(),
+            formatPoundsExact(rep.vipBoxRevenue).c_str(), rep.commercialBonusPct,
+            formatPoundsExact(rep.merchRevenue).c_str(), formatPoundsExact(rep.upkeepCost).c_str(),
             formatSignedPoundsExact(rep.netProfit).c_str());
-    } else if (completedBuild) {
-        // Away match finished a construction project — still notify with completion banner!
+    } else if (completedBuild || !medicalNotes.empty()) {
+        // Away match finished a construction project or Medical Center intervened — show concise report!
         StadiumMatchdayReport rep;
         rep.valid = true;
         rep.isHomeMatch = false;
         rep.stadiumName = s_stadium.stadiumName;
-        rep.constructionCompleted = true;
-        rep.completedModuleName = getStadiumModuleName(completedMod);
+        rep.constructionCompleted = completedBuild;
+        rep.completedModuleName = completedBuild ? getStadiumModuleName(completedMod) : "";
         rep.completedNewLevel = completedLvl;
-        rep.notableReason = "UPGRADE COMPLETED";
+        rep.medicalNotes = medicalNotes;
+        rep.notableReason = completedBuild ? "UPGRADE COMPLETED" : "MEDICAL LAB REPORT";
         s_lastReport = rep;
         s_pendingNotableReportPopup = isPlayedMatch;
     }
@@ -992,7 +1166,9 @@ void showPostMatchStadiumReportIfNotable()
 
 #ifndef SWOS_TEST
     const auto& r = s_lastReport;
-    std::string title = r.isHomeMatch ? (r.stadiumName + " - MATCHDAY REPORT") : "STADIUM UPGRADE COMPLETE!";
+    std::string title = r.isHomeMatch
+        ? (r.stadiumName + " - MATCHDAY REPORT")
+        : (r.constructionCompleted ? "STADIUM UPGRADE COMPLETE!" : "MEDICAL CENTER REPORT");
     std::string body;
 
     if (r.constructionCompleted) {
@@ -1001,20 +1177,31 @@ void showPostMatchStadiumReportIfNotable()
                 std::to_string(r.completedNewLevel) + "!\n\n";
     }
 
+    if (!r.medicalNotes.empty()) {
+        body += "MEDICAL CENTER (LVL " + std::to_string(s_stadium.medicalLevel) + "):\n";
+        for (const auto& note : r.medicalNotes)
+            body += "  - " + note + "\n";
+        body += "\n";
+    }
+
     if (r.isHomeMatch) {
         if (!r.notableReason.empty())
             body += "EVENT: " + r.notableReason + "\n";
         body += "MATCH: HOME vs " + r.opponentName + "\n";
         body += "ATTENDANCE: " + formatNumberCommas(r.attendance) + " / " +
                 formatNumberCommas(r.maxCapacity) + " (" + std::to_string(r.fillPct) + "% FULL)\n\n";
+        std::string formTag;
+        if (r.formTicketDelta != 0)
+            formTag = (r.formTicketDelta > 0 ? " [+" : " [") + std::to_string(r.formTicketDelta) + " FORM]";
         body += "TICKET REVENUE (" + formatNumberCommas(r.attendance) + " x GBP " +
-                std::to_string(r.ticketPrice) + "): " + formatPoundsExact(r.ticketRevenue) + "\n";
-        body += "COMMERCIAL & VIP BONUS (+" + std::to_string(r.commercialBonusPct) + "%): +" +
-                formatPoundsExact(r.commercialRevenue) + "\n";
+                std::to_string(r.ticketPrice) + formTag + "): " + formatPoundsExact(r.ticketRevenue) + "\n";
+        body += "VIP BOXES (FLAT): +" + formatPoundsExact(r.vipBoxRevenue) +
+                "  |  MERCH (+" + std::to_string(r.commercialBonusPct) + "%): +" +
+                formatPoundsExact(r.merchRevenue) + "\n";
         body += "STADIUM MAINTENANCE UPKEEP: -" + formatPoundsExact(r.upkeepCost) + "\n\n";
         body += "NET MATCHDAY STADIUM PROFIT: " + formatSignedPoundsExact(r.netProfit) + "\n";
         body += "UPDATED BANK BALANCE: " + formatPoundsExact(readVmClubCash());
-    } else {
+    } else if (r.constructionCompleted) {
         body += "Your club's new " + r.completedModuleName + " (Level " +
                 std::to_string(r.completedNewLevel) + ") is now fully operational!\n\n";
         body += "Press F6 in the Career Hub to inspect all Stadium & Facilities upgrades.";
@@ -1124,6 +1311,7 @@ bool saveStadiumSidecar(const std::string& path)
     ini.SetLongValue("stadium", "commercialLevel", s_stadium.commercialLevel);
     ini.SetLongValue("stadium", "ticketPolicy", static_cast<long>(s_stadium.ticketPolicy));
     ini.SetLongValue("stadium", "ticketPrice", s_stadium.ticketPrice);
+    ini.SetValue("stadium", "recentForm", s_stadium.recentForm);
 
     ini.SetBoolValue("project", "isActive", s_stadium.activeProject.isActive);
     ini.SetLongValue("project", "module", static_cast<long>(s_stadium.activeProject.module));
@@ -1160,11 +1348,21 @@ bool loadStadiumSidecar(const std::string& path)
     d.commercialLevel = static_cast<uint8_t>(std::clamp(ini.GetLongValue("stadium", "commercialLevel", 1), 1L, 5L));
     d.ticketPolicy = static_cast<TicketPolicy>(std::clamp(ini.GetLongValue("stadium", "ticketPolicy", 1), 0L, 2L));
     d.ticketPrice = static_cast<int32_t>(std::clamp(ini.GetLongValue("stadium", "ticketPrice", 10), 1L, 100L));
+    const char *formStr = ini.GetValue("stadium", "recentForm", "");
+    std::memset(d.recentForm, 0, sizeof(d.recentForm));
+    if (formStr) {
+        int outIdx = 0;
+        for (int i = 0; formStr[i] != '\0' && outIdx < 5; ++i) {
+            char ch = static_cast<char>(std::toupper(static_cast<unsigned char>(formStr[i])));
+            if (ch == 'W' || ch == 'D' || ch == 'L')
+                d.recentForm[outIdx++] = ch;
+        }
+    }
 
     d.activeProject.isActive = ini.GetBoolValue("project", "isActive", false);
     d.activeProject.module = static_cast<StadiumModuleType>(std::clamp(ini.GetLongValue("project", "module", 0), 0L, 4L));
     d.activeProject.targetLevel = static_cast<uint8_t>(std::clamp(ini.GetLongValue("project", "targetLevel", 0), 0L, 10L));
-    d.activeProject.matchesRemaining = static_cast<uint8_t>(std::clamp(ini.GetLongValue("project", "matchesRemaining", 0), 0L, 20L));
+    d.activeProject.matchesRemaining = static_cast<uint8_t>(std::clamp(ini.GetLongValue("project", "matchesRemaining", 0), 0L, 40L));
     d.activeProject.costPaid = static_cast<int32_t>(std::max(0L, ini.GetLongValue("project", "costPaid", 0)));
 
     const char *attStr = ini.GetValue("season", "totalAttendance", "0");
@@ -1307,10 +1505,14 @@ static void cycleStadiumTicketPolicyDir(int dir)
     int cur = static_cast<int>(s_stadium.ticketPolicy);
     cur = (cur + dir + 3) % 3;
     s_stadium.ticketPolicy = static_cast<TicketPolicy>(cur);
-    s_stadium.ticketPrice = getStadiumTicketPriceForDivision(readVmDivisionTier(), s_stadium.ticketPolicy);
+    int div = readVmDivisionTier();
+    s_stadium.ticketPrice = getEffectiveStadiumTicketPrice(s_stadium, div);
     syncStadiumToHotseatIfActive();
-    setStatusFeedback("Ticket policy set to " + std::string(getTicketPolicyName(s_stadium.ticketPolicy)) +
-                      " (GBP " + std::to_string(s_stadium.ticketPrice) + ")");
+    int32_t formAdj = getStadiumFormTicketAdjustment(s_stadium);
+    std::string adjStr = (formAdj > 0) ? (" [+" + std::to_string(formAdj) + " FORM]") :
+                         (formAdj < 0) ? (" [" + std::to_string(formAdj) + " FORM]") : "";
+    setStatusFeedback("Ticket policy: " + std::string(getTicketPolicyName(s_stadium.ticketPolicy)) +
+                      " -> GBP " + std::to_string(s_stadium.ticketPrice) + adjStr);
 }
 
 static void cycleStadiumTicketPolicy()
@@ -1423,10 +1625,14 @@ static void drawStadiumFacilitiesMenu()
                 curStat = "LVL " + std::to_string(curLvl) + "/5 (+" + std::to_string(curLvl * 5) + "% GROWTH)";
                 break;
             case StadiumModuleType::kMedical:
-                curStat = "LVL " + std::to_string(curLvl) + "/5 (-" + std::to_string(curLvl * 10) + "% INJURY)";
+                curStat = "LVL " + std::to_string(curLvl) + "/5 (" +
+                          std::to_string(getMedicalInjuryPreventionPct(curLvl)) + "% PREV, -" +
+                          std::to_string(curLvl * 10) + "% INJ)";
                 break;
             case StadiumModuleType::kCommercial:
-                curStat = "LVL " + std::to_string(curLvl) + "/5 (+" + std::to_string(curLvl * 10) + "% VIP REV)";
+                curStat = "LVL " + std::to_string(curLvl) + "/5 (" +
+                          formatPoundsShort(getStadiumVipBoxIncome(curLvl, div)) + " VIP, +" +
+                          std::to_string(getStadiumCommercialSponsorBonusPct(curLvl)) + "% SPON)";
                 break;
             default:
                 break;
@@ -1470,17 +1676,35 @@ static void drawStadiumFacilitiesMenu()
                 fitPx(subLine, px * 0.88f, 294.0f * gameScale), subLine, mutedCol, 220, false);
         }
 
-        // Ticket pricing bar
+        // Ticket pricing + Last-5 Form + Live Home Matchday P&L Breakdown bar (y=141..158)
         StadiumMatchdayReport est = stadiumCalculateMatchday(
             s_stadium, div, estimateClubRankFromSeasonRecord(), 8, false, readCurrentCharismaPoints());
+        std::string formTag;
+        if (est.formTicketDelta > 0)
+            formTag = "+" + std::to_string(est.formTicketDelta) + "F=";
+        else if (est.formTicketDelta < 0)
+            formTag = std::to_string(est.formTicketDelta) + "F=";
         std::string tickLeft = "[T] TICKETS: < " + std::string(getTicketPolicyName(s_stadium.ticketPolicy)) +
-                               " (GBP " + std::to_string(s_stadium.ticketPrice) + ") >";
-        std::string tickRight = "EST. FILL: " + std::to_string(est.fillPct) + "%  |  NET: " +
-                                formatSignedPoundsExact(est.netProfit);
-        drawCompactText(r, atlas, offX + 10.0f * gameScale, offY + 145.5f * gameScale,
-            fitPx(tickLeft, px, 162.0f * gameScale), tickLeft, yellowCol, 255, true);
-        drawCompactTextRightAligned(r, atlas, offX + 310.0f * gameScale, offY + 145.5f * gameScale,
-            fitPx(tickRight, px, 136.0f * gameScale), tickRight, greenCol, 255, false);
+                               " (GBP " + std::to_string(est.baseTicketPrice) +
+                               (formTag.empty() ? "" : (" " + formTag + "GBP " + std::to_string(est.ticketPrice))) + ") >";
+        int fScore = getStadiumFormScore(s_stadium);
+        std::string formDisp = s_stadium.recentForm[0]
+            ? ("FORM(5): " + std::string(s_stadium.recentForm) + " (" + (fScore >= 0 ? "+" : "") + std::to_string(fScore) + ")")
+            : "FORM(5): ----- (0)";
+        SDL_Color formCol = (fScore >= 3) ? greenCol : ((fScore <= -3) ? redCol : cyanCol);
+
+        drawCompactText(r, atlas, offX + 10.0f * gameScale, offY + 142.5f * gameScale,
+            fitPx(tickLeft, px * 0.92f, 195.0f * gameScale), tickLeft, yellowCol, 255, true);
+        drawCompactTextRightAligned(r, atlas, offX + 310.0f * gameScale, offY + 142.5f * gameScale,
+            fitPx(formDisp, px * 0.90f, 102.0f * gameScale), formDisp, formCol, 255, true);
+
+        std::string pnlLine = "EST HOME P&L (" + std::to_string(est.fillPct) + "%): Gate " +
+                              formatPoundsShort(est.ticketRevenue) + " + VIP/Merch " +
+                              formatPoundsShort(est.commercialRevenue) + " - Upkeep " +
+                              formatPoundsShort(est.upkeepCost) + " = " +
+                              formatSignedPoundsExact(est.netProfit);
+        drawCompactText(r, atlas, offX + 10.0f * gameScale, offY + 150.5f * gameScale,
+            fitPx(pnlLine, px * 0.84f, 300.0f * gameScale), pnlLine, (est.netProfit >= 0 ? greenCol : redCol), 240, false);
 
         // Status / Construction / Season summary bar (y=160..179)
         bool showFeedback = (!s_statusFeedback.empty() && (s_confirmingUpgrade || (SDL_GetTicks() - s_statusFeedbackTick) < 5000));
@@ -1572,7 +1796,9 @@ std::string formatStadiumContextForTelemetry()
                       std::to_string(s_stadium.commercialLevel) + "/5). ";
 
     out += "Ticket Policy: " + std::string(getTicketPolicyName(s_stadium.ticketPolicy)) +
-           " (GBP " + std::to_string(s_stadium.ticketPrice) + ")";
+           " (effective GBP " + std::to_string(s_stadium.ticketPrice) + ")";
+    if (s_stadium.recentForm[0] != '\0')
+        out += "; Last-5 Form: " + std::string(s_stadium.recentForm);
     if (s_stadium.ticketPolicy == TicketPolicy::kCheap)
         out += " [supporters appreciate the fair ticket prices]";
     else if (s_stadium.ticketPolicy == TicketPolicy::kExpensive)

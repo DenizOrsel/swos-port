@@ -15,6 +15,7 @@
 #include "menuBackground.h"
 #include "menus.h"
 #include "render.h"
+#include "stadiumFacilities.h"
 #include "stats.h"
 #include "swos.h"
 #include "text.h"
@@ -776,7 +777,9 @@ static void drawSponsorChallengeMenu()
                 oppLine, whiteCol, 255, true);
         }
 
-        std::string bankStr = "Bank: " + formatSponsorPounds(readCurrentClubBalance());
+        int vipPct = getCurrentCareerCommercialSponsorBonusPct();
+        std::string bankStr = (vipPct > 0 ? ("VIP +" + std::to_string(vipPct) + "% | ") : "") +
+                              "Bank: " + formatSponsorPounds(readCurrentClubBalance());
         drawCompactTextRightAligned(r, atlas, offX + 300.0f * gameScale, offY + 14.5f * gameScale, px,
             bankStr, yellowCol, 255, true);
 
@@ -1504,12 +1507,25 @@ void beginSponsorChallengeGeneration(const TeamGame *topTeam, const TeamGame *bo
     int singleCount = s_state.slot5IsContractOffer ? (kSponsorOfferedCount - 1) : kSponsorOfferedCount;
     s_state.offeredSingleMatchCount = singleCount;
 
+    auto applyVipSponsorBoost = [&](int32_t baseAmt) -> int32_t {
+        int vipPct = getCurrentCareerCommercialSponsorBonusPct();
+        if (vipPct <= 0) return baseAmt;
+        int32_t boosted = baseAmt + (baseAmt * vipPct) / 100;
+        return ((boosted + 500) / 1000) * 1000;
+    };
+
     auto offline = generateOfflineSponsorChallenges(
         s_matchClubName, s_matchOpponentName, s_matchDivisionTier, s_matchStarters, s_matchSeed, singleCount);
-    for (int i = 0; i < singleCount && i < static_cast<int>(offline.size()); ++i)
+    for (int i = 0; i < singleCount && i < static_cast<int>(offline.size()); ++i) {
+        offline[i].rewardAmount = applyVipSponsorBoost(offline[i].rewardAmount);
         s_state.offered[i] = offline[i];
-    if (s_state.slot5IsContractOffer)
-        s_state.offeredContract = generateOfflineMultiMatchContract(s_matchDivisionTier, s_matchSeed / 3u);
+    }
+    if (s_state.slot5IsContractOffer) {
+        auto mc = generateOfflineMultiMatchContract(s_matchDivisionTier, s_matchSeed / 3u);
+        mc.rewardAmount = applyVipSponsorBoost(mc.rewardAmount);
+        mc.penaltyAmount = ((mc.rewardAmount / 2 + 500) / 1000) * 1000;
+        s_state.offeredContract = std::move(mc);
+    }
     s_state.offersReady = true;
 
     if (!cfg.enabled)
@@ -1591,8 +1607,14 @@ void showPreMatchSponsorChallengeMenuIfReady()
             int singleCount = s_state.slot5IsContractOffer ? (kSponsorOfferedCount - 1) : kSponsorOfferedCount;
             auto parsed = parseLlmSponsorChallenges(
                 reply, s_matchClubName, s_matchOpponentName, s_matchDivisionTier, s_matchStarters, s_matchSeed, singleCount);
-            for (int i = 0; i < singleCount && i < static_cast<int>(parsed.size()); ++i)
+            int vipPct = getCurrentCareerCommercialSponsorBonusPct();
+            for (int i = 0; i < singleCount && i < static_cast<int>(parsed.size()); ++i) {
+                if (vipPct > 0) {
+                    int32_t boosted = parsed[i].rewardAmount + (parsed[i].rewardAmount * vipPct) / 100;
+                    parsed[i].rewardAmount = ((boosted + 500) / 1000) * 1000;
+                }
                 s_state.offered[i] = parsed[i];
+            }
         }
     }
 

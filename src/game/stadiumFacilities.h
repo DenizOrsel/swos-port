@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 struct TeamGame;
 
@@ -49,6 +50,9 @@ struct StadiumData {
     int32_t ticketPrice = 10;
     ConstructionProject activeProject;
 
+    // Last-5 match results ('W', 'D', 'L', oldest -> newest) for dynamic form-based ticket pricing
+    char recentForm[6] = {};
+
     // Seasonal tracking
     uint32_t seasonTotalAttendance = 0;
     int64_t seasonGateRevenue = 0;
@@ -78,20 +82,41 @@ struct StadiumMatchdayReport {
     uint32_t attendance = 0;
     uint32_t maxCapacity = 0;
     int fillPct = 0;
+    int32_t baseTicketPrice = 0;
+    int32_t formTicketDelta = 0;
     int32_t ticketPrice = 0;
     int64_t ticketRevenue = 0;
     int commercialBonusPct = 0;
-    int64_t commercialRevenue = 0;
+    int64_t vipBoxRevenue = 0;
+    int64_t merchRevenue = 0;
+    int64_t commercialRevenue = 0; // vipBoxRevenue + merchRevenue
     int64_t upkeepCost = 0;
     int64_t netProfit = 0;
     std::string completedModuleName;
     uint8_t completedNewLevel = 0;
     std::string notableReason;
+    std::vector<std::string> medicalNotes;
 };
 
 // --- Pure Deterministic Economy & Formula Helpers (unit tested) ---
 uint32_t getStadiumCapacityForLevel(uint8_t level);
 int32_t getStadiumTicketPriceForDivision(int divisionTier, TicketPolicy policy);
+int getStadiumFormScore(const StadiumData& stadium);
+int32_t getStadiumFormTicketAdjustment(const StadiumData& stadium);
+int32_t getEffectiveStadiumTicketPrice(const StadiumData& stadium, int divisionTier);
+double getStadiumFormDemandMultiplier(const StadiumData& stadium);
+void stadiumRecordMatchForm(StadiumData& stadium, int clubGoals, int opponentGoals);
+
+int32_t getStadiumVipBoxIncome(uint8_t commercialLevel, int divisionTier);
+int getStadiumCommercialSponsorBonusPct(uint8_t commercialLevel);
+int getCurrentCareerCommercialSponsorBonusPct();
+
+int getMedicalInjuryPreventionPct(uint8_t medicalLevel);
+int getMedicalRecoveryBoostPct(uint8_t medicalLevel);
+uint8_t computeMedicalReducedInjuryDays(uint8_t rawInjuryDays, uint8_t medicalLevel);
+double getTrainingGrowthBonusFraction(uint8_t trainingLevel);
+int applyStadiumPitchQualityOverrideForLevel(int rawPitchType, uint8_t pitchLevel);
+
 int32_t getStadiumMatchdayUpkeep(const StadiumData& stadium);
 const char *getStadiumModuleName(StadiumModuleType module);
 const char *getTicketPolicyName(TicketPolicy policy);
@@ -110,10 +135,6 @@ StadiumMatchdayReport stadiumCalculateMatchday(
     bool isDerby,
     int16_t charismaPoints,
     const std::string& opponentName = {});
-
-int applyStadiumPitchQualityOverrideForLevel(int rawPitchType, uint8_t pitchLevel);
-uint8_t computeMedicalReducedInjuryDays(uint8_t rawInjuryDays, uint8_t medicalLevel);
-double getTrainingGrowthBonusFraction(uint8_t trainingLevel);
 
 // --- Career Lifecycle, Match Engine & Persistence Hooks ---
 void resetStadiumFacilitiesState();
