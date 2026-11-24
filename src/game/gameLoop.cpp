@@ -373,7 +373,7 @@ static void drawFrame(bool recordingEnabled)
     drawPlayerName();
     drawGameTime();
     drawLivePunditTicker();
-    drawSupporterStreamOverlay();
+    drawSupporterStreamOverlay(xOffset, yOffset);
     drawStatsIfNeeded();
     drawResult();
     drawSpinningLogo();

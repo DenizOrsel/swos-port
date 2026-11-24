@@ -1,8 +1,11 @@
 #include "supporterStream.h"
+#include "camera.h"
 #include "compactFont.h"
+#include "gameFieldMapping.h"
 #include "gameTime.h"
 #include "llmClient.h"
 #include "matchTelemetry.h"
+#include "pitch.h"
 #include "render.h"
 #include "sponsorChallenge.h"
 #include "stadiumFacilities.h"
@@ -28,6 +31,7 @@ bool s_userHidden = false;
 int s_avatarSeq = 0;
 size_t s_personalityCursor = 0;
 size_t s_banterTopicCursor = 0;
+float s_overlayOpacity = 1.0f;
 
 std::deque<SupporterTweet> s_pendingBatch;
 std::deque<SupporterTweet> s_visibleTweets;
@@ -350,6 +354,7 @@ void resetSupporterStream()
     s_staggerTimerFrames = 0;
     s_kickoffTriggered = false;
     s_banterTopicCursor = 0;
+    s_overlayOpacity = 1.0f;
     s_pendingBatch.clear();
     s_visibleTweets.clear();
 }
@@ -468,7 +473,30 @@ void updateSupporterStream()
     }
 }
 
-void drawSupporterStreamOverlay()
+float computeSupporterOverlayProximityAlpha(
+    float pointX, float pointY,
+    float boxX, float boxY, float boxW, float boxH,
+    float fadeMarginPx)
+{
+    constexpr float kGhostedAlpha = 0.22f;
+    float dx = 0.0f;
+    if (pointX < boxX) dx = boxX - pointX;
+    else if (pointX > boxX + boxW) dx = pointX - (boxX + boxW);
+
+    float dy = 0.0f;
+    if (pointY < boxY) dy = boxY - pointY;
+    else if (pointY > boxY + boxH) dy = pointY - (boxY + boxH);
+
+    float dist = std::hypot(dx, dy);
+    if (dist <= 0.0f)
+        return kGhostedAlpha;
+    if (fadeMarginPx <= 1.0f || dist >= fadeMarginPx)
+        return 1.0f;
+    float t = dist / fadeMarginPx;
+    return kGhostedAlpha + (1.0f - kGhostedAlpha) * t;
+}
+
+void drawSupporterStreamOverlay(float cameraXOffset /* = 0.0f */, float cameraYOffset /* = 0.0f */)
 {
     if (swos.g_trainingGame || s_userHidden)
         return;
@@ -516,58 +544,16 @@ void drawSupporterStreamOverlay()
     float panelX = static_cast<float>(vp.w) - panelW - margin;
     float panelY = margin;
 
-    float origScaleX = 1.0f, origScaleY = 1.0f;
-    SDL_RenderGetScale(renderer, &origScaleX, &origScaleY);
-    SDL_RenderSetScale(renderer, 1.0f, 1.0f);
-    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-
-    // Optional compact active Sponsor Challenge status card tucked cleanly at top-right (supports 1-3 challenges + all-in jackpot line)
+    // Pre-compute Sponsor HUD lines & Live Chat Stream layout so we know the exact combined screen box
+    std::vector<std::pair<std::string, int>> sponsorHudLines;
+    float sponsorPillH = 0.0f;
     if (showSponsorHud) {
-        auto hudLines = formatActiveSponsorChallengeHudLines();
-        if (!hudLines.empty()) {
+        sponsorHudLines = formatActiveSponsorChallengeHudLines();
+        if (!sponsorHudLines.empty()) {
             float lineH = 10.0f * px;
-            float pillH = (4.0f * px) + static_cast<float>(hudLines.size()) * lineH;
-            SDL_SetRenderDrawColor(renderer, 14, 18, 16, 168);
-            SDL_FRect pillRect{ panelX, panelY, panelW, pillH };
-            SDL_RenderFillRectF(renderer, &pillRect);
-
-            int overallMode = 0;
-            bool allAchieved = true;
-            for (const auto& hl : hudLines) {
-                if (hl.second == 2) overallMode = 2;
-                if (hl.second != 1) allAchieved = false;
-            }
-            if (overallMode != 2 && allAchieved)
-                overallMode = 1;
-
-            SDL_Color borderCol = (overallMode == 1) ? SDL_Color{ 92, 232, 128, 255 } :
-                                  (overallMode == 2) ? SDL_Color{ 240, 92, 92, 255 } :
-                                                       SDL_Color{ 255, 214, 74, 255 };
-            SDL_SetRenderDrawColor(renderer, borderCol.r, borderCol.g, borderCol.b, 165);
-            SDL_RenderDrawRectF(renderer, &pillRect);
-
-            float ly = panelY + 2.5f * px;
-            for (const auto& hl : hudLines) {
-                SDL_Color col = (hl.second == 1) ? SDL_Color{ 92, 232, 128, 255 } :
-                                (hl.second == 2) ? SDL_Color{ 240, 92, 92, 255 } :
-                                                   SDL_Color{ 255, 214, 74, 255 };
-                drawMiniText(renderer, atlas, panelX + 4.0f * px, ly, px, hl.first, col, 255, true);
-                ly += lineH;
-            }
-
-            panelY += pillH + 3.0f * px;
+            sponsorPillH = (4.0f * px) + static_cast<float>(sponsorHudLines.size()) * lineH;
         }
     }
-
-    if (!cfg.enabled || !anyStreamFeature || s_visibleTweets.empty()) {
-        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
-        SDL_RenderSetScale(renderer, origScaleX, origScaleY);
-        return;
-    }
-
-    float heightFrac = static_cast<float>(std::clamp(cfg.telemetry.streamBoxHeightPct, 30, 85)) / 100.0f;
-    int maxPanelUnitsH = static_cast<int>((static_cast<float>(vp.h) * heightFrac) / px);
-    int maxBodyBottom = maxPanelUnitsH - 4;
 
     struct LaidOutTweet {
         int yUnits;
@@ -579,76 +565,175 @@ void drawSupporterStreamOverlay()
     };
 
     std::vector<LaidOutTweet> layout;
-    int curY = kHeaderUnitsH + 4;
+    float chatPanelY = panelY + (sponsorPillH > 0.0f ? (sponsorPillH + 3.0f * px) : 0.0f);
+    float chatPanelH = 0.0f;
+    bool drawChatBox = cfg.enabled && anyStreamFeature && !s_visibleTweets.empty();
 
-    for (size_t i = 0; i < s_visibleTweets.size(); ++i) {
-        const auto& tw = s_visibleTweets[i];
-        bool isPundit = (tw.side == SupporterSide::kPundit);
-        std::string handleLabel = isPundit ? std::string() : (tw.handle + ": ");
-        int handleW = isPundit ? 0 : (measureMiniTextUnits(handleLabel) + 2);
-        int firstLineAvail = std::max(0, kTextMaxUnits - handleW);
-        auto lines = wrapInlineMessage(tw.message, firstLineAvail, kTextMaxUnits, 7);
-        int blockH = std::max(kAvatarSize + 1, static_cast<int>(lines.size()) * kLineStepUnits) + kTweetGapUnits;
+    if (drawChatBox) {
+        float heightFrac = static_cast<float>(std::clamp(cfg.telemetry.streamBoxHeightPct, 30, 85)) / 100.0f;
+        int maxPanelUnitsH = static_cast<int>((static_cast<float>(vp.h) * heightFrac) / px);
+        int maxBodyBottom = maxPanelUnitsH - 4;
+        int curY = kHeaderUnitsH + 4;
 
-        if (curY + blockH > maxBodyBottom)
-            break;
+        for (size_t i = 0; i < s_visibleTweets.size(); ++i) {
+            const auto& tw = s_visibleTweets[i];
+            bool isPundit = (tw.side == SupporterSide::kPundit);
+            std::string handleLabel = isPundit ? std::string() : (tw.handle + ": ");
+            int handleW = isPundit ? 0 : (measureMiniTextUnits(handleLabel) + 2);
+            int firstLineAvail = std::max(0, kTextMaxUnits - handleW);
+            auto lines = wrapInlineMessage(tw.message, firstLineAvail, kTextMaxUnits, 7);
+            int blockH = std::max(kAvatarSize + 1, static_cast<int>(lines.size()) * kLineStepUnits) + kTweetGapUnits;
 
-        int fadeIn = std::min(255, 65 + tw.ageFrames * 15);
-        int posFade = (i >= 4) ? 150 : (i == 3 ? 200 : 255);
-        int alpha = std::min(fadeIn, posFade);
+            if (curY + blockH > maxBodyBottom)
+                break;
 
-        layout.push_back({ curY, alpha, &tw, std::move(handleLabel), handleW, std::move(lines) });
-        curY += blockH;
+            int fadeIn = std::min(255, 65 + tw.ageFrames * 15);
+            int posFade = (i >= 4) ? 150 : (i == 3 ? 200 : 255);
+            int alpha = std::min(fadeIn, posFade);
+
+            layout.push_back({ curY, alpha, &tw, std::move(handleLabel), handleW, std::move(lines) });
+            curY += blockH;
+        }
+        if (!layout.empty()) {
+            chatPanelH = static_cast<float>(curY + 2) * px;
+        } else {
+            drawChatBox = false;
+        }
     }
 
-    if (layout.empty()) {
+    if (sponsorHudLines.empty() && !drawChatBox)
+        return;
+
+    // Smooth proximity ghosting when the ball or controlled player moves under/near the overlay
+    float combinedTop = panelY;
+    float combinedBottom = drawChatBox ? (chatPanelY + chatPanelH) : (panelY + sponsorPillH);
+    float combinedH = std::max(1.0f, combinedBottom - combinedTop);
+    float targetOpacity = 1.0f;
+
+    if (swos.gameStatePl == GameState::kInProgress) {
+        float scale = getGameScale();
+        float offX = getGameScreenOffsetX();
+        float offY = getGameScreenOffsetY();
+        float zoom = getZoomFactor();
+        float camX = getCameraX().asFloat();
+        float camY = getCameraY().asFloat();
+        float fadeMargin = 34.0f * px;
+
+        auto testSpriteProximity = [&](const Sprite *sp) {
+            if (!sp)
+                return;
+            float rx = (sp->x.asFloat() - camX) - cameraXOffset;
+            float ry = (sp->y.asFloat() - camY - sp->z.asFloat()) - cameraYOffset;
+            float sx = offX + rx * scale;
+            float sy = offY + ry * scale;
+            sx -= (sx - static_cast<float>(vp.w) * 0.5f) * (1.0f - zoom);
+            sy -= (sy - static_cast<float>(vp.h) * 0.5f) * (1.0f - zoom);
+            float a = computeSupporterOverlayProximityAlpha(sx, sy, panelX, combinedTop, panelW, combinedH, fadeMargin);
+            targetOpacity = std::min(targetOpacity, a);
+        };
+
+        testSpriteProximity(&swos.ballSprite);
+        testSpriteProximity(swos.topTeamData.controlledPlayer.asAligned());
+        testSpriteProximity(swos.bottomTeamData.controlledPlayer.asAligned());
+    }
+
+    // Fast fade-out so action stays crystal-clear immediately; gentle fade-in to avoid flicker
+    float lerpRate = (targetOpacity < s_overlayOpacity) ? 0.24f : 0.08f;
+    s_overlayOpacity += (targetOpacity - s_overlayOpacity) * lerpRate;
+    if (std::abs(targetOpacity - s_overlayOpacity) < 0.005f)
+        s_overlayOpacity = targetOpacity;
+
+    auto scaleAlpha = [&](int baseAlpha, bool isBg = false) -> Uint8 {
+        float mult = isBg ? (s_overlayOpacity * s_overlayOpacity) : s_overlayOpacity;
+        return static_cast<Uint8>(std::clamp(static_cast<int>(std::lround(static_cast<float>(baseAlpha) * mult)), 0, 255));
+    };
+
+    float origScaleX = 1.0f, origScaleY = 1.0f;
+    SDL_RenderGetScale(renderer, &origScaleX, &origScaleY);
+    SDL_RenderSetScale(renderer, 1.0f, 1.0f);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+    // Optional compact active Sponsor Challenge status card tucked cleanly at top-right
+    if (!sponsorHudLines.empty()) {
+        float lineH = 10.0f * px;
+        SDL_SetRenderDrawColor(renderer, 14, 18, 16, scaleAlpha(168, true));
+        SDL_FRect pillRect{ panelX, panelY, panelW, sponsorPillH };
+        SDL_RenderFillRectF(renderer, &pillRect);
+
+        int overallMode = 0;
+        bool allAchieved = true;
+        for (const auto& hl : sponsorHudLines) {
+            if (hl.second == 2) overallMode = 2;
+            if (hl.second != 1) allAchieved = false;
+        }
+        if (overallMode != 2 && allAchieved)
+            overallMode = 1;
+
+        SDL_Color borderCol = (overallMode == 1) ? SDL_Color{ 92, 232, 128, 255 } :
+                              (overallMode == 2) ? SDL_Color{ 240, 92, 92, 255 } :
+                                                   SDL_Color{ 255, 214, 74, 255 };
+        SDL_SetRenderDrawColor(renderer, borderCol.r, borderCol.g, borderCol.b, scaleAlpha(165));
+        SDL_RenderDrawRectF(renderer, &pillRect);
+
+        float ly = panelY + 2.5f * px;
+        for (const auto& hl : sponsorHudLines) {
+            SDL_Color col = (hl.second == 1) ? SDL_Color{ 92, 232, 128, 255 } :
+                            (hl.second == 2) ? SDL_Color{ 240, 92, 92, 255 } :
+                                               SDL_Color{ 255, 214, 74, 255 };
+            drawMiniText(renderer, atlas, panelX + 4.0f * px, ly, px, hl.first, col, scaleAlpha(255), true);
+            ly += lineH;
+        }
+    }
+
+    if (!drawChatBox) {
         SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
         SDL_RenderSetScale(renderer, origScaleX, origScaleY);
         return;
     }
 
-    int panelUnitsH = curY + 2;
-    float panelH = panelUnitsH * px;
+    panelY = chatPanelY;
+    float panelH = chatPanelH;
 
-    // 1. Sleek semi-transparent dark glass card (leaves pitch clearly visible behind/around it)
-    SDL_SetRenderDrawColor(renderer, 14, 18, 16, 152);
+    // 1. Sleek semi-transparent dark glass card (ghosts smoothly when ball/player moves beneath it)
+    SDL_SetRenderDrawColor(renderer, 14, 18, 16, scaleAlpha(152, true));
     SDL_FRect panelRect{ panelX, panelY, panelW, panelH };
     SDL_RenderFillRectF(renderer, &panelRect);
 
     // Subtle darker header strip
-    SDL_SetRenderDrawColor(renderer, 10, 14, 12, 182);
+    SDL_SetRenderDrawColor(renderer, 10, 14, 12, scaleAlpha(182, true));
     SDL_FRect hdrBand{ panelX + px * 0.5f, panelY + px * 0.5f, panelW - px, kHeaderUnitsH * px };
     SDL_RenderFillRectF(renderer, &hdrBand);
 
     // Crisp hairline border + header separator
-    SDL_SetRenderDrawColor(renderer, 160, 174, 162, 115);
+    SDL_SetRenderDrawColor(renderer, 160, 174, 162, scaleAlpha(115));
     SDL_RenderDrawRectF(renderer, &panelRect);
-    SDL_SetRenderDrawColor(renderer, 150, 164, 152, 85);
+    SDL_SetRenderDrawColor(renderer, 150, 164, 152, scaleAlpha(85));
     SDL_RenderDrawLineF(renderer, panelX + 2.0f * px, panelY + kHeaderUnitsH * px,
         panelX + panelW - 2.0f * px, panelY + kHeaderUnitsH * px);
 
     // Compact red "• LIVE" badge pill
-    SDL_SetRenderDrawColor(renderer, 220, 44, 44, 232);
+    SDL_SetRenderDrawColor(renderer, 220, 44, 44, scaleAlpha(232));
     SDL_FRect livePill{ panelX + 5.0f * px, panelY + 3.0f * px, 29.0f * px, 9.0f * px };
     SDL_RenderFillRectF(renderer, &livePill);
 
     // Pulsing white live dot
     bool dotBright = ((SDL_GetTicks() / 450) & 1) == 0;
-    SDL_SetRenderDrawColor(renderer, 255, 255, 255, dotBright ? 255 : 125);
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, scaleAlpha(dotBright ? 255 : 125));
     SDL_FRect liveDot{ panelX + 7.5f * px, panelY + 6.5f * px, 2.0f * px, 2.0f * px };
     SDL_RenderFillRectF(renderer, &liveDot);
 
     // Header text
     drawMiniText(renderer, atlas, panelX + 12.0f * px, panelY + 4.0f * px, px,
-        "LIVE", { 255, 255, 255, 255 }, 255, true);
+        "LIVE", { 255, 255, 255, 255 }, scaleAlpha(255), true);
     drawMiniText(renderer, atlas, panelX + 38.0f * px, panelY + 4.0f * px, px,
-        "CHAT STREAM", { 238, 244, 240, 255 }, 245, true);
+        "CHAT STREAM", { 238, 244, 240, 255 }, scaleAlpha(245), true);
 
     // 2. Render each compact supporter message (or yellow live commentator message)
     for (const auto& item : layout) {
+        Uint8 itemAlpha = scaleAlpha(item.alpha);
         float rowY = panelY + item.yUnits * px;
         drawCompactAvatar(renderer, panelX + kPadX * px, rowY, px,
-            item.tw->side, item.tw->avatarVariant, static_cast<Uint8>(item.alpha));
+            item.tw->side, item.tw->avatarVariant, itemAlpha);
 
         bool isPundit = (item.tw->side == SupporterSide::kPundit);
         float textX = panelX + kTextStartUnits * px;
@@ -659,7 +744,7 @@ void drawSupporterStreamOverlay()
                                     (item.tw->side == SupporterSide::kAway) ? SDL_Color{ 255, 214, 96, 255 } :
                                                                               SDL_Color{ 176, 232, 196, 255 };
             firstLineX = drawMiniText(renderer, atlas, textX, rowY, px,
-                item.handleLabel, handleColor, static_cast<Uint8>(item.alpha), true);
+                item.handleLabel, handleColor, itemAlpha, true);
         }
 
         SDL_Color bodyColor = isPundit ? SDL_Color{ 255, 226, 78, 255 } : SDL_Color{ 244, 246, 248, 255 };
@@ -670,7 +755,7 @@ void drawSupporterStreamOverlay()
             float lineX = (li == 0) ? firstLineX : textX;
             float lineY = rowY + static_cast<float>(li * kLineStepUnits) * px;
             drawMiniTextWithMentions(renderer, atlas, lineX, lineY, px,
-                item.lines[li], bodyColor, mentionColor, static_cast<Uint8>(item.alpha));
+                item.lines[li], bodyColor, mentionColor, itemAlpha);
         }
     }
 

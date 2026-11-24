@@ -1326,6 +1326,14 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
             auto flop = evaluateSpotlightPerformance("STUART", 0, 0, 1, 5.2);
             assertTrue(flop.flopped);
             assertFalse(flop.succeeded);
+
+            // Live Stream proximity ghosting when ball/player moves under the overlay
+            float aInside = computeSupporterOverlayProximityAlpha(900.0f, 120.0f, 800.0f, 20.0f, 300.0f, 400.0f, 60.0f);
+            float aEdge = computeSupporterOverlayProximityAlpha(770.0f, 120.0f, 800.0f, 20.0f, 300.0f, 400.0f, 60.0f);
+            float aFar = computeSupporterOverlayProximityAlpha(400.0f, 120.0f, 800.0f, 20.0f, 300.0f, 400.0f, 60.0f);
+            assertTrue(aInside < 0.30f);
+            assertTrue(aEdge > aInside && aEdge < 1.0f);
+            assertTrue(aFar >= 0.999f);
         }
         std::remove(tmpStd);
         resetStadiumFacilitiesState();
