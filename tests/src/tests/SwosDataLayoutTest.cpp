@@ -9,6 +9,7 @@
 #include "matchTelemetry.h"
 #include "sponsorChallenge.h"
 #include "pressCharisma.h"
+#include "dressingRoomDilemma.h"
 #include "preMatchAssistant.h"
 #include "supporterStream.h"
 #include "tabloidNewspaper.h"
@@ -1334,6 +1335,50 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
             assertTrue(aInside < 0.30f);
             assertTrue(aEdge > aInside && aEdge < 1.0f);
             assertTrue(aFar >= 0.999f);
+
+            // Dressing Room Dilemmas V2: flashpoint detector, cooldown, cash scaling, & next-match team modifier clamping
+            DressingRoomFlashpointContext drCtx;
+            drCtx.matchesSinceLastDilemma = 1;
+            drCtx.clubRedCards = 1;
+            assertTrue(detectDressingRoomFlashpoint(drCtx) == DressingRoomFlashpointType::kNone); // cooldown < 2 blocks even urgent
+            drCtx.matchesSinceLastDilemma = 2;
+            assertTrue(detectDressingRoomFlashpoint(drCtx) == DressingRoomFlashpointType::kRedCardDiscipline);
+
+            drCtx.clubRedCards = 0;
+            drCtx.clubGoals = 0;
+            drCtx.opponentGoals = 4;
+            assertTrue(detectDressingRoomFlashpoint(drCtx) == DressingRoomFlashpointType::kSlumpCrisis);
+
+            drCtx.opponentGoals = 0;
+            drCtx.clubGoals = 2;
+            drCtx.matchesSinceLastDilemma = 3;
+            drCtx.recentForm = "DWWWW";
+            assertTrue(detectDressingRoomFlashpoint(drCtx) == DressingRoomFlashpointType::kWinStreakBonus);
+
+            drCtx.recentForm = "WLWDW";
+            drCtx.injuredCount = 2;
+            assertTrue(detectDressingRoomFlashpoint(drCtx) == DressingRoomFlashpointType::kSquadRecovery);
+
+            drCtx.injuredCount = 0;
+            drCtx.matchesSinceLastDilemma = 4;
+            assertTrue(detectDressingRoomFlashpoint(drCtx) == DressingRoomFlashpointType::kPlayerDoorKnock);
+
+            assertTrue(computeDressingRoomCashScale(0, 10000) > computeDressingRoomCashScale(3, 10000));
+            auto drOffer = buildDressingRoomDilemmaOffer(
+                DressingRoomFlashpointType::kWinStreakBonus, "BRIGHTON", "STUART", "ATT", 3, 9, 3, 0);
+            assertFalse(drOffer.bannerTitle.empty());
+            assertTrue(drOffer.choices[0].cashDelta < 0);
+
+            PendingDressingRoomEffect drEff;
+            drEff.active = true;
+            drEff.squadSpeedDelta = +1;
+            drEff.targetShirtNumber = 9;
+            drEff.playerFinishingDelta = +2;
+            TeamGame drTeam = myTg;
+            drTeam.players[3].shirtNumber = 9;
+            applyPendingDressingRoomEffectToTeam(drTeam, drEff);
+            assertEqual(drTeam.players[3].finishing, byte{ 7 }); // clamped safely to 7
+            assertEqual(drTeam.players[3].speed, byte{ 7 });
         }
         std::remove(tmpStd);
         resetStadiumFacilitiesState();

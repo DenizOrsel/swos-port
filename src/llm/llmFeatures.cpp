@@ -8,6 +8,7 @@
 #include "supporterStream.h"
 #include "tabloidNewspaper.h"
 #include "achievements.h"
+#include "dressingRoomDilemma.h"
 #include "stadiumFacilities.h"
 #include "continueAbortMenu.h"
 #include "controls.h"
@@ -721,35 +722,7 @@ std::string fetchTransferNegotiationVoice(const char *buyerClub, const char *sel
 
 void onCareerMatchCompletedLlm(int topGoals, int botGoals)
 {
-    if (swos.g_gameType != kGameTypeCareer || swos.g_trainingGame || swos.gameCanceled)
-        return;
-
-    const auto& cfg = getLlmConfig();
-    if (!cfg.enabled || !cfg.features.dressingRoomVoices)
-        return;
-
-    std::string club, player, role;
-    if (pickCareerSquadVoice(club, player, role).empty())
-        return;
-
-    LlmMatchContext ctx = buildLlmMatchContext();
-    std::string prompt = buildMatchPerspectiveContext(
-        ctx.team1.c_str(), ctx.team2.c_str(), topGoals, botGoals, ctx.team1Human, ctx.team2Human) +
-        "\nSpeaker's club: " + club + ". Player speaking: " + player + " (" + role + "). "
-        "Write an expressive 2-3 sentence 1997 post-match dressing room quote from " + player +
-        " reacting honestly to this exact result and looking ahead to the next fixture. Start with '" + player + ": '. Plain text only.";
-
-    uint64_t reqId = enqueueLlmRequest(
-        "You are a passionate 1997 footballer speaking candidly in the dressing room right after full-time. "
-        "Sound like a real player, never generic or robotic, and strictly match the actual win/loss/draw. Plain text only.",
-        prompt);
-    if (reqId == 0)
-        return;
-
-    std::string reply;
-    if (waitForLlmWithIndicator(reqId, cfg.timeoutMs, "DRESSING ROOM", reply)) {
-        showWrappedSwosPrompt("DRESSING ROOM VOICE", reply);
-    }
+    onCareerMatchFinishedDressingRoomDilemma(topGoals, botGoals);
 }
 
 void markMatchHandledInGameLoop()
@@ -853,23 +826,6 @@ void onViewResultMatchCompletedLlm()
 
     if (swos.g_gameType == kGameTypeCareer) {
         onViewResultMatchPressConference();
-    }
-
-    if (swos.g_gameType == kGameTypeCareer && cfg.features.dressingRoomVoices) {
-        std::string club, player, role;
-        if (!pickCareerSquadVoice(club, player, role).empty()) {
-            std::string prompt = buildMatchPerspectiveContext(t1, t2, g1, g2, topHuman, botHuman) +
-                "\nSpeaker's club: " + club + ". Player speaking: " + player + " (" + role + "). "
-                "Write an expressive 2-3 sentence 1997 dressing room quote from " + player +
-                " reacting honestly to this exact result. Start with '" + player + ": '. Plain text only.";
-            uint64_t reqId = enqueueLlmRequest(
-                "You are a passionate 1997 footballer speaking in the dressing room after full-time. Sound authentic and match the exact result. Plain text only.",
-                prompt);
-            std::string reply;
-            if (waitForLlmWithIndicator(reqId, cfg.timeoutMs, "DRESSING ROOM", reply)) {
-                showWrappedSwosPrompt("DRESSING ROOM VOICE", reply);
-            }
-        }
     }
 }
 
@@ -1291,36 +1247,26 @@ void onCareerWeeklyTickLlm()
         return;
 
     ++s_weeklyTickCounter;
-    if ((s_weeklyTickCounter % 3) != 0)
+    if ((s_weeklyTickCounter % 6) != 0)
         return;
 
     const auto& cfg = getLlmConfig();
-    if (!cfg.enabled || (!cfg.features.dressingRoomVoices && !cfg.features.transferNegotiations))
-        return;
-
-    bool wantMarket = cfg.features.transferNegotiations && ((s_weeklyTickCounter % 6) == 0);
-    bool wantDressing = cfg.features.dressingRoomVoices && !wantMarket;
-    if (!wantMarket && !wantDressing)
+    if (!cfg.enabled || !cfg.features.transferNegotiations)
         return;
 
     std::string club, player, role;
     if (pickCareerSquadVoice(club, player, role).empty())
         return;
 
-    bool isMarket = wantMarket;
-    std::string sys = isMarket
-        ? "You are a well-connected 1997 football transfer agent whispering inside gossip. Write naturally in 2 sentences. Plain text only."
-        : "You are a candid 1997 squad footballer chatting at the training ground. Write naturally in 2 sentences. Plain text only.";
-    std::string prompt = isMarket
-        ? ("Club: " + club + ". Write a lively 2-sentence transfer market whisper mentioning " + player + " (" + role + ") and rival interest. Plain text only.")
-        : ("Club: " + club + ". Write a candid 2-sentence training-ground quote from " + player + " (" + role + ") about squad morale, form, or fighting for a starting shirt. Start with '" + player + ": '. Plain text only.");
+    std::string sys = "You are a well-connected 1997 football transfer agent whispering inside gossip. Write naturally in 2 sentences. Plain text only.";
+    std::string prompt = "Club: " + club + ". Write a lively 2-sentence transfer market whisper mentioning " + player + " (" + role + ") and rival interest. Plain text only.";
 
     uint64_t reqId = enqueueLlmRequest(sys, prompt);
     if (reqId == 0)
         return;
 
     std::string reply;
-    if (waitForLlmWithIndicator(reqId, cfg.timeoutMs, isMarket ? "TRANSFER RUMOURS" : "DRESSING ROOM", reply)) {
-        showWrappedSwosPrompt(isMarket ? "TRANSFER WHISPER" : "DRESSING ROOM", reply);
+    if (waitForLlmWithIndicator(reqId, cfg.timeoutMs, "TRANSFER RUMOURS", reply)) {
+        showWrappedSwosPrompt("TRANSFER WHISPER", reply);
     }
 }

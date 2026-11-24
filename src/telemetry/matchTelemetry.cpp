@@ -11,6 +11,7 @@
 #include "result.h"
 #include "sponsorChallenge.h"
 #include "pressCharisma.h"
+#include "dressingRoomDilemma.h"
 #include "preMatchAssistant.h"
 #include "stadiumFacilities.h"
 #include "stats.h"
@@ -1627,6 +1628,7 @@ MatchTelemetrySnapshot captureMatchTelemetrySnapshot()
     snap.pressCharismaSummary = formatPressContextForTelemetry();
     snap.stadiumFacilitiesSummary = formatStadiumContextForTelemetry();
     snap.preMatchTacticalSummary = formatPreMatchAssistantContextForTelemetry();
+    snap.dressingRoomSummary = formatDressingRoomContextForTelemetry();
     snap.recentEvents.assign(s_recentEvents.begin(), s_recentEvents.end());
     return snap;
 }
@@ -1682,6 +1684,8 @@ std::string formatTelemetryPromptBlock(const MatchTelemetrySnapshot& snap)
                " (Fans, pundits, and journalists may organically praise or criticize the stadium atmosphere, pitch surface, facilities, construction, or ticket prices.)";
     if (!snap.preMatchTacticalSummary.empty())
         out += "\n" + snap.preMatchTacticalSummary;
+    if (!snap.dressingRoomSummary.empty())
+        out += "\n" + snap.dressingRoomSummary;
 
     if (!snap.recentEvents.empty()) {
         out += "\nRecent events:";

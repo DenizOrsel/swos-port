@@ -38,6 +38,7 @@
 #include "options.h"
 #include "replays.h"
 #include "stadiumMenu.h"
+#include "dressingRoomDilemma.h"
 #include "preMatchAssistant.h"
 #include "tabloidNewspaper.h"
 #include "replayExitMenu.h"
@@ -240,6 +241,7 @@ void showStadiumScreenAndFadeOutMusic(TeamGame *topTeam, TeamGame *bottomTeam, i
     if (showPreMatchMenus()) {
         showStadiumMenu(topTeam, bottomTeam, maxSubstitutes, [&]() {
             initMatch(topTeam, bottomTeam, true);
+            applyPendingDressingRoomEffectsForMatch(topTeam, bottomTeam);
             onPreMatchStadiumSnapshot(topTeam, bottomTeam);
             beginPreMatchAssistantBriefing(topTeam, bottomTeam);
             beginSponsorChallengeGeneration(topTeam, bottomTeam);
@@ -250,6 +252,7 @@ void showStadiumScreenAndFadeOutMusic(TeamGame *topTeam, TeamGame *bottomTeam, i
         showPreMatchPressConferenceIfReady();
     } else {
         initMatch(topTeam, bottomTeam, true);
+        applyPendingDressingRoomEffectsForMatch(topTeam, bottomTeam);
         onPreMatchStadiumSnapshot(topTeam, bottomTeam);
         beginPreMatchAssistantBriefing(topTeam, bottomTeam);
         beginSponsorChallengeGeneration(topTeam, bottomTeam);
