@@ -1364,6 +1364,31 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
             drCtx.matchesSinceLastDilemma = 4;
             assertTrue(detectDressingRoomFlashpoint(drCtx) == DressingRoomFlashpointType::kPlayerDoorKnock);
 
+            // A 7-0 demolition must NEVER trigger a Slump Crisis even if prior form had losses!
+            drCtx.clubGoals = 7;
+            drCtx.opponentGoals = 0;
+            drCtx.recentForm = "LLLDW";
+            assertTrue(detectDressingRoomFlashpoint(drCtx) == DressingRoomFlashpointType::kWinStreakBonus);
+
+            // Live Multi-Match Contract HUD counts goals live during the match (e.g. 7/10 G M1/3)
+            {
+                MultiMatchContract gm;
+                gm.isActive = true;
+                gm.type = MultiMatchContractType::kGoalsInMatches;
+                gm.title = "GOAL MACHINE";
+                gm.targetValue = 10;
+                gm.currentProgress = 0;
+                gm.matchesTotal = 3;
+                gm.matchesPlayed = 0;
+                int cMode = 0;
+                std::string liveHud = formatContractLiveHudProgress(gm, 7, 0, cMode);
+                assertTrue(liveHud.find("7/10G") != std::string::npos);
+                assertEqual(cMode, 0);
+                std::string doneHud = formatContractLiveHudProgress(gm, 10, 0, cMode);
+                assertTrue(doneHud.find("10/10G") != std::string::npos);
+                assertEqual(cMode, 1);
+            }
+
             assertTrue(computeDressingRoomCashScale(0, 10000) > computeDressingRoomCashScale(3, 10000));
             auto drOffer = buildDressingRoomDilemmaOffer(
                 DressingRoomFlashpointType::kWinStreakBonus, "BRIGHTON", "STUART", "ATT", 3, 9, 3, 0);

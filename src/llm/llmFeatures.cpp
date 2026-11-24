@@ -283,7 +283,7 @@ bool waitForLlmWithIndicator(uint64_t requestId, int maxWaitMs, const char *stat
     if (requestId == 0)
         return false;
     if (tryTakeLlmResponse(requestId, outText))
-        return true;
+        return !outText.empty();
 
 #ifdef SWOS_TEST
     return waitForLlmResponse(requestId, maxWaitMs, outText);
@@ -296,7 +296,7 @@ bool waitForLlmWithIndicator(uint64_t requestId, int maxWaitMs, const char *stat
     setStandardMenuBackgroundImage();
     while (SDL_GetTicks() < deadline) {
         if (tryTakeLlmResponse(requestId, outText))
-            return true;
+            return !outText.empty();
 
         drawMenuBackground();
         drawDarkRectangle({ 30.0f, 76.0f, 260.0f, 48.0f }, true);
@@ -338,7 +338,7 @@ bool waitForLlmWithIndicator(uint64_t requestId, int maxWaitMs, const char *stat
         }
         ++frame;
     }
-    return tryTakeLlmResponse(requestId, outText);
+    return tryTakeLlmResponse(requestId, outText) && !outText.empty();
 #endif
 }
 
@@ -1254,7 +1254,7 @@ void triggerLivePunditEvent(const char *eventLabel, bool highPriority)
             "You are Omer Urundul, the iconic Turkish live football TV commentator famous for tactical mantras (kollektif futbol, bloklar arasi mesafe, kule forvet, duran toplar) and hilariously matter-of-fact Captain Obvious observations. "
             "Stay 100% faithful to the real match telemetry (exact teams, players, score, goalkeeper, event). "
             "Reply in natural, witty Turkish in 1-2 short sentences (max 160 chars). Plain text only, no speaker prefix.",
-            prompt);
+            prompt, 220);
     } else {
         prompt += "\nReact with ONE spontaneous, excited 1997 TV co-commentator sentence grounded strictly in the telemetry facts above "
                   "(exact goalkeeper, exact team, exact scorer, exact finish type, exact minute). Plain text only, no quotes, no speaker prefix.";
@@ -1263,7 +1263,7 @@ void triggerLivePunditEvent(const char *eventLabel, bool highPriority)
             "You are an excited 1997 live football TV co-commentator like Barry Davies or Andy Gray. "
             "Always credit the exact goalkeeper, shooter, scorer, finish type, and team from the telemetry accurately. "
             "One vivid, punchy broadcast sentence. Plain text only, no speaker label.",
-            prompt);
+            prompt, 180);
     }
 
     s_punditCooldownFrames = 360; // ~6 seconds cooldown between non-goal events

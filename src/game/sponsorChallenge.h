@@ -169,6 +169,7 @@ SponsorBatchEvaluation evaluateSponsorChallengeBatch(
     const SponsorMatchResult& result);
 MultiMatchContract generateOfflineMultiMatchContract(int divisionTier, uint32_t seed);
 MultiMatchContractUpdate advanceMultiMatchContract(MultiMatchContract& contract, int clubGoals, int opponentGoals);
+std::string formatContractLiveHudProgress(const MultiMatchContract& c, int liveClubGoals, int liveOppGoals, int& outColorMode);
 std::vector<SponsorChallenge> generateOfflineSponsorChallenges(
     const std::string& clubName, const std::string& opponentName,
     int divisionTier, const std::vector<SponsorStarterInfo>& starters, uint32_t seed,

@@ -2468,6 +2468,55 @@ std::string formatActiveSponsorChallengeForTelemetry()
     return out;
 }
 
+std::string formatContractLiveHudProgress(const MultiMatchContract& c, int liveClubGoals, int liveOppGoals, int& outColorMode)
+{
+    outColorMode = 0; // 0 = gold/live, 1 = green/on-track or hit, 2 = red/in-danger
+    int curMatch = std::min<int>(c.matchesTotal, static_cast<int>(c.matchesPlayed) + 1);
+    std::string mTag = "M" + std::to_string(curMatch) + "/" + std::to_string(c.matchesTotal);
+
+    switch (c.type) {
+    case MultiMatchContractType::kGoalsInMatches: {
+        int liveTotal = static_cast<int>(c.currentProgress) + std::max(0, liveClubGoals);
+        if (liveTotal >= static_cast<int>(c.targetValue))
+            outColorMode = 1;
+        return std::to_string(liveTotal) + "/" + std::to_string(c.targetValue) + "G " + mTag;
+    }
+    case MultiMatchContractType::kMinGoalsEachMatch: {
+        int need = std::max<int>(2, static_cast<int>(c.perMatchMin));
+        if (liveClubGoals >= need) {
+            outColorMode = 1;
+            return std::to_string(c.currentProgress + 1) + "/" + std::to_string(c.targetValue) + " OK";
+        }
+        return std::to_string(c.currentProgress) + "/" + std::to_string(c.targetValue) + " (" +
+               std::to_string(liveClubGoals) + "/" + std::to_string(need) + "G)";
+    }
+    case MultiMatchContractType::kWinStreak:
+        if (liveClubGoals > liveOppGoals) {
+            outColorMode = 1;
+            return std::to_string(c.currentProgress + 1) + "/" + std::to_string(c.targetValue) + "W " + mTag;
+        }
+        if (liveClubGoals < liveOppGoals)
+            outColorMode = 2;
+        return std::to_string(c.currentProgress) + "/" + std::to_string(c.targetValue) + "W " + mTag;
+    case MultiMatchContractType::kUnbeatenRun:
+        if (liveClubGoals >= liveOppGoals) {
+            outColorMode = 1;
+            return std::to_string(c.currentProgress + 1) + "/" + std::to_string(c.targetValue) + " UNB";
+        }
+        outColorMode = 2;
+        return std::to_string(c.currentProgress) + "/" + std::to_string(c.targetValue) + " LOSING";
+    case MultiMatchContractType::kCleanSheetsInMatches:
+        if (liveOppGoals == 0) {
+            outColorMode = 1;
+            return std::to_string(c.currentProgress + 1) + "/" + std::to_string(c.targetValue) + " CS";
+        }
+        outColorMode = 2;
+        return std::to_string(c.currentProgress) + "/" + std::to_string(c.targetValue) + " CONC";
+    default:
+        return formatContractProgressShort(c);
+    }
+}
+
 std::vector<std::pair<std::string, int>> formatActiveSponsorChallengeHudLines()
 {
     std::vector<std::pair<std::string, int>> lines;
@@ -2505,7 +2554,10 @@ std::vector<std::pair<std::string, int>> formatActiveSponsorChallengeHudLines()
     }
 
     if (s_state.activeContract.isActive) {
-        std::string prog = formatContractProgressShort(s_state.activeContract);
+        int clubG = s_humanIsTeam1 ? swos.statsTeam1Goals : swos.statsTeam2Goals;
+        int oppG = s_humanIsTeam1 ? swos.statsTeam2Goals : swos.statsTeam1Goals;
+        int cMode = 0;
+        std::string prog = formatContractLiveHudProgress(s_state.activeContract, clubG, oppG, cMode);
         std::string suffix = " [" + prog + "]";
         std::string titleShort = "CONTRACT: " + s_state.activeContract.title;
         while (!titleShort.empty() && measureCompactTextUnits(titleShort + suffix) > kMaxHudLineUnits) {
@@ -2513,7 +2565,7 @@ std::vector<std::pair<std::string, int>> formatActiveSponsorChallengeHudLines()
             while (!titleShort.empty() && titleShort.back() == ' ')
                 titleShort.pop_back();
         }
-        lines.emplace_back(titleShort + suffix, 0);
+        lines.emplace_back(titleShort + suffix, cMode);
     }
 
     return lines;

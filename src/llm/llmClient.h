@@ -71,9 +71,10 @@ const LlmConfig& getLlmConfig();
 void setLlmConfigForTest(const LlmConfig& cfg);
 
 // Non-blocking async inference queue
-uint64_t enqueueLlmRequest(const std::string& systemPrompt, const std::string& userPrompt);
+uint64_t enqueueLlmRequest(const std::string& systemPrompt, const std::string& userPrompt, int maxTokensOverride = 0);
 bool tryTakeLlmResponse(uint64_t requestId, std::string& outText);
 bool waitForLlmResponse(uint64_t requestId, int maxWaitMs, std::string& outText);
+void clearPendingLlmQueue();
 
 // JSON helpers (exposed for unit testing)
 std::string escapeLlmJson(const std::string& input);

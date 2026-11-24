@@ -292,6 +292,8 @@ int32_t computeDressingRoomCashScale(int divisionTier, int baseDiv4Amount)
 DressingRoomFlashpointType detectDressingRoomFlashpoint(const DressingRoomFlashpointContext& ctx)
 {
     int margin = ctx.clubGoals - ctx.opponentGoals;
+    bool wonMatch = (margin > 0);
+    bool bigWin = (margin >= 4);
     bool heavyDefeat = (margin <= -3);
     bool urgentRed = (ctx.clubRedCards > 0);
 
@@ -311,9 +313,11 @@ DressingRoomFlashpointType detectDressingRoomFlashpoint(const DressingRoomFlashp
     for (int i = n - 1; i >= 0 && ctx.recentForm[i] == 'L'; --i) ++lossStreak;
     for (int i = n - 1; i >= 0 && ctx.recentForm[i] != 'W'; --i) ++winlessStreak;
 
-    if (lossStreak >= 3 || winlessStreak >= 4)
+    // Never trigger a slump crisis right after winning a match!
+    if (!wonMatch && (lossStreak >= 3 || winlessStreak >= 4))
         return DressingRoomFlashpointType::kSlumpCrisis;
-    if (winStreak >= 4)
+    // Trigger bonus buzz on a 4+ win streak OR an emphatic 4+ goal demolition (e.g. 7-0!)
+    if (winStreak >= 4 || bigWin)
         return DressingRoomFlashpointType::kWinStreakBonus;
     if (ctx.injuredCount >= 2 || ctx.maxInjuryMatches >= 3)
         return DressingRoomFlashpointType::kSquadRecovery;
@@ -864,21 +868,49 @@ void onCareerMatchFinishedDressingRoomDilemma(int topGoals, int botGoals)
     }
 
     std::string clubName = readCurrentCareerClubName();
+    const TeamGame *oppTeam = humanIsTeam1 ? &swos.bottomTeamInGame : &swos.topTeamInGame;
+    std::string oppName = (oppTeam && oppTeam->teamName[0]) ? std::string(oppTeam->teamName) : std::string("the opposition");
     DressingRoomDilemmaOffer offer = buildDressingRoomDilemmaOffer(
         fp, clubName, speaker->name, speaker->pos, speaker->slot, speaker->shirtNumber, ctx.divisionTier, injCnt);
 
-    // Optional async LLM dialogue upgrade (non-blocking — instant offline line already shown!)
+    // Tailor banner & offline quote strictly to the actual match result so big wins feel celebratory!
+    bool wonMatch = (ctx.clubGoals > ctx.opponentGoals);
+    bool lostMatch = (ctx.clubGoals < ctx.opponentGoals);
+    std::string scoreStr = std::to_string(ctx.clubGoals) + "-" + std::to_string(ctx.opponentGoals);
+    if (fp == DressingRoomFlashpointType::kWinStreakBonus && (ctx.clubGoals - ctx.opponentGoals) >= 4) {
+        offer.bannerTitle = scoreStr + " DEMOLITION — BONUS BUZZ!";
+        offer.offlineSpeech = offer.playerName + ": \"What a " + scoreStr + " thrashing of " + oppName +
+                              ", Boss! The lads are buzzing — any chance of a squad bonus for that show?\"";
+    } else if (fp == DressingRoomFlashpointType::kPlayerDoorKnock && wonMatch) {
+        offer.offlineSpeech = offer.playerName + ": \"Brilliant " + scoreStr + " win over " + oppName +
+                              ", Gaffer! I'm buzzing — give me extra 1-on-1 drills or a pitch challenge to keep flying!\"";
+    }
+
+    // Optional async LLM dialogue upgrade (strictly grounded in WIN/DRAW/LOSS outcome and mood!)
     uint64_t llmReqId = 0;
     if (cfg.enabled) {
-        std::string prompt = "Club: " + clubName + ". Speaker: " + offer.playerName + " (" + offer.playerPos + ").\n" +
-                             "Situation: " + offer.bannerTitle + " (Score: " + std::to_string(ctx.clubGoals) + "-" +
-                             std::to_string(ctx.opponentGoals) + ", Last-5 Form: " +
-                             (ctx.recentForm.empty() ? "N/A" : ctx.recentForm) + ").\n" +
-                             "Write ONE candid, emotional 1997 footballer quote (max 145 chars) speaking directly to the manager in the dressing room about this exact flashpoint. " +
+        std::string resultVerb = wonMatch ? "WON" : (lostMatch ? "LOST" : "DREW");
+        bool tenseMood = (fp == DressingRoomFlashpointType::kRedCardDiscipline ||
+                          fp == DressingRoomFlashpointType::kSlumpCrisis);
+        std::string moodRule = wonMatch
+            ? ("Mood is UPBEAT and CELEBRATORY because " + clubName + " just WON " + scoreStr + " against " + oppName +
+               "! NEVER complain or say 'we should do better' after a win!")
+            : (tenseMood
+                ? "Mood is tense and urgent because of the crisis/red card."
+                : "Mood is constructive and focused on improving for the next fixture.");
+
+        std::string prompt = "Club: " + clubName + ". Opponent just played: " + oppName + ".\n" +
+                             "EXACT MATCH RESULT: " + clubName + " " + resultVerb + " " + scoreStr + " vs " + oppName + "!\n" +
+                             "Last-5 Form (oldest->newest): " + (ctx.recentForm.empty() ? "N/A" : ctx.recentForm) + ".\n" +
+                             "Speaker: " + offer.playerName + " (" + offer.playerPos + ").\n" +
+                             "Dressing Room Topic: " + offer.bannerTitle + ".\n" +
+                             "STRICT MOOD RULE: " + moodRule + "\n" +
+                             "Write ONE authentic 1997 footballer quote (max 145 chars) speaking to the manager about this exact topic and exact result. " +
                              "Start with '" + offer.playerName + ": '. Plain text only.";
-        llmReqId = enqueueLlmRequest(
-            "You are a passionate 1997 footballer confronting your manager in the dressing room. Short, authentic, grounded in the exact situation. Plain text only.",
-            prompt);
+        std::string sys = tenseMood
+            ? "You are a passionate 1997 footballer speaking candidly to your manager in the dressing room after a tough moment. Stay 100% faithful to the exact WIN/LOSS/DRAW score. Plain text only."
+            : "You are an enthusiastic 1997 footballer chatting with your manager in the dressing room. Stay 100% faithful to the exact WIN/LOSS/DRAW score — never complain after a victory! Plain text only.";
+        llmReqId = enqueueLlmRequest(sys, prompt, 180);
     }
 
     s_matchesSinceLastDilemma = 0;

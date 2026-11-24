@@ -26,12 +26,14 @@ uint64_t s_streamRequestId = 0;
 int s_cooldownFrames = 0;
 int s_ambientTimerFrames = 0;
 int s_staggerTimerFrames = 0;
+int s_requestAgeFrames = 0;
 bool s_kickoffTriggered = false;
 bool s_userHidden = false;
 int s_avatarSeq = 0;
 size_t s_personalityCursor = 0;
 size_t s_banterTopicCursor = 0;
 float s_overlayOpacity = 1.0f;
+std::string s_queuedHighPriorityEvent;
 
 std::deque<SupporterTweet> s_pendingBatch;
 std::deque<SupporterTweet> s_visibleTweets;
@@ -293,7 +295,9 @@ void enqueueSupporterBatchRequest(const char *triggerContext)
                             "For anything happening in THIS match, stay 100% faithful to the telemetry facts (never invent fake goals, headers, cards, or weather). "
                             "Use natural sentence case. Output strictly HANDLE|SIDE|MESSAGE lines only.";
 
-    s_streamRequestId = enqueueLlmRequest(sys, prompt);
+    // Cap live chat token budget at 360 so large ai.ini maxTokens (e.g. 2500) never slows live stream startup
+    s_streamRequestId = enqueueLlmRequest(sys, prompt, 360);
+    s_requestAgeFrames = 0;
     s_cooldownFrames = 240; // ~4s minimum spacing between requests
     s_ambientTimerFrames = std::max(5, cfg.telemetry.streamUpdateSeconds) * 60;
 }
@@ -348,13 +352,16 @@ std::vector<SupporterTweet> parseSupporterTweetBatch(const std::string& rawRespo
 
 void resetSupporterStream()
 {
+    clearPendingLlmQueue(); // Purge any abandoned pre-match tips so KICKOFF stream starts immediately
     s_streamRequestId = 0;
     s_cooldownFrames = 0;
-    s_ambientTimerFrames = 90; // ~1.5s after kickoff
+    s_ambientTimerFrames = 60; // ~1.0s after kickoff
     s_staggerTimerFrames = 0;
+    s_requestAgeFrames = 0;
     s_kickoffTriggered = false;
     s_banterTopicCursor = 0;
     s_overlayOpacity = 1.0f;
+    s_queuedHighPriorityEvent.clear();
     s_pendingBatch.clear();
     s_visibleTweets.clear();
 }
@@ -410,7 +417,14 @@ void triggerSupporterStreamEvent(const char *eventLabel, bool highPriority /* = 
     if (!cfg.enabled || !cfg.features.supporterStream || !cfg.telemetry.enabled)
         return;
 
-    if (!highPriority && (s_cooldownFrames > 0 || s_streamRequestId != 0))
+    // Never orphan an in-flight stream request (queuing 1 high-priority follow-up prevents Ollama backlog!)
+    if (s_streamRequestId != 0) {
+        if (highPriority)
+            s_queuedHighPriorityEvent = eventLabel;
+        return;
+    }
+
+    if (!highPriority && s_cooldownFrames > 0)
         return;
 
     enqueueSupporterBatchRequest(eventLabel);
@@ -436,15 +450,27 @@ void updateSupporterStream()
     if (s_staggerTimerFrames > 0)
         --s_staggerTimerFrames;
 
-    // Poll async LLM response without blocking
+    // Poll async LLM response without blocking (with watchdog so a stalled call never blocks the stream)
     if (s_streamRequestId != 0) {
+        ++s_requestAgeFrames;
         std::string reply;
         if (tryTakeLlmResponse(s_streamRequestId, reply)) {
             s_streamRequestId = 0;
-            auto batch = parseSupporterTweetBatch(reply);
-            for (auto& tw : batch)
-                s_pendingBatch.push_back(std::move(tw));
-            s_staggerTimerFrames = 0;
+            s_requestAgeFrames = 0;
+            if (!reply.empty()) {
+                auto batch = parseSupporterTweetBatch(reply);
+                for (auto& tw : batch)
+                    s_pendingBatch.push_back(std::move(tw));
+                s_staggerTimerFrames = 0;
+            }
+            if (!s_queuedHighPriorityEvent.empty()) {
+                std::string nextEv = std::move(s_queuedHighPriorityEvent);
+                s_queuedHighPriorityEvent.clear();
+                enqueueSupporterBatchRequest(nextEv.c_str());
+            }
+        } else if (s_requestAgeFrames > std::max(720, (cfg.timeoutMs / 16) + 180)) {
+            s_streamRequestId = 0;
+            s_requestAgeFrames = 0;
         }
     }
 

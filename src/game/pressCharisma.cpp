@@ -348,7 +348,7 @@ bool waitForPressLlmWithSpinner(uint64_t reqId, int maxWaitMs, const char *label
     if (reqId == 0)
         return false;
     if (tryTakeLlmResponse(reqId, outReply))
-        return true;
+        return !outReply.empty();
 
 #ifdef SWOS_TEST
     return waitForLlmResponse(reqId, maxWaitMs, outReply);
@@ -361,7 +361,7 @@ bool waitForPressLlmWithSpinner(uint64_t reqId, int maxWaitMs, const char *label
     setStandardMenuBackgroundImage();
     while (SDL_GetTicks() < deadline) {
         if (tryTakeLlmResponse(reqId, outReply))
-            return true;
+            return !outReply.empty();
 
         drawMenuBackground();
         drawDarkRectangle({ 30.0f, 76.0f, 260.0f, 48.0f }, true);
@@ -403,7 +403,7 @@ bool waitForPressLlmWithSpinner(uint64_t reqId, int maxWaitMs, const char *label
         }
         ++frame;
     }
-    return tryTakeLlmResponse(reqId, outReply);
+    return tryTakeLlmResponse(reqId, outReply) && !outReply.empty();
 #endif
 }
 

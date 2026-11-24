@@ -534,7 +534,7 @@ void setLlmConfigForTest(const LlmConfig& cfg)
     s_config = cfg;
 }
 
-uint64_t enqueueLlmRequest(const std::string& systemPrompt, const std::string& userPrompt)
+uint64_t enqueueLlmRequest(const std::string& systemPrompt, const std::string& userPrompt, int maxTokensOverride)
 {
     LlmConfig cfgCopy;
     {
@@ -543,6 +543,8 @@ uint64_t enqueueLlmRequest(const std::string& systemPrompt, const std::string& u
     }
     if (!cfgCopy.enabled || cfgCopy.endpoint.empty() || cfgCopy.model.empty())
         return 0;
+    if (maxTokensOverride > 0 && cfgCopy.maxTokens > maxTokensOverride)
+        cfgCopy.maxTokens = maxTokensOverride;
 
     uint64_t reqId = s_nextRequestId.fetch_add(1);
     {
@@ -561,6 +563,12 @@ uint64_t enqueueLlmRequest(const std::string& systemPrompt, const std::string& u
     return reqId;
 }
 
+void clearPendingLlmQueue()
+{
+    std::lock_guard<std::mutex> lock(s_queueMutex);
+    s_requestQueue.clear();
+}
+
 bool tryTakeLlmResponse(uint64_t requestId, std::string& outText)
 {
     if (requestId == 0)
@@ -570,11 +578,14 @@ bool tryTakeLlmResponse(uint64_t requestId, std::string& outText)
     auto it = s_completedResponses.find(requestId);
     if (it == s_completedResponses.end())
         return false;
-    bool ok = it->second.ok;
-    if (ok)
+    // Always return true once the request has completed (even on HTTP/timeout failure) so callers
+    // clear their pending request ID instead of deadlocking forever; outText is empty on failure.
+    if (it->second.ok)
         outText = std::move(it->second.text);
+    else
+        outText.clear();
     s_completedResponses.erase(it);
-    return ok;
+    return true;
 }
 
 bool waitForLlmResponse(uint64_t requestId, int maxWaitMs, std::string& outText)
