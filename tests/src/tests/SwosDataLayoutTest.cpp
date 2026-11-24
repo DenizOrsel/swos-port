@@ -1612,6 +1612,35 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
             swos.currentScorer = savedCurrentScorer;
             resetMatchTelemetry();
         }
+
+        // Generic attacker brace sponsor challenge (Brighton 6-0 Ipswich regression:
+        // LLM writes "At least one of your attackers scores 2 goals" with PLAYER_NAME=NONE,
+        // and Mooney (3G) / Gautieri (3G) score while Walsh (0G) does not -> MUST PASS!)
+        {
+            std::vector<SponsorStarterInfo> starters = {
+                { 8, "J. WALSH", true, false, 0, true },
+                { 10, "T. MOONEY", true, false, 0, true },
+                { 9, "C. GAUTIERI", true, false, 0, true },
+            };
+            auto parsed = parseLlmSponsorChallenges(
+                "CHALLENGE_PLAYER_GOALS|ATTACKER BRACE|At least one of your attackers scores 2 goals|NONE|2|15000\n",
+                "BRIGHTON", "IPSWICH TOWN", 2, starters, 42u, 1);
+            assertEqual(static_cast<int>(parsed.size()), 1);
+            assertEqual(static_cast<int>(parsed[0].type), static_cast<int>(SponsorChallengeType::kPlayerGoals));
+            assertEqual(static_cast<int>(parsed[0].targetShirtNumber), -1);
+            assertTrue(parsed[0].targetPlayerName.empty());
+
+            parsed[0].isActive = true;
+            SponsorMatchResult res;
+            res.clubGoals = 6;
+            res.opponentGoals = 0;
+            res.clubMaxAttackerGoals = 3;
+            res.scorerEntries = {
+                { 10, "T. MOONEY" }, { 10, "T. MOONEY" }, { 10, "T. MOONEY" },
+                { 9, "C. GAUTIERI" }, { 9, "C. GAUTIERI" }, { 9, "C. GAUTIERI" },
+            };
+            assertTrue(evaluateSponsorChallenge(parsed[0], res));
+        }
     }
 
     setLlmTransportForTest(nullptr);

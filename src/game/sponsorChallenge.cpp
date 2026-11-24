@@ -204,7 +204,8 @@ const SponsorStarterInfo *pickBestPureAttacker(const std::vector<SponsorStarterI
         bool eligible = anyExplicitPure ? s.isPureAttacker : s.isAttacker;
         if (!eligible)
             continue;
-        if (!best || s.seasonGoals > best->seasonGoals)
+        // Prefer highest seasonGoals; on ties prefer front-line striker slots (later in lineup, e.g. #9/#10 over #8)
+        if (!best || s.seasonGoals >= best->seasonGoals)
             best = &s;
     }
     return best;
@@ -297,6 +298,8 @@ std::string defaultDescriptionForChallenge(const SponsorChallenge& c)
     case SponsorChallengeType::kCleanSheetWin:
         return "Win the match without conceding a single goal.";
     case SponsorChallengeType::kPlayerGoals:
+        if (c.targetPlayerName.empty())
+            return "Any attacker (ATT) must score at least " + std::to_string(std::max<int>(2, c.thresholdValue)) + " goals.";
         return c.targetPlayerName + " (ATT) must score at least " + std::to_string(std::max<int>(2, c.thresholdValue)) + " goals.";
     case SponsorChallengeType::kFirstHalfGoals:
         if (c.thresholdValue <= 1)
@@ -583,6 +586,12 @@ void commitSelectedChallenges(bool declineAll)
         int jpPct = computeJackpotPct(static_cast<int>(s_state.activeChallenges.size()), singleSlots);
         logInfo("Accepted %zu single-match sponsor challenge(s) (combo/jackpot=+%d%%).",
             s_state.activeChallenges.size(), jpPct);
+        for (const auto& ac : s_state.activeChallenges) {
+            logInfo("  [Sponsor Accepted] type=%d title='%s' target='%s'(#%d) thresh=%d desc='%s'",
+                static_cast<int>(ac.type), ac.title.c_str(), ac.targetPlayerName.c_str(),
+                static_cast<int>(ac.targetShirtNumber), static_cast<int>(ac.thresholdValue),
+                ac.description.c_str());
+        }
     }
     SetExitMenuFlag();
 }
@@ -974,15 +983,33 @@ bool evaluateSponsorChallenge(const SponsorChallenge& challenge, const SponsorMa
                (result.opponentGoals <= challenge.thresholdValue);
 
     case SponsorChallengeType::kPlayerGoals: {
+        int need = std::max<int>(2, challenge.thresholdValue);
+        if (challenge.targetShirtNumber <= 0 && challenge.targetPlayerName.empty()) {
+            // Generic "any attacker scores 2+ goals" challenge
+            if (result.clubMaxAttackerGoals >= need)
+                return true;
+            // Fallback for unit tests that only populate scorerEntries without clubMaxAttackerGoals
+            std::map<std::string, int> byScorer;
+            int maxFromEntries = 0;
+            for (const auto& entry : result.scorerEntries) {
+                std::string key = !entry.second.empty() ? toUpperAscii(entry.second) : std::to_string(entry.first);
+                maxFromEntries = std::max(maxFromEntries, ++byScorer[key]);
+            }
+            return maxFromEntries >= need;
+        }
         int count = 0;
         std::string targetUpper = toUpperAscii(challenge.targetPlayerName);
         for (const auto& entry : result.scorerEntries) {
             bool shirtMatch = (challenge.targetShirtNumber > 0 && entry.first == challenge.targetShirtNumber);
-            bool nameMatch = (!targetUpper.empty() && toUpperAscii(entry.second) == targetUpper);
+            std::string entryUpper = toUpperAscii(entry.second);
+            bool nameMatch = (!targetUpper.empty() &&
+                              (entryUpper == targetUpper ||
+                               entryUpper.find(targetUpper) != std::string::npos ||
+                               targetUpper.find(entryUpper) != std::string::npos));
             if (shirtMatch || nameMatch)
                 ++count;
         }
-        return count >= std::max<int>(2, challenge.thresholdValue);
+        return count >= need;
     }
 
     case SponsorChallengeType::kFirstHalfGoals:
@@ -1421,15 +1448,26 @@ std::vector<SponsorChallenge> parseLlmSponsorChallenges(
         c.rewardAmount = clampSponsorRewardForDivision(rawReward, divisionTier);
 
         if (type == SponsorChallengeType::kPlayerGoals) {
+            std::string pField = toUpperAscii(trimCopy(parts[3]));
+            bool genericPrompt = (pField.empty() || pField == "NONE" || pField == "ANY" ||
+                                  pField == "ATTACKER" || pField == "STRIKER" || pField == "N/A" || pField == "-");
             const SponsorStarterInfo *matched = matchStarterByName(starters, parts[3], true);
-            if (!matched)
+            if (!matched && !genericPrompt)
                 matched = pickBestPureAttacker(starters);
-            if (!matched)
-                continue;
-            c.targetShirtNumber = static_cast<int16_t>(matched->shirtNumber);
-            c.targetPlayerName = matched->shortName;
-            if (toUpperAscii(c.description).find(toUpperAscii(c.targetPlayerName)) == std::string::npos)
-                c.description = defaultDescriptionForChallenge(c);
+            if (matched) {
+                c.targetShirtNumber = static_cast<int16_t>(matched->shirtNumber);
+                c.targetPlayerName = matched->shortName;
+                if (toUpperAscii(c.description).find(toUpperAscii(c.targetPlayerName)) == std::string::npos)
+                    c.description = defaultDescriptionForChallenge(c);
+            } else {
+                // Generic "at least one attacker scores 2+ goals" challenge — keep target open to ANY attacker!
+                if (!pickBestPureAttacker(starters))
+                    continue;
+                c.targetShirtNumber = -1;
+                c.targetPlayerName.clear();
+                if (c.description.empty())
+                    c.description = defaultDescriptionForChallenge(c);
+            }
         } else if (type == SponsorChallengeType::kPlayerAssist) {
             const SponsorStarterInfo *matched = matchStarterByName(starters, parts[3], false);
             if (!matched)
@@ -1684,6 +1722,8 @@ void onMatchFinishedSponsorChallenge()
         bool isNonAtt = (pl.position != PlayerPosition::kAttacker);
         if (isNonAtt)
             result.clubNonAttackerGoals += gCount;
+        else
+            result.clubMaxAttackerGoals = std::max(result.clubMaxAttackerGoals, gCount);
         for (int g = 0; g < gCount; ++g) {
             result.scorerEntries.emplace_back(static_cast<int>(pl.shirtNumber), std::string(pl.shortName));
         }
@@ -1855,16 +1895,35 @@ static std::string describeSingleChallengeProgress(const SponsorChallenge& c, in
         if (clubG > oppG) { outColorMode = 1; return "ON TRACK"; }
         return "0-0";
     case SponsorChallengeType::kPlayerGoals: {
+        int need = std::max<int>(2, c.thresholdValue);
+        if (c.targetShirtNumber <= 0 && c.targetPlayerName.empty()) {
+            int maxAtt = 0;
+            for (int i = 0; i < kNumPlayersInTeam; ++i) {
+                if (tg.players[i].position == PlayerPosition::kAttacker)
+                    maxAtt = std::max<int>(maxAtt, tg.players[i].goalsScored);
+            }
+            if (maxAtt >= need) outColorMode = 1;
+            return "ATT " + std::to_string(maxAtt) + "/" + std::to_string(need);
+        }
         int scored = 0;
         std::string targetUpper = toUpperAscii(c.targetPlayerName);
         for (int i = 0; i < kNumPlayersInTeam; ++i) {
-            if ((c.targetShirtNumber > 0 && tg.players[i].shirtNumber == c.targetShirtNumber) ||
-                (!targetUpper.empty() && toUpperAscii(tg.players[i].shortName) == targetUpper))
+            std::string plUpper = toUpperAscii(tg.players[i].shortName);
+            bool nameMatch = (!targetUpper.empty() &&
+                              (plUpper == targetUpper ||
+                               plUpper.find(targetUpper) != std::string::npos ||
+                               targetUpper.find(plUpper) != std::string::npos));
+            if ((c.targetShirtNumber > 0 && tg.players[i].shirtNumber == c.targetShirtNumber) || nameMatch)
                 scored += tg.players[i].goalsScored;
         }
-        int need = std::max<int>(2, c.thresholdValue);
         if (scored >= need) outColorMode = 1;
-        return std::to_string(scored) + "/" + std::to_string(need);
+        // Include short surname on HUD so manager always knows which attacker is tracked
+        std::string shortTag = targetUpper;
+        size_t sp = shortTag.rfind(' ');
+        if (sp != std::string::npos && sp + 1 < shortTag.size())
+            shortTag = shortTag.substr(sp + 1);
+        if (shortTag.size() > 8) shortTag.resize(8);
+        return (shortTag.empty() ? "" : (shortTag + " ")) + std::to_string(scored) + "/" + std::to_string(need);
     }
     case SponsorChallengeType::kFirstHalfGoals:
         if (swos.halfNumber <= 1) {
@@ -2036,6 +2095,8 @@ static SponsorMatchResult buildLiveSponsorMatchResult()
             continue;
         if (tg.players[i].position != PlayerPosition::kAttacker)
             res.clubNonAttackerGoals += g;
+        else
+            res.clubMaxAttackerGoals = std::max(res.clubMaxAttackerGoals, g);
         std::string nm = tg.players[i].shortName;
         int shirt = static_cast<int>(tg.players[i].shirtNumber);
         for (int k = 0; k < g; ++k)

@@ -136,8 +136,16 @@ bool resolveHumanCareerSide(const TeamGame *topTeam, const TeamGame *bottomTeam,
     if (!tf1) tf1 = swos.playMatchTeam1Ptr.asAligned();
     if (!tf2) tf2 = swos.playMatchTeam2Ptr.asAligned();
 
-    bool t1 = (swos.topTeamData.playerNumber != 0 || swos.topTeamData.playerCoachNumber != 0 || swos.topTeamData.isPlCoach != 0);
-    bool t2 = (swos.bottomTeamData.playerNumber != 0 || swos.bottomTeamData.playerCoachNumber != 0 || swos.bottomTeamData.isPlCoach != 0);
+    const TeamGeneralInfo *team1Data = &swos.topTeamData;
+    const TeamGeneralInfo *team2Data = &swos.bottomTeamData;
+    if (swos.topTeamData.inGameTeamPtr.asAligned() == &swos.bottomTeamInGame ||
+        swos.bottomTeamData.inGameTeamPtr.asAligned() == &swos.topTeamInGame) {
+        team1Data = &swos.bottomTeamData;
+        team2Data = &swos.topTeamData;
+    }
+
+    bool t1 = (team1Data->playerNumber != 0 || team1Data->playerCoachNumber != 0 || team1Data->isPlCoach != 0);
+    bool t2 = (team2Data->playerNumber != 0 || team2Data->playerCoachNumber != 0 || team2Data->isPlCoach != 0);
     if (!t1 && !t2) {
         if (tf1) t1 = (tf1->teamControls == kPlayerCoach || tf1->teamControls == kCoach);
         if (tf2) t2 = (tf2->teamControls == kPlayerCoach || tf2->teamControls == kCoach);

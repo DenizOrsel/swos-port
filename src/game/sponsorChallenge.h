@@ -143,6 +143,7 @@ struct SponsorMatchResult {
     int clubLateGoals = 0;     // minute >= 75
     int clubSetPieceGoals = 0; // corner window or direct free kick
     int clubNonAttackerGoals = 0;
+    int clubMaxAttackerGoals = 0; // max goals scored by any single ATT on the human club
     // (shirtNumber, shortName) for each goal scored by the human club (excluding own goals)
     std::vector<std::pair<int, std::string>> scorerEntries;
     // (shirtNumber, shortName) for each assist recorded by the human club
