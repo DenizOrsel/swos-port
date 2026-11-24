@@ -481,7 +481,8 @@ int32_t getStadiumFormTicketAdjustment(const StadiumData& stadium)
 int32_t getEffectiveStadiumTicketPrice(const StadiumData& stadium, int divisionTier)
 {
     int32_t base = getStadiumTicketPriceForDivision(divisionTier, stadium.ticketPolicy);
-    return std::max<int32_t>(2, base + getStadiumFormTicketAdjustment(stadium));
+    int32_t transferAdj = (stadium.transferBuzzHomeMatches > 0) ? static_cast<int32_t>(stadium.transferTicketDelta) : 0;
+    return std::max<int32_t>(2, base + getStadiumFormTicketAdjustment(stadium) + transferAdj);
 }
 
 double getStadiumFormDemandMultiplier(const StadiumData& stadium)
@@ -777,11 +778,14 @@ StadiumMatchdayReport stadiumCalculateMatchday(
     else if (stadium.ticketPolicy == TicketPolicy::kExpensive)
         mPrice = 0.78;
 
-    // Coach Charisma multiplier M_charisma (0.90 .. 1.15) & Last-5 Form demand multiplier (0.88 .. 1.12)
+    // Coach Charisma multiplier M_charisma (0.90 .. 1.15), Last-5 Form (0.88 .. 1.12), & Transfer Buzz
     double mCharisma = getPressAttendanceMultiplier(charismaPoints);
     double mForm = getStadiumFormDemandMultiplier(stadium);
+    double mTransfer = (stadium.transferBuzzHomeMatches > 0)
+        ? std::clamp(1.0 + static_cast<double>(stadium.transferDemandPctDelta) / 100.0, 0.75, 1.30)
+        : 1.0;
 
-    double rawAtt = std::floor(static_cast<double>(rep.maxCapacity) * fBase * mOpp * mPrice * mCharisma * mForm);
+    double rawAtt = std::floor(static_cast<double>(rep.maxCapacity) * fBase * mOpp * mPrice * mCharisma * mForm * mTransfer);
     rep.attendance = static_cast<uint32_t>(std::clamp<double>(rawAtt, 1000.0, static_cast<double>(rep.maxCapacity)));
     rep.fillPct = static_cast<int>(std::lround((static_cast<double>(rep.attendance) * 100.0) /
                                                static_cast<double>(rep.maxCapacity)));
@@ -789,6 +793,9 @@ StadiumMatchdayReport stadiumCalculateMatchday(
 
     rep.baseTicketPrice = getStadiumTicketPriceForDivision(divisionTier, stadium.ticketPolicy);
     rep.formTicketDelta = getStadiumFormTicketAdjustment(stadium);
+    rep.transferTicketDelta = (stadium.transferBuzzHomeMatches > 0) ? static_cast<int32_t>(stadium.transferTicketDelta) : 0;
+    if (stadium.transferBuzzHomeMatches > 0 && stadium.transferBuzzLabel[0] != '\0')
+        rep.transferBuzzLabel = stadium.transferBuzzLabel;
     rep.ticketPrice = getEffectiveStadiumTicketPrice(stadium, divisionTier);
     rep.ticketRevenue = static_cast<int64_t>(rep.attendance) * static_cast<int64_t>(rep.ticketPrice);
     rep.commercialBonusPct = std::clamp<int>(static_cast<int>(stadium.commercialLevel), 1, 5) * 10;
@@ -884,6 +891,24 @@ const StadiumData& getCurrentCareerStadium()
 void setCurrentCareerStadium(const StadiumData& data)
 {
     s_stadium = data;
+    syncStadiumToHotseatIfActive();
+}
+
+void applyStadiumTransferBuzz(int8_t ticketDelta, int8_t demandPctDelta, uint8_t homeMatches, const std::string& label)
+{
+    if (swos.g_gameType != kGameTypeCareer || HotseatInternal::isVmNationalSelector())
+        return;
+    ensureCurrentCareerStadiumInitialized();
+    if (!s_stadium.initialized)
+        return;
+    s_stadium.transferTicketDelta = std::clamp<int8_t>(ticketDelta, -4, 5);
+    s_stadium.transferDemandPctDelta = std::clamp<int8_t>(demandPctDelta, -20, 25);
+    s_stadium.transferBuzzHomeMatches = std::clamp<uint8_t>(homeMatches, 0, 10);
+    std::memset(s_stadium.transferBuzzLabel, 0, sizeof(s_stadium.transferBuzzLabel));
+    if (!label.empty()) {
+        std::strncpy(s_stadium.transferBuzzLabel, label.c_str(), sizeof(s_stadium.transferBuzzLabel) - 1);
+    }
+    s_stadium.ticketPrice = getEffectiveStadiumTicketPrice(s_stadium, readVmDivisionTier());
     syncStadiumToHotseatIfActive();
 }
 
@@ -1131,6 +1156,17 @@ void onPostMatchStadiumUpdate(bool isPlayedMatch)
         s_stadium.seasonUpkeepPaid += rep.upkeepCost;
         ++s_stadium.seasonHomeMatches;
 
+        // Tick down transfer buzz/backlash home-match modifier after this home game
+        if (s_stadium.transferBuzzHomeMatches > 0) {
+            --s_stadium.transferBuzzHomeMatches;
+            if (s_stadium.transferBuzzHomeMatches == 0) {
+                s_stadium.transferTicketDelta = 0;
+                s_stadium.transferDemandPctDelta = 0;
+                std::memset(s_stadium.transferBuzzLabel, 0, sizeof(s_stadium.transferBuzzLabel));
+            }
+            s_stadium.ticketPrice = getEffectiveStadiumTicketPrice(s_stadium, s_matchClubDivision);
+        }
+
         // Fire Theatre of Dreams (85k sellout) achievement hook
         achievementsOnStadiumMatchAttendance(
             static_cast<int>(s_stadium.capacityLevel),
@@ -1327,6 +1363,10 @@ bool saveStadiumSidecar(const std::string& path)
     ini.SetLongValue("stadium", "ticketPolicy", static_cast<long>(s_stadium.ticketPolicy));
     ini.SetLongValue("stadium", "ticketPrice", s_stadium.ticketPrice);
     ini.SetValue("stadium", "recentForm", s_stadium.recentForm);
+    ini.SetLongValue("stadium", "transferTicketDelta", s_stadium.transferTicketDelta);
+    ini.SetLongValue("stadium", "transferDemandPctDelta", s_stadium.transferDemandPctDelta);
+    ini.SetLongValue("stadium", "transferBuzzHomeMatches", s_stadium.transferBuzzHomeMatches);
+    ini.SetValue("stadium", "transferBuzzLabel", s_stadium.transferBuzzLabel);
 
     ini.SetBoolValue("project", "isActive", s_stadium.activeProject.isActive);
     ini.SetLongValue("project", "module", static_cast<long>(s_stadium.activeProject.module));
@@ -1373,6 +1413,13 @@ bool loadStadiumSidecar(const std::string& path)
                 d.recentForm[outIdx++] = ch;
         }
     }
+    d.transferTicketDelta = static_cast<int8_t>(std::clamp(ini.GetLongValue("stadium", "transferTicketDelta", 0), -4L, 5L));
+    d.transferDemandPctDelta = static_cast<int8_t>(std::clamp(ini.GetLongValue("stadium", "transferDemandPctDelta", 0), -20L, 25L));
+    d.transferBuzzHomeMatches = static_cast<uint8_t>(std::clamp(ini.GetLongValue("stadium", "transferBuzzHomeMatches", 0), 0L, 10L));
+    const char *tbLbl = ini.GetValue("stadium", "transferBuzzLabel", "");
+    std::memset(d.transferBuzzLabel, 0, sizeof(d.transferBuzzLabel));
+    if (tbLbl && tbLbl[0] != '\0')
+        std::strncpy(d.transferBuzzLabel, tbLbl, sizeof(d.transferBuzzLabel) - 1);
 
     d.activeProject.isActive = ini.GetBoolValue("project", "isActive", false);
     d.activeProject.module = static_cast<StadiumModuleType>(std::clamp(ini.GetLongValue("project", "module", 0), 0L, 4L));
@@ -1696,12 +1743,16 @@ static void drawStadiumFacilitiesMenu()
             s_stadium, div, estimateClubRankFromSeasonRecord(), 8, false, readCurrentCharismaPoints());
         std::string formTag;
         if (est.formTicketDelta > 0)
-            formTag = "+" + std::to_string(est.formTicketDelta) + "F=";
+            formTag += "+" + std::to_string(est.formTicketDelta) + "F";
         else if (est.formTicketDelta < 0)
-            formTag = std::to_string(est.formTicketDelta) + "F=";
+            formTag += std::to_string(est.formTicketDelta) + "F";
+        if (est.transferTicketDelta > 0)
+            formTag += "+" + std::to_string(est.transferTicketDelta) + "H";
+        else if (est.transferTicketDelta < 0)
+            formTag += std::to_string(est.transferTicketDelta) + "H";
         std::string tickLeft = "[T] TICKETS: < " + std::string(getTicketPolicyName(s_stadium.ticketPolicy)) +
                                " (GBP " + std::to_string(est.baseTicketPrice) +
-                               (formTag.empty() ? "" : (" " + formTag + "GBP " + std::to_string(est.ticketPrice))) + ") >";
+                               (formTag.empty() ? "" : (" " + formTag + "=GBP " + std::to_string(est.ticketPrice))) + ") >";
         int fScore = getStadiumFormScore(s_stadium);
         std::string formDisp = s_stadium.recentForm[0]
             ? ("FORM(5): " + std::string(s_stadium.recentForm) + " (" + (fScore >= 0 ? "+" : "") + std::to_string(fScore) + ")")
@@ -1734,6 +1785,20 @@ static void drawStadiumFacilitiesMenu()
             drawCompactTextCentered(r, atlas, offX + 160.0f * gameScale, offY + 163.0f * gameScale,
                 fitPx(bLine, px, 300.0f * gameScale), bLine, cyanCol, 255, true);
             std::string hint = "[1-5] Upgrade  |  [T / Left-Right] Ticket Price  |  [ESC] Back";
+            drawCompactTextCentered(r, atlas, offX + 160.0f * gameScale, offY + 171.5f * gameScale,
+                fitPx(hint, px * 0.85f, 300.0f * gameScale), hint, mutedCol, 220, false);
+        } else if (s_stadium.transferBuzzHomeMatches > 0) {
+            std::string buzzLine = "TRANSFER BUZZ: " +
+                std::string(s_stadium.transferBuzzLabel[0] ? s_stadium.transferBuzzLabel : "ACTIVE") +
+                " (" + (s_stadium.transferTicketDelta >= 0 ? "+GBP " : "-GBP ") +
+                std::to_string(std::abs(static_cast<int>(s_stadium.transferTicketDelta))) + ", " +
+                (s_stadium.transferDemandPctDelta >= 0 ? "+" : "") +
+                std::to_string(static_cast<int>(s_stadium.transferDemandPctDelta)) + "% CROWD, " +
+                std::to_string(s_stadium.transferBuzzHomeMatches) + " HOME LEFT)";
+            drawCompactTextCentered(r, atlas, offX + 160.0f * gameScale, offY + 163.0f * gameScale,
+                fitPx(buzzLine, px * 0.90f, 300.0f * gameScale), buzzLine,
+                (s_stadium.transferDemandPctDelta >= 0 ? greenCol : redCol), 255, true);
+            std::string hint = "[1-5] Upgrade Module  |  [T / Left-Right] Ticket Price  |  [ESC] Back";
             drawCompactTextCentered(r, atlas, offX + 160.0f * gameScale, offY + 171.5f * gameScale,
                 fitPx(hint, px * 0.85f, 300.0f * gameScale), hint, mutedCol, 220, false);
         } else {

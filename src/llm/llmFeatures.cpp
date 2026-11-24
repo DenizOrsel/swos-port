@@ -10,6 +10,7 @@
 #include "achievements.h"
 #include "dressingRoomDilemma.h"
 #include "stadiumFacilities.h"
+#include "transferImpact.h"
 #include "continueAbortMenu.h"
 #include "controls.h"
 #include "darkRectangle.h"
@@ -64,6 +65,12 @@ struct SquadPlayerSnapshot {
     std::string name;
     std::string position;
     std::string marketValue;
+    int32_t valueGbp = 0;
+    uint8_t priceTier = 0;
+    int totalSkills = 0;
+    int maxSingleSkill = 0;
+    int shirtNumber = 0;
+    int careerSlot = -1;
 };
 
 int s_weeklyTickCounter = 0;
@@ -123,14 +130,20 @@ std::string formatThousandsPounds(uint16_t thousands)
     return buf;
 }
 
-std::string formatExactCareerPlayerMarketValue(uint16_t playerIdx, const PlayerFile *pf)
+int32_t computeExactCareerPlayerMarketValueGbp(uint16_t playerIdx, const PlayerFile *pf, std::string& outFormatted)
 {
-    if (!pf)
-        return "GBP 0";
-    if (pf->someFlag == 0x9A)
-        return "Reserve";
-    if ((pf->positionAndFace & 2u) != 0)
-        return "On Loan";
+    if (!pf) {
+        outFormatted = "GBP 0";
+        return 0;
+    }
+    if (pf->someFlag == 0x9A) {
+        outFormatted = "Reserve";
+        return 0;
+    }
+    if ((pf->positionAndFace & 2u) != 0) {
+        outFormatted = "On Loan";
+        return 0;
+    }
 
     // Invoke SWOS's exact native market-value index function (cseg_2484B) which applies
     // avgTeamValues[pf->price] + live career form/performance modifiers (cseg_94C7E),
@@ -146,7 +159,15 @@ std::string formatExactCareerPlayerMarketValue(uint16_t playerIdx, const PlayerF
     valIdx = std::clamp<uint16_t>(valIdx, 1, 80);
     constexpr size_t kAvgTeamValueBasesOfs = 331612;
     uint16_t thousands = *reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[kAvgTeamValueBasesOfs + static_cast<size_t>(valIdx) * 2]);
-    return formatThousandsPounds(thousands);
+    outFormatted = formatThousandsPounds(thousands);
+    return static_cast<int32_t>(thousands) * 1000;
+}
+
+std::string formatExactCareerPlayerMarketValue(uint16_t playerIdx, const PlayerFile *pf)
+{
+    std::string formatted;
+    computeExactCareerPlayerMarketValueGbp(playerIdx, pf, formatted);
+    return formatted;
 }
 
 const char *pitchConditionName(int pitchType)
@@ -248,7 +269,13 @@ std::string pickCareerSquadVoice(std::string& outClubName, std::string& outPlaye
 
 void showWrappedSwosPrompt(const char *header, const std::string& body)
 {
+#ifdef SWOS_TEST
+    (void)header;
+    (void)body;
+    return;
+#else
     showLlmReportDialog(header, body);
+#endif
 }
 
 bool waitForLlmWithIndicator(uint64_t requestId, int maxWaitMs, const char *statusLabel, std::string& outText)
@@ -886,10 +913,27 @@ void checkCareerSquadTransfersLlm()
         const auto *pf = reinterpret_cast<const PlayerFile *>(&SwosVM::g_memByte[ofs]);
         std::string pName = cleanSwosPlayerName(pf->playerName, sizeof(pf->playerName));
         if (!pName.empty() && pName.rfind("*ERR*", 0) != 0) {
+            std::string valFmt;
+            int32_t valGbp = computeExactCareerPlayerMarketValueGbp(slot, pf, valFmt);
+            int sPas = pf->passing & 0x07;
+            int sSht = (pf->shootingHeading >> 4) & 0x07;
+            int sHed = pf->shootingHeading & 0x07;
+            int sTkl = (pf->tacklingBallControl >> 4) & 0x07;
+            int sCtl = pf->tacklingBallControl & 0x07;
+            int sSpd = (pf->speedFinishing >> 4) & 0x07;
+            int sFin = pf->speedFinishing & 0x07;
+            int totSk = sPas + sSht + sHed + sTkl + sCtl + sSpd + sFin;
+            int maxSk = std::max({ sPas, sSht, sHed, sTkl, sCtl, sSpd, sFin });
             currentSquad.push_back({
                 std::move(pName),
                 playerPositionName(pf->positionAndFace),
-                formatExactCareerPlayerMarketValue(slot, pf)
+                std::move(valFmt),
+                valGbp,
+                pf->price,
+                totSk,
+                maxSk,
+                static_cast<int>(pf->shirtNumber),
+                static_cast<int>(slot)
             });
         }
     }
@@ -926,6 +970,8 @@ void checkCareerSquadTransfersLlm()
             removed.push_back(p);
     }
 
+    // Capture previous squad copy before overwriting snapshot so Transfer Impact knows top-2 stars
+    std::vector<SquadPlayerSnapshot> prevSquadCopy = prevSquad;
     s_squadSnapshots[teamId] = std::move(currentSquad);
 
     // Ignore bulk resets / season-init squad rebuilds
@@ -951,6 +997,29 @@ void checkCareerSquadTransfersLlm()
     const auto& cfg = getLlmConfig();
     if (!cfg.enabled || !cfg.features.transferNegotiations)
         return;
+
+    // Apply Transfer Market Impact V2 (Marquee 5-home-game surge + shirt sales, Hidden Gem, Star Sale backlash, Swap verdict)
+    auto toImpactVec = [](const std::vector<SquadPlayerSnapshot>& src) {
+        std::vector<TransferPlayerRecord> out;
+        out.reserve(src.size());
+        for (const auto& s : src) {
+            out.push_back({ s.name, s.position, s.marketValue, s.valueGbp, s.priceTier,
+                            s.totalSkills, s.maxSingleSkill, s.shirtNumber, s.careerSlot });
+        }
+        return out;
+    };
+    bool modalAlreadyShown = false;
+    std::string impactSummary = handleCareerTransferImpact(
+        clubName, toImpactVec(added), toImpactVec(removed), toImpactVec(prevSquadCopy), modalAlreadyShown);
+
+    if (modalAlreadyShown)
+        return;
+
+    if (!cfg.enabled) {
+        if (!impactSummary.empty())
+            showWrappedSwosPrompt("TRANSFER MARKET IMPACT", impactSummary);
+        return;
+    }
 
     auto formatPlayerList = [](const std::vector<SquadPlayerSnapshot>& list) {
         std::string s;
@@ -1013,7 +1082,10 @@ void checkCareerSquadTransfersLlm()
 
     std::string reply;
     if (waitForLlmWithIndicator(reqId, cfg.timeoutMs, "CHECKING TRANSFER DESK", reply)) {
-        showWrappedSwosPrompt("TRANSFER DESK", reply);
+        std::string combined = impactSummary.empty() ? reply : (impactSummary + "\n" + reply);
+        showWrappedSwosPrompt("TRANSFER DESK", combined);
+    } else if (!impactSummary.empty()) {
+        showWrappedSwosPrompt("TRANSFER MARKET IMPACT", impactSummary);
     }
 }
 
@@ -1247,26 +1319,8 @@ void onCareerWeeklyTickLlm()
         return;
 
     ++s_weeklyTickCounter;
-    if ((s_weeklyTickCounter % 6) != 0)
+    if ((s_weeklyTickCounter % 8) != 0)
         return;
 
-    const auto& cfg = getLlmConfig();
-    if (!cfg.enabled || !cfg.features.transferNegotiations)
-        return;
-
-    std::string club, player, role;
-    if (pickCareerSquadVoice(club, player, role).empty())
-        return;
-
-    std::string sys = "You are a well-connected 1997 football transfer agent whispering inside gossip. Write naturally in 2 sentences. Plain text only.";
-    std::string prompt = "Club: " + club + ". Write a lively 2-sentence transfer market whisper mentioning " + player + " (" + role + ") and rival interest. Plain text only.";
-
-    uint64_t reqId = enqueueLlmRequest(sys, prompt);
-    if (reqId == 0)
-        return;
-
-    std::string reply;
-    if (waitForLlmWithIndicator(reqId, cfg.timeoutMs, "TRANSFER RUMOURS", reply)) {
-        showWrappedSwosPrompt("TRANSFER WHISPER", reply);
-    }
+    onCareerWeeklyRivalTapUpEvent();
 }

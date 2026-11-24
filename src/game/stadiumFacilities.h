@@ -53,6 +53,12 @@ struct StadiumData {
     // Last-5 match results ('W', 'D', 'L', oldest -> newest) for dynamic form-based ticket pricing
     char recentForm[6] = {};
 
+    // Transfer market home-match buzz/backlash modifier (auto-decrements after each home match)
+    int8_t transferTicketDelta = 0;
+    int8_t transferDemandPctDelta = 0;
+    uint8_t transferBuzzHomeMatches = 0;
+    char transferBuzzLabel[32] = {};
+
     // Seasonal tracking
     uint32_t seasonTotalAttendance = 0;
     int64_t seasonGateRevenue = 0;
@@ -84,6 +90,8 @@ struct StadiumMatchdayReport {
     int fillPct = 0;
     int32_t baseTicketPrice = 0;
     int32_t formTicketDelta = 0;
+    int32_t transferTicketDelta = 0;
+    std::string transferBuzzLabel;
     int32_t ticketPrice = 0;
     int64_t ticketRevenue = 0;
     int commercialBonusPct = 0;
@@ -141,6 +149,7 @@ void resetStadiumFacilitiesState();
 const StadiumData& getCurrentCareerStadium();
 void ensureCurrentCareerStadiumInitialized();
 void setCurrentCareerStadium(const StadiumData& data);
+void applyStadiumTransferBuzz(int8_t ticketDelta, int8_t demandPctDelta, uint8_t homeMatches, const std::string& label);
 
 bool isStadiumManagingHomeGateReceipts();
 void applyStadiumPitchQualityOverride(int& pitchType);

@@ -11,6 +11,7 @@
 #include "pressCharisma.h"
 #include "dressingRoomDilemma.h"
 #include "preMatchAssistant.h"
+#include "transferImpact.h"
 #include "supporterStream.h"
 #include "tabloidNewspaper.h"
 #include "achievements.h"
@@ -1379,6 +1380,41 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
             applyPendingDressingRoomEffectToTeam(drTeam, drEff);
             assertEqual(drTeam.players[3].finishing, byte{ 7 }); // clamped safely to 7
             assertEqual(drTeam.players[3].speed, byte{ 7 });
+
+            // Transfer Market Impact V2: exact user marquee thresholds, skill-to-price hidden gems, shirt sales, & stadium buzz
+            assertEqual(getMarqueeSigningThresholdGbp(3), int32_t{ 400000 });   // DIV 3 >= 400K
+            assertEqual(getMarqueeSigningThresholdGbp(2), int32_t{ 700000 });   // DIV 2 >= 700K
+            assertEqual(getMarqueeSigningThresholdGbp(1), int32_t{ 1000000 });  // DIV 1 >= 1M
+            assertEqual(getMarqueeSigningThresholdGbp(0), int32_t{ 3000000 });  // PREMIERSHIP >= 3M
+
+            assertTrue(classifyIncomingTransfer(400000, 3, 25, 5, 150000) == IncomingTransferTier::kMarqueeStar);
+            assertTrue(classifyIncomingTransfer(350000, 3, 25, 5, 150000) == IncomingTransferTier::kSquadAddition);
+            assertTrue(classifyIncomingTransfer(180000, 3, 30, 6, 200000) == IncomingTransferTier::kHiddenGem);
+            assertTrue(classifyIncomingTransfer(3000000, 0, 35, 7, 1500000) == IncomingTransferTier::kMarqueeStar);
+            assertTrue(computeMarqueeShirtSalesWindfall(1000000, 5) > computeMarqueeShirtSalesWindfall(1000000, 1));
+
+            // Stadium transfer buzz adjusts effective ticket price & crowd demand cleanly
+            StadiumData buzzStad = stadiumInitForClub("BRIGHTON", 3, 8, 303);
+            int32_t baseTick = getEffectiveStadiumTicketPrice(buzzStad, 3);
+            buzzStad.transferTicketDelta = 2;
+            buzzStad.transferDemandPctDelta = 15;
+            buzzStad.transferBuzzHomeMatches = 5;
+            assertEqual(getEffectiveStadiumTicketPrice(buzzStad, 3), baseTick + 2);
+            auto repNoBuzz = stadiumCalculateMatchday(stadiumInitForClub("BRIGHTON", 3, 8, 303), 3, 10, 10, false, 50, "OPP");
+            auto repBuzz = stadiumCalculateMatchday(buzzStad, 3, 10, 10, false, 50, "OPP");
+            assertTrue(repBuzz.attendance > repNoBuzz.attendance);
+            assertEqual(repBuzz.transferTicketDelta, int32_t{ 2 });
+
+            PendingTransferMatchEffect deb;
+            deb.active = true;
+            deb.targetShirtNumber = 9;
+            deb.speedDelta = +1;
+            deb.finishingDelta = +1;
+            TeamGame debTeam = myTg;
+            debTeam.players[3].shirtNumber = 9;
+            applyPendingTransferEffectToTeam(debTeam, deb);
+            assertEqual(debTeam.players[3].finishing, byte{ 7 });
+            assertEqual(debTeam.players[3].speed, byte{ 7 });
         }
         std::remove(tmpStd);
         resetStadiumFacilitiesState();

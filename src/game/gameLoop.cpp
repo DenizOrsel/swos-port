@@ -40,6 +40,7 @@
 #include "stadiumMenu.h"
 #include "dressingRoomDilemma.h"
 #include "preMatchAssistant.h"
+#include "transferImpact.h"
 #include "tabloidNewspaper.h"
 #include "replayExitMenu.h"
 #include "llmFeatures.h"
@@ -232,6 +233,7 @@ void gameLoop(TeamGame *topTeam, TeamGame *bottomTeam)
         showPostMatchAssistantPayoffIfNeeded();
         showPostMatchNewspaperIfReady();
         showPostMatchPressConferenceIfReady();
+        onCareerMatchFinishedTransferImpact();
         onCareerMatchCompletedLlm(swos.statsTeam1Goals, swos.statsTeam2Goals);
     }
 }
@@ -242,6 +244,7 @@ void showStadiumScreenAndFadeOutMusic(TeamGame *topTeam, TeamGame *bottomTeam, i
         showStadiumMenu(topTeam, bottomTeam, maxSubstitutes, [&]() {
             initMatch(topTeam, bottomTeam, true);
             applyPendingDressingRoomEffectsForMatch(topTeam, bottomTeam);
+            applyPendingTransferEffectsForMatch(topTeam, bottomTeam);
             onPreMatchStadiumSnapshot(topTeam, bottomTeam);
             beginPreMatchAssistantBriefing(topTeam, bottomTeam);
             beginSponsorChallengeGeneration(topTeam, bottomTeam);
@@ -253,6 +256,7 @@ void showStadiumScreenAndFadeOutMusic(TeamGame *topTeam, TeamGame *bottomTeam, i
     } else {
         initMatch(topTeam, bottomTeam, true);
         applyPendingDressingRoomEffectsForMatch(topTeam, bottomTeam);
+        applyPendingTransferEffectsForMatch(topTeam, bottomTeam);
         onPreMatchStadiumSnapshot(topTeam, bottomTeam);
         beginPreMatchAssistantBriefing(topTeam, bottomTeam);
         beginSponsorChallengeGeneration(topTeam, bottomTeam);

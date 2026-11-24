@@ -13,6 +13,7 @@
 #include "pressCharisma.h"
 #include "dressingRoomDilemma.h"
 #include "preMatchAssistant.h"
+#include "transferImpact.h"
 #include "stadiumFacilities.h"
 #include "stats.h"
 #include "swos.h"
@@ -1629,6 +1630,7 @@ MatchTelemetrySnapshot captureMatchTelemetrySnapshot()
     snap.stadiumFacilitiesSummary = formatStadiumContextForTelemetry();
     snap.preMatchTacticalSummary = formatPreMatchAssistantContextForTelemetry();
     snap.dressingRoomSummary = formatDressingRoomContextForTelemetry();
+    snap.transferImpactSummary = formatTransferImpactContextForTelemetry();
     snap.recentEvents.assign(s_recentEvents.begin(), s_recentEvents.end());
     return snap;
 }
@@ -1686,6 +1688,8 @@ std::string formatTelemetryPromptBlock(const MatchTelemetrySnapshot& snap)
         out += "\n" + snap.preMatchTacticalSummary;
     if (!snap.dressingRoomSummary.empty())
         out += "\n" + snap.dressingRoomSummary;
+    if (!snap.transferImpactSummary.empty())
+        out += "\n" + snap.transferImpactSummary;
 
     if (!snap.recentEvents.empty()) {
         out += "\nRecent events:";
