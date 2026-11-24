@@ -39,7 +39,7 @@ using namespace PressConferenceMenu;
 
 namespace {
 
-constexpr size_t kMaxPressAnswerChars = 160;
+constexpr size_t kMaxPressAnswerChars = 2048;
 
 CareerPressState s_state;
 PressConferencePrompt s_activePrompt;
@@ -750,8 +750,10 @@ void drawPressConferenceFrame(bool hoverSubmit, bool hoverNoComment)
         }
         int inMaxUnits = std::max(80, static_cast<int>((278.0f * gameScale) / px));
         auto inLines = wrapCompactTextUnits(displayInput, inMaxUnits);
+        constexpr size_t kVisibleInputLines = 5;
+        size_t startLine = (inLines.size() > kVisibleInputLines) ? (inLines.size() - kVisibleInputLines) : 0;
         float inY = offY + (s_userTypedAnswer.empty() ? 110.0f : 98.0f) * gameScale;
-        for (size_t li = 0; li < inLines.size() && li < 5; ++li) {
+        for (size_t li = startLine; li < inLines.size(); ++li) {
             drawCompactText(r, atlas, offX + 20.0f * gameScale, inY, px, inLines[li], whiteCol, 255, false);
             inY += 9.5f * px;
         }
