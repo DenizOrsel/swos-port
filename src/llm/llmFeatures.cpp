@@ -1132,11 +1132,16 @@ void onCareerWeeklyTickLlm()
     if (!cfg.enabled || (!cfg.features.dressingRoomVoices && !cfg.features.transferNegotiations))
         return;
 
+    bool wantMarket = cfg.features.transferNegotiations && ((s_weeklyTickCounter % 6) == 0);
+    bool wantDressing = cfg.features.dressingRoomVoices && !wantMarket;
+    if (!wantMarket && !wantDressing)
+        return;
+
     std::string club, player, role;
     if (pickCareerSquadVoice(club, player, role).empty())
         return;
 
-    bool isMarket = cfg.features.transferNegotiations && ((s_weeklyTickCounter % 6) == 0);
+    bool isMarket = wantMarket;
     std::string sys = isMarket
         ? "You are a well-connected 1997 football transfer agent whispering inside gossip. Write naturally in 2 sentences. Plain text only."
         : "You are a candid 1997 squad footballer chatting at the training ground. Write naturally in 2 sentences. Plain text only.";
