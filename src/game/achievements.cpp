@@ -102,7 +102,7 @@ static const std::array<AchievementDef, kAchievementCount> kCatalog = {{
     { AchievementId::kStadiumFirstUpgrade,"ACH_STADIUM_FIRST_UPGRADE","Breaking Ground",       "Complete your first Stadium or Facility upgrade.",                    AchievementCategory::kManagement, 10, 1, false },
     { AchievementId::kFortress85k,        "ACH_FORTRESS_85K",        "Theatre of Dreams",      "Expand Stadium Capacity to Level 10 (85,000 seats) and sell out.",    AchievementCategory::kManagement, 50, 1, false },
     { AchievementId::kMaxFacilities,      "ACH_MAX_FACILITIES",      "Five-Star Complex",      "Upgrade Pitch, Training, Medical, and Commercial all to Level 5.",    AchievementCategory::kManagement, 50, 1, false },
-    { AchievementId::kIconicCharisma,     "ACH_ICONIC_CHARISMA",     "Box Office Boss",        "Reach 90+ Coach Charisma Points (Iconic tier) in Career Mode.",       AchievementCategory::kManagement, 30, 1, false },
+    { AchievementId::kIconicCharisma,     "ACH_ICONIC_CHARISMA",     "Box Office Boss",        "Reach Coach Charisma Level 7 (Box Office Boss, 600+ CP) in Career.", AchievementCategory::kManagement, 30, 1, false },
     { AchievementId::kSponsorStreak,      "ACH_SPONSOR_STREAK",      "Sponsor's Darling",      "Complete 10 Pre-Match Sponsor Challenges in Career Mode.",            AchievementCategory::kManagement, 30, 10, false },
 
     // --- V2 Expansion: 50 New Achievements (50..99) ---
@@ -1122,7 +1122,7 @@ void achievementsOnNationalTeamCallup()
 
 void achievementsOnCharismaChanged(int16_t charismaPoints)
 {
-    if (charismaPoints >= 90)
+    if (charismaPoints >= 600)
         unlockAchievement(AchievementId::kIconicCharisma, true);
 }
 

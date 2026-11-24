@@ -442,6 +442,9 @@ void CareerOverInit_OnEnter()
 void Hotseat_FilterNewJobOffer()
 {
     HotseatCareerManager::get().onFilterNewJobOffer();
+    if (!SwosVM::flags.zero && !shouldAllowJobOfferTeamIdByCharisma(D0.asWord())) {
+        SwosVM::flags.zero = true;
+    }
 }
 
 void Hotseat_OnAfterAcceptJobOffer()

@@ -1,5 +1,5 @@
 //
-// Native Pre-Match & Post-Match Press Conference Menu
+// Native Pre-Match & Post-Match Press Conference V2 Menu (Free-Text Answer + NO COMMENT)
 //
 
 #include "common.mh"
@@ -8,70 +8,39 @@ Menu pressConferenceMenu
 {
     onInit: initPressConferenceMenu
     onDraw: drawPressConferenceMenu
-    initialEntry: opt1
+    initialEntry: answerBtn
 
     Entry header {
         x: 24
         y: 0
         width: 256
-        height: 14
+        height: 13
 
         color: kHeaderColor
         text: @kAlloc
     }
 
-    Entry opt1 {
+    Entry answerBtn {
         x: 8
-        y: 72
-        width: 288
-        height: 24
+        y: 176
+        width: 150
+        height: 16
 
-        downEntry: opt2
-        onSelect: selectPressOption1
-    }
-
-    Entry opt2 {
-        x: 8
-        y: 99
-        width: 288
-        height: 24
-
-        upEntry: opt1
-        downEntry: opt3
-        onSelect: selectPressOption2
-    }
-
-    Entry opt3 {
-        x: 8
-        y: 126
-        width: 288
-        height: 24
-
-        upEntry: opt2
-        downEntry: opt4
-        onSelect: selectPressOption3
-    }
-
-    Entry opt4 {
-        x: 8
-        y: 153
-        width: 288
-        height: 24
-
-        upEntry: opt3
-        downEntry: skipBtn
-        onSelect: selectPressOption4
-    }
-
-    Entry skipBtn {
-        x: 92
-        y: 181
-        width: 120
-        height: 15
-
-        color: kExitColor
+        color: @kGreen
         text: @kAlloc
-        upEntry: opt4
-        onSelect: skipOrContinuePressConference
+        rightEntry: noCommentBtn
+        onSelect: submitOrContinuePressConference
+    }
+
+    Entry noCommentBtn {
+        x: 164
+        y: 176
+        width: 132
+        height: 16
+
+        color: @kRed
+        text: @kAlloc
+        leftEntry: answerBtn
+        onSelect: noCommentPressConference
     }
 }

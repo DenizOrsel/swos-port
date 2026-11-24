@@ -319,7 +319,7 @@ struct HotseatPlayerContext {
     MultiMatchContract sponsorContract;
 
     // LLM Press Conference & Coach Charisma career state (serialized in PRSS trailer)
-    int16_t pressCharismaPoints = 50;
+    int16_t pressCharismaPoints = 0;
     uint16_t pressInterviewsCompleted = 0;
     int64_t pressLastSeasonBonus = 0;
     uint8_t pressLastPreMatchStance = 0;

@@ -887,12 +887,12 @@ bool HotseatCareerManager::loadFromFile(const std::string& path)
                         !readBinary(in, p.pressLastSeasonBonus) ||
                         !readBinary(in, p.pressLastPreMatchStance) ||
                         !readBinary(in, quoteLen) ||
-                        quoteLen > 96) {
+                        quoteLen > 128) {
                         reset();
                         logWarn("HotseatCareerManager: Corrupted PRSS press charisma trailer in %s", path.c_str());
                         return false;
                     }
-                    p.pressCharismaPoints = std::clamp<int16_t>(p.pressCharismaPoints, 0, 100);
+                    p.pressCharismaPoints = std::clamp<int16_t>(p.pressCharismaPoints, 0, 1000);
                     p.pressLastPreMatchQuote.assign(quoteLen, '\0');
                     if (quoteLen > 0 && !in.read(p.pressLastPreMatchQuote.data(), quoteLen)) {
                         reset();

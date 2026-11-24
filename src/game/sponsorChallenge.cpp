@@ -14,6 +14,7 @@
 #include "matchTelemetry.h"
 #include "menuBackground.h"
 #include "menus.h"
+#include "pressCharisma.h"
 #include "render.h"
 #include "stadiumFacilities.h"
 #include "stats.h"
@@ -778,8 +779,16 @@ static void drawSponsorChallengeMenu()
         }
 
         int vipPct = getCurrentCareerCommercialSponsorBonusPct();
-        std::string bankStr = (vipPct > 0 ? ("VIP +" + std::to_string(vipPct) + "% | ") : "") +
-                              "Bank: " + formatSponsorPounds(readCurrentClubBalance());
+        int chrPct = getCurrentCareerCharismaSponsorBonusPct();
+        int totBoost = vipPct + chrPct;
+        std::string boostTag;
+        if (vipPct > 0 && chrPct > 0)
+            boostTag = "VIP+CHR +" + std::to_string(totBoost) + "% | ";
+        else if (vipPct > 0)
+            boostTag = "VIP +" + std::to_string(vipPct) + "% | ";
+        else if (chrPct > 0)
+            boostTag = "CHR +" + std::to_string(chrPct) + "% | ";
+        std::string bankStr = boostTag + "Bank: " + formatSponsorPounds(readCurrentClubBalance());
         drawCompactTextRightAligned(r, atlas, offX + 300.0f * gameScale, offY + 14.5f * gameScale, px,
             bankStr, yellowCol, 255, true);
 
@@ -1508,9 +1517,9 @@ void beginSponsorChallengeGeneration(const TeamGame *topTeam, const TeamGame *bo
     s_state.offeredSingleMatchCount = singleCount;
 
     auto applyVipSponsorBoost = [&](int32_t baseAmt) -> int32_t {
-        int vipPct = getCurrentCareerCommercialSponsorBonusPct();
-        if (vipPct <= 0) return baseAmt;
-        int32_t boosted = baseAmt + (baseAmt * vipPct) / 100;
+        int boostPct = getCurrentCareerCommercialSponsorBonusPct() + getCurrentCareerCharismaSponsorBonusPct();
+        if (boostPct <= 0) return baseAmt;
+        int32_t boosted = baseAmt + (baseAmt * boostPct) / 100;
         return ((boosted + 500) / 1000) * 1000;
     };
 
@@ -1607,10 +1616,10 @@ void showPreMatchSponsorChallengeMenuIfReady()
             int singleCount = s_state.slot5IsContractOffer ? (kSponsorOfferedCount - 1) : kSponsorOfferedCount;
             auto parsed = parseLlmSponsorChallenges(
                 reply, s_matchClubName, s_matchOpponentName, s_matchDivisionTier, s_matchStarters, s_matchSeed, singleCount);
-            int vipPct = getCurrentCareerCommercialSponsorBonusPct();
+            int boostPct = getCurrentCareerCommercialSponsorBonusPct() + getCurrentCareerCharismaSponsorBonusPct();
             for (int i = 0; i < singleCount && i < static_cast<int>(parsed.size()); ++i) {
-                if (vipPct > 0) {
-                    int32_t boosted = parsed[i].rewardAmount + (parsed[i].rewardAmount * vipPct) / 100;
+                if (boostPct > 0) {
+                    int32_t boosted = parsed[i].rewardAmount + (parsed[i].rewardAmount * boostPct) / 100;
                     parsed[i].rewardAmount = ((boosted + 500) / 1000) * 1000;
                 }
                 s_state.offered[i] = parsed[i];
