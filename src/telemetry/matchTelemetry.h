@@ -106,4 +106,17 @@ double computePlayerMatchRating(
     int gkSaves, int goalsConcededByGk, bool isGk,
     int yellowCards, int redCards, bool wonMatch, bool lostMatch);
 
+struct MatchMotmSummary {
+    bool valid = false;
+    int teamNum = 1;
+    std::string name;
+    std::string team;
+    std::string pos;
+    int goals = 0;
+    int assists = 0;
+    int gkSaves = 0;
+    double rating = 0.0;
+};
+
+MatchMotmSummary getMatchManOfTheMatch();
 bool exportMatchTelemetryJsonToPath(const std::string& fullPath);

@@ -1974,3 +1974,31 @@ std::string getLiveStadiumAndFormStreamNote()
     }
     return out;
 }
+
+std::string formatLastStadiumOutcomeForNewspaper()
+{
+    if (swos.g_gameType != kGameTypeCareer || HotseatInternal::isVmNationalSelector() || !s_stadium.initialized)
+        return {};
+
+    if (s_lastReport.valid && s_lastReport.isHomeMatch && s_lastReport.attendance > 0) {
+        std::string out = "Crowd: " + formatNumberCommas(s_lastReport.attendance) + "/" +
+                          formatNumberCommas(s_lastReport.maxCapacity) + " (" +
+                          std::to_string(s_lastReport.fillPct) + "%" +
+                          (s_lastReport.isSellout ? " SELLOUT!" : ")") +
+                          (s_lastReport.isSellout ? ")" : "");
+        if (s_stadium.recentForm[0] != '\0')
+            out += " | Form: " + std::string(s_stadium.recentForm);
+        return out;
+    }
+
+    if (s_stadium.activeProject.isActive) {
+        return std::string("Works: ") + getStadiumModuleName(s_stadium.activeProject.module) +
+               " -> Lvl " + std::to_string(s_stadium.activeProject.targetLevel) +
+               " (" + std::to_string(s_stadium.activeProject.matchesRemaining) + "m left)";
+    }
+
+    std::string form = describeRecentFormStreak(s_stadium.recentForm);
+    if (!form.empty())
+        return "Form: " + form;
+    return {};
+}

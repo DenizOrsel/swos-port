@@ -14,6 +14,7 @@
 #include "stadiumFacilities.h"
 #include "stats.h"
 #include "swos.h"
+#include "tabloidNewspaper.h"
 #include "updatePlayers.h"
 
 #include <algorithm>
@@ -1188,6 +1189,15 @@ void updateMatchTelemetry()
     if ((s_frameCounter % 30) == 0) {
         sampleTerritoryThirds();
         sampleSpatialPositionsAndTimeline();
+
+        // Fallback live action photo around 38'+ so even a 0-0 thriller gets a real pitch screenshot!
+        if (!hasTabloidMatchPhoto() && swos.gameStatePl == GameState::kInProgress &&
+            static_cast<int>(gameTimeInMinutes()) >= 38) {
+            const char *t1 = swos.topTeamInGame.teamName[0] ? swos.topTeamInGame.teamName : "HOME";
+            const char *t2 = swos.bottomTeamInGame.teamName[0] ? swos.bottomTeamInGame.teamName : "AWAY";
+            requestTabloidMatchPhoto(1, std::to_string(static_cast<int>(gameTimeInMinutes())) +
+                "' Action from " + std::string(t1) + " vs " + std::string(t2), 2);
+        }
     }
 }
 
@@ -1356,6 +1366,17 @@ void recordTelemetryMatchEvent(const char *eventType, bool isGoalEvent /* = fals
                 mech.shotX, mech.shotY, mech.shotZ, achGoal.isHeader, achGoal.isPenalty, achGoal.isFreeKick,
                 achGoal.isVolley, achGoal.withinCornerWindow,
                 achGoal.isOwnGoal ? "own_goal" : "goal");
+
+            // Snap an authentic 90s color action photo right as the ball hits the net / celebration begins!
+            int photoPrio = (scoringSideHuman || achGoal.isGoAheadGoal || achGoal.isOutsideBox || achGoal.matchMinute >= 70) ? 3 : 2;
+            std::string cap = std::to_string(achGoal.matchMinute) + "' ";
+            if (achGoal.isOwnGoal)
+                cap += "Own goal gifts " + teamName + " a goal!";
+            else if (!playerName.empty())
+                cap += playerName + (achGoal.isOutsideBox ? " unleashes a screamer for " : (achGoal.isHeader ? " powers a header for " : " strikes for ")) + teamName + "!";
+            else
+                cap += teamName + " find the back of the net!";
+            requestTabloidMatchPhoto(photoPrio, cap, 6);
         }
     } else if (isKeeperSave) {
         // Defending team's goalkeeper made the save against the attacking team's shot!
@@ -1738,6 +1759,53 @@ double computePlayerMatchRating(
     else if (lostMatch) r -= 0.20;
 
     return std::round(std::clamp(r, 3.0, 10.0) * 10.0) / 10.0;
+}
+
+MatchMotmSummary getMatchManOfTheMatch()
+{
+    MatchMotmSummary best;
+    const char *t1 = swos.topTeamInGame.teamName[0] ? swos.topTeamInGame.teamName : "HOME";
+    const char *t2 = swos.bottomTeamInGame.teamName[0] ? swos.bottomTeamInGame.teamName : "AWAY";
+    bool pens = (swos.playingPenalties != 0);
+    bool t1Won = pens ? (swos.team1PenaltyGoals > swos.team2PenaltyGoals) : (swos.statsTeam1Goals > swos.statsTeam2Goals);
+    bool t2Won = pens ? (swos.team2PenaltyGoals > swos.team1PenaltyGoals) : (swos.statsTeam2Goals > swos.statsTeam1Goals);
+
+    auto evalTeam = [&](int teamNum, const TeamGame& tg, const char *teamName, int oppGoals, bool won, bool lost) {
+        for (int i = 0; i < kNumPlayersInTeam; ++i) {
+            const auto& pl = tg.players[i];
+            const auto& pa = s_playerAnalytics[teamNum - 1][i];
+            if (pl.shortName[0] == '\0')
+                continue;
+            bool participated = (i < kNumPlayersInLineup) || (pa.touches > 0) || (pa.posSamples > 0) ||
+                                (pl.goalsScored > 0) || (pa.goals > 0);
+            if (!participated)
+                continue;
+            int goals = std::max(pa.goals, static_cast<int>(pl.goalsScored));
+            int shots = std::max(pa.shots, goals);
+            int sot = std::max(pa.shotsOnTarget, goals);
+            bool isGk = (i == 0 || pl.position == PlayerPosition::kGoalkeeper);
+            double rating = computePlayerMatchRating(
+                goals, pa.assists, sot, std::max(0, shots - sot),
+                pa.passesCompleted, pa.turnovers, pa.tacklesWon,
+                pa.gkSaves, oppGoals, isGk, pa.yellowCards, pa.redCards, won, lost);
+            if (!best.valid || rating > best.rating ||
+                (rating == best.rating && (goals + pa.assists) > (best.goals + best.assists))) {
+                best.valid = true;
+                best.teamNum = teamNum;
+                best.name = pl.shortName;
+                best.team = teamName;
+                best.pos = shortPosTag(pl.position);
+                best.goals = goals;
+                best.assists = pa.assists;
+                best.gkSaves = pa.gkSaves;
+                best.rating = rating;
+            }
+        }
+    };
+
+    evalTeam(1, swos.topTeamInGame, t1, swos.statsTeam2Goals, t1Won, t2Won);
+    evalTeam(2, swos.bottomTeamInGame, t2, swos.statsTeam1Goals, t2Won, t1Won);
+    return best;
 }
 
 bool exportMatchTelemetryJsonToPath(const std::string& fullPath)

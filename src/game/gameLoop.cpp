@@ -38,6 +38,7 @@
 #include "options.h"
 #include "replays.h"
 #include "stadiumMenu.h"
+#include "tabloidNewspaper.h"
 #include "replayExitMenu.h"
 #include "llmFeatures.h"
 #include "matchTelemetry.h"
@@ -362,6 +363,8 @@ static void drawFrame(bool recordingEnabled)
     drawFreeKickAimTrajectory(xOffset, yOffset);
     drawBench(xOffset, yOffset);
     drawPitchEffectsAir(xOffset, yOffset);
+    if (recordingEnabled && !swos.g_trainingGame)
+        captureTabloidMatchPhotoIfPending(xOffset, yOffset);
     drawPlayerName();
     drawGameTime();
     drawLivePunditTicker();

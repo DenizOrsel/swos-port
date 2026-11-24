@@ -6,6 +6,7 @@
 #include "sponsorChallenge.h"
 #include "pressCharisma.h"
 #include "supporterStream.h"
+#include "tabloidNewspaper.h"
 #include "achievements.h"
 #include "stadiumFacilities.h"
 #include "continueAbortMenu.h"
@@ -512,6 +513,100 @@ void resetPostMatchNewspaper()
 {
     s_postMatchRequestId = 0;
     s_postMatchTriggered = false;
+    resetTabloidMatchPhoto();
+}
+
+static TabloidKitColors extractKitFromTeamGame(const TeamGame& tg)
+{
+    TabloidKitColors k;
+    k.shirtCol = static_cast<uint8_t>(tg.prShirtCol & 0x0Fu);
+    k.stripesCol = static_cast<uint8_t>(tg.prStripesCol & 0x0Fu);
+    k.shortsCol = static_cast<uint8_t>(tg.prShortsCol & 0x0Fu);
+    k.socksCol = static_cast<uint8_t>(tg.prSocksCol & 0x0Fu);
+    return k;
+}
+
+static TabloidKitColors extractKitFromTeamFile(const TeamFile *tf)
+{
+    TabloidKitColors k;
+    if (!tf)
+        return k;
+    k.shirtCol = static_cast<uint8_t>(tf->prBasicColor & 0x0Fu);
+    k.stripesCol = static_cast<uint8_t>(tf->prStripesColor & 0x0Fu);
+    k.shortsCol = static_cast<uint8_t>(tf->prShortsColor & 0x0Fu);
+    k.socksCol = static_cast<uint8_t>(tf->prSocksColor & 0x0Fu);
+    return k;
+}
+
+static TabloidNewspaperEdition buildCurrentPlayedMatchTabloidMeta()
+{
+    LlmMatchContext ctx = buildLlmMatchContext();
+    const auto stats = getStats();
+    int totalPoss = stats.team1.ballPossession + stats.team2.ballPossession;
+    int poss1Pct = totalPoss > 0 ? (100 * stats.team1.ballPossession) / totalPoss : 50;
+    int poss2Pct = 100 - poss1Pct;
+
+    TabloidNewspaperEdition meta;
+    meta.isPlayedMatch = true;
+    meta.competition = ctx.competition;
+    meta.team1 = ctx.team1;
+    meta.team2 = ctx.team2;
+    meta.goals1 = swos.statsTeam1Goals;
+    meta.goals2 = swos.statsTeam2Goals;
+    meta.playingPenalties = (swos.playingPenalties != 0);
+    meta.penGoals1 = swos.team1PenaltyGoals;
+    meta.penGoals2 = swos.team2PenaltyGoals;
+    meta.team1Human = ctx.team1Human;
+    meta.team2Human = ctx.team2Human;
+    meta.scorers1 = getMatchScorersSummary(1);
+    meta.scorers2 = getMatchScorersSummary(2);
+    meta.statsLine = "SHOTS " + std::to_string(stats.team1.goalAttempts) + "-" + std::to_string(stats.team2.goalAttempts) +
+                     " | POSS " + std::to_string(poss1Pct) + "%-" + std::to_string(poss2Pct) + "%";
+    meta.kit1 = extractKitFromTeamGame(swos.topTeamInGame);
+    meta.kit2 = extractKitFromTeamGame(swos.bottomTeamInGame);
+
+    std::string cap = getTabloidMatchPhotoCaption();
+    if (!cap.empty())
+        meta.photoCaption = cap;
+
+    MatchMotmSummary m = getMatchManOfTheMatch();
+    if (m.valid) {
+        meta.motm.valid = true;
+        meta.motm.name = m.name;
+        meta.motm.team = m.team;
+        meta.motm.pos = m.pos;
+        meta.motm.goals = m.goals;
+        meta.motm.assists = m.assists;
+        meta.motm.gkSaves = m.gkSaves;
+        meta.motm.rating = m.rating;
+        meta.motm.kit = (m.teamNum == 1) ? meta.kit1 : meta.kit2;
+    }
+
+    // Back-Page Briefing bullets pulling live Sponsor, Stadium, & Scorer/Press notes
+    std::string sponsorNote = formatLastSponsorChallengeOutcomeForNewspaper();
+    if (!sponsorNote.empty()) {
+        if (sponsorNote.size() > 86) sponsorNote.resize(86);
+        meta.briefingBullets.push_back(sponsorNote);
+    }
+    std::string stadiumNote = formatLastStadiumOutcomeForNewspaper();
+    if (!stadiumNote.empty()) {
+        if (stadiumNote.size() > 86) stadiumNote.resize(86);
+        meta.briefingBullets.push_back(stadiumNote);
+    }
+    if (!meta.scorers1.empty() || !meta.scorers2.empty()) {
+        std::string sc = "Goals: ";
+        if (!meta.scorers1.empty()) sc += meta.team1 + " (" + meta.scorers1 + ")";
+        if (!meta.scorers1.empty() && !meta.scorers2.empty()) sc += "; ";
+        if (!meta.scorers2.empty()) sc += meta.team2 + " (" + meta.scorers2 + ")";
+        if (sc.size() > 86) sc.resize(86);
+        meta.briefingBullets.push_back(sc);
+    }
+    std::string pressNote = formatPressContextForNewspaper();
+    if (!pressNote.empty() && meta.briefingBullets.size() < 3) {
+        if (pressNote.size() > 86) pressNote.resize(86);
+        meta.briefingBullets.push_back(pressNote);
+    }
+    return meta;
 }
 
 void beginPostMatchNewspaperRequest()
@@ -545,21 +640,36 @@ void beginPostMatchNewspaperRequest()
     int poss1Pct = totalPoss > 0 ? (100 * stats.team1.ballPossession) / totalPoss : 50;
     int poss2Pct = 100 - poss1Pct;
     prompt += ", Possession " + std::to_string(poss1Pct) + "%-" + std::to_string(poss2Pct) + "%.";
+    MatchMotmSummary motm = getMatchManOfTheMatch();
+    if (motm.valid) {
+        char rBuf[16];
+        std::snprintf(rBuf, sizeof(rBuf), "%.1f", motm.rating);
+        prompt += "\nMan of the Match: " + motm.name + " (" + motm.team + ", rating " + std::string(rBuf) + "/10).";
+    }
+    std::string photoCap = getTabloidMatchPhotoCaption();
+    if (!photoCap.empty())
+        prompt += "\nAction photograph moment: " + photoCap;
     std::string sponsorNote = formatLastSponsorChallengeOutcomeForNewspaper();
     if (!sponsorNote.empty())
         prompt += "\n" + sponsorNote;
+    std::string stadiumNote = formatLastStadiumOutcomeForNewspaper();
+    if (!stadiumNote.empty())
+        prompt += "\nStadium/Form: " + stadiumNote;
     std::string pressNote = formatPressContextForNewspaper();
     if (!pressNote.empty())
         prompt += "\n" + pressNote;
-    prompt += "\nWrite an authentic, lively 1997 football back-page newspaper report + board reaction:\n"
-              "Line 1: Punchy tabloid headline (all caps style, witty, referencing the actual result)\n"
-              "Paragraph 2: 3 vivid sentences summarizing how the match unfolded using the real scorers, shots, possession, and pitch condition (only if listed above). Do NOT invent players, goals, or weather.\n"
-              "Final paragraph starting with 'CHAIRMAN: ': 2 expressive sentences in character from the human club's chairman reacting strictly to the actual WIN/LOSS/DRAW.\n"
+    prompt += "\nWrite a punchy 1996/97 British tabloid sports back page strictly in these 5 tagged lines:\n"
+              "HEADLINE: <screaming 3-7 word tabloid banner headline referencing the actual result/hero>\n"
+              "SUBHEAD: <1 crisp sentence sub-headline under 90 chars>\n"
+              "CAPTION: <1 short 8-14 word newspaper caption describing the action photo moment above>\n"
+              "STORY: <3-4 vivid sentences summarizing the match using real scorers, shots, possession, and MOTM. Do NOT invent players, goals, or weather.>\n"
+              "CHAIRMAN: <1-2 expressive sentences in character from the human club's chairman reacting strictly to the actual WIN/LOSS/DRAW.>\n"
               "Plain text only, no markdown, no bullet points.";
 
-    const std::string sys = "You are a witty, atmospheric 1997 British football back-page journalist and expressive club chairman. "
-                            "Write vivid, natural sports prose grounded strictly in the provided match facts. "
-                            "Never confuse who won or lost. Never invent weather or scorers not given. Plain text only.";
+    const std::string sys = "You are a witty, atmospheric 1996/97 British football back-page tabloid editor and expressive club chairman. "
+                            "Write punchy, vivid sports tabloid copy grounded strictly in the provided match facts. "
+                            "Never confuse who won or lost. Never invent weather or scorers not given. "
+                            "Follow the HEADLINE / SUBHEAD / CAPTION / STORY / CHAIRMAN tag format strictly.";
     s_postMatchRequestId = enqueueLlmRequest(sys, prompt);
 }
 
@@ -573,10 +683,12 @@ void showPostMatchNewspaperIfReady()
         return;
 
     std::string reply;
-    if (waitForLlmWithIndicator(s_postMatchRequestId, cfg.timeoutMs, "PRINTING DAILY ECHO", reply)) {
-        showWrappedSwosPrompt("DAILY SOCCER ECHO", reply);
-    }
+    waitForLlmWithIndicator(s_postMatchRequestId, cfg.timeoutMs, "PRINTING DAILY ECHO", reply);
     s_postMatchRequestId = 0;
+
+    TabloidNewspaperEdition meta = buildCurrentPlayedMatchTabloidMeta();
+    TabloidNewspaperEdition edition = parseTabloidEditionReply(reply, meta);
+    showTabloidNewspaperModal(edition);
 }
 
 std::string fetchTransferNegotiationVoice(const char *buyerClub, const char *sellerClub,
@@ -700,19 +812,43 @@ void onViewResultMatchCompletedLlm()
         std::string prompt = buildMatchPerspectiveContext(t1, t2, g1, g2, topHuman, botHuman);
         prompt += "\nScoreline: " + std::string(t1) + " " + std::to_string(g1) + "-" + std::to_string(g2) + " " + t2;
         prompt += "\nCompetition: " + std::string(gameModeName()) + ".";
-        prompt += "\nWrite an authentic, lively 1997 football back-page newspaper report + board reaction:\n"
-                  "Line 1: Punchy tabloid headline referencing the real result\n"
-                  "Paragraph 2: 2-3 vivid sentences summarizing the outcome without inventing scorers or weather.\n"
-                  "Final paragraph starting with 'CHAIRMAN: ': 2 expressive sentences from the human club's chairman reacting strictly to the actual WIN/LOSS/DRAW. Plain text only.";
+        std::string stadiumNote = formatLastStadiumOutcomeForNewspaper();
+        if (!stadiumNote.empty())
+            prompt += "\nStadium/Form: " + stadiumNote;
+        prompt += "\nWrite a punchy 1996/97 British tabloid back page strictly in these 5 tagged lines:\n"
+                  "HEADLINE: <screaming 3-7 word tabloid banner headline referencing the real result>\n"
+                  "SUBHEAD: <1 crisp sub-headline sentence under 90 chars>\n"
+                  "CAPTION: <short 8-12 word caption summarizing the clash>\n"
+                  "STORY: <2-3 vivid sentences summarizing the outcome without inventing scorers or weather.>\n"
+                  "CHAIRMAN: <1-2 expressive sentences from the human club's chairman reacting strictly to the actual WIN/LOSS/DRAW.>\n"
+                  "Plain text only.";
 
         uint64_t reqId = enqueueLlmRequest(
-            "You are a witty 1997 British football back-page journalist and expressive club chairman. "
-            "Never confuse who won or lost. Never invent scorers or weather. Plain text only.",
+            "You are a witty 1996/97 British football back-page tabloid editor and expressive club chairman. "
+            "Never confuse who won or lost. Never invent scorers or weather. Follow the HEADLINE / SUBHEAD / CAPTION / STORY / CHAIRMAN tag format strictly.",
             prompt);
         std::string reply;
-        if (waitForLlmWithIndicator(reqId, cfg.timeoutMs, "PRINTING DAILY ECHO", reply)) {
-            showWrappedSwosPrompt("DAILY SOCCER ECHO", reply);
-        }
+        waitForLlmWithIndicator(reqId, cfg.timeoutMs, "PRINTING DAILY ECHO", reply);
+
+        TabloidNewspaperEdition meta;
+        meta.isPlayedMatch = false;
+        meta.competition = gameModeName();
+        meta.team1 = t1;
+        meta.team2 = t2;
+        meta.goals1 = g1;
+        meta.goals2 = g2;
+        meta.team1Human = topHuman;
+        meta.team2Human = botHuman;
+        meta.kit1 = extractKitFromTeamFile(t1File);
+        meta.kit2 = extractKitFromTeamFile(t2File);
+        if (!stadiumNote.empty())
+            meta.briefingBullets.push_back(stadiumNote);
+        std::string sponsorNote = formatLastSponsorChallengeOutcomeForNewspaper();
+        if (!sponsorNote.empty())
+            meta.briefingBullets.push_back(sponsorNote);
+
+        TabloidNewspaperEdition edition = parseTabloidEditionReply(reply, meta);
+        showTabloidNewspaperModal(edition);
     }
 
     if (swos.g_gameType == kGameTypeCareer) {

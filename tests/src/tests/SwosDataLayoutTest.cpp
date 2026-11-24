@@ -10,6 +10,7 @@
 #include "sponsorChallenge.h"
 #include "pressCharisma.h"
 #include "supporterStream.h"
+#include "tabloidNewspaper.h"
 #include "achievements.h"
 #include "stadiumFacilities.h"
 #include <fstream>
@@ -1202,6 +1203,52 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
             std::string broken = formatLiveSponsorChallengeStreamCallouts(
                 { teamG, cs, lr }, 3, mc, liveR, 75, 2);
             assertTrue(broken.find("IRON WALL BROKEN") != std::string::npos);
+        }
+
+        // 1996/97 Color Tabloid Newspaper: print filter, offline fallback, & structured LLM parser
+        {
+            std::vector<uint8_t> pixels(16 * 16 * 4, 0);
+            for (size_t i = 0; i < pixels.size(); i += 4) {
+                pixels[i + 0] = 20;
+                pixels[i + 1] = 200;
+                pixels[i + 2] = 30;
+                pixels[i + 3] = 255;
+            }
+            apply90sTabloidColorPrintFilter(pixels, 16, 16);
+            // Warm color print preserves dominant green pitch while warming reds & lifting deep blacks
+            assertTrue(pixels[1] > pixels[0]);
+            assertTrue(pixels[0] >= 35);
+            assertEqual(pixels[3], uint8_t{ 255 });
+
+            TabloidNewspaperEdition base;
+            base.team1 = "BRIGHTON";
+            base.team2 = "FULHAM";
+            base.goals1 = 3;
+            base.goals2 = 1;
+            base.team1Human = true;
+            base.competition = "Career";
+            base.motm.valid = true;
+            base.motm.name = "STUART";
+            base.motm.team = "BRIGHTON";
+            base.motm.rating = 8.9;
+
+            TabloidNewspaperEdition off = buildOfflineTabloidEdition(base);
+            assertTrue(off.headline.find("BRIGHTON") != std::string::npos);
+            assertFalse(off.story.empty());
+            assertFalse(off.chairmanQuote.empty());
+
+            const std::string llmSample =
+                "HEADLINE: STUART STUNS FULHAM!\n"
+                "SUBHEAD: Seagulls soar with a 3-1 home victory.\n"
+                "CAPTION: 74' Stuart wheels away after his 25-yard rocket.\n"
+                "STORY: Brighton blew Fulham away with crisp passing and lethal finishing.\n"
+                "CHAIRMAN: Brilliant display from the lads, the board is thrilled!";
+            TabloidNewspaperEdition parsed = parseTabloidEditionReply(llmSample, base);
+            assertEqual(parsed.headline, std::string("STUART STUNS FULHAM!"));
+            assertEqual(parsed.subhead, std::string("Seagulls soar with a 3-1 home victory."));
+            assertTrue(parsed.photoCaption.find("74' Stuart") != std::string::npos);
+            assertTrue(parsed.story.find("Brighton blew Fulham") != std::string::npos);
+            assertTrue(parsed.chairmanQuote.find("Brilliant display") != std::string::npos);
         }
         std::remove(tmpStd);
         resetStadiumFacilitiesState();

@@ -162,3 +162,4 @@ void showStadiumFacilitiesMenu();
 std::string describeRecentFormStreak(const char *recentForm);
 std::string formatStadiumContextForTelemetry();
 std::string getLiveStadiumAndFormStreamNote();
+std::string formatLastStadiumOutcomeForNewspaper();
