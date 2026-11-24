@@ -981,6 +981,127 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
         assertTrue(content.find("\"players\"") != std::string::npos);
         assertTrue(content.find("\"motm\"") != std::string::npos);
         std::remove(tmpJson);
+
+        // Long-range shot origin regression: holding Fire for SWOS aftertouch (~20 frames while sprinting
+        // into the penalty box and the ball rises to Z=14) MUST NOT drag shot coordinates inside the box
+        // or mislabel a ground strike as a volley!
+        {
+            resetMatchTelemetry();
+            auto savedTopTeam = swos.topTeamData;
+            auto savedBotTeam = swos.bottomTeamData;
+            auto savedTopInGame = swos.topTeamInGame;
+            auto savedBotInGame = swos.bottomTeamInGame;
+            auto savedBall = swos.ballSprite;
+            auto savedGameStatePl = swos.gameStatePl;
+            auto savedHalf = swos.halfNumber;
+            auto savedTraining = swos.g_trainingGame;
+            auto savedPlayingPens = swos.playingPenalties;
+            auto savedPenalty = swos.penalty;
+            auto savedGoalType = swos.goalTypeScored;
+            auto savedLastTeamScoredNum = swos.lastTeamScoredNumber;
+            auto savedLastTeamScored = swos.lastTeamScored;
+            auto savedCurrentScorer = swos.currentScorer;
+
+            swos.g_trainingGame = 0;
+            swos.playingPenalties = 0;
+            swos.penalty = 0;
+            swos.halfNumber = 1;
+            swos.gameStatePl = GameState::kInProgress;
+            std::snprintf(swos.topTeamInGame.teamName, sizeof(swos.topTeamInGame.teamName), "%s", "BRIGHTON");
+            std::snprintf(swos.bottomTeamInGame.teamName, sizeof(swos.bottomTeamInGame.teamName), "%s", "FULHAM");
+            std::snprintf(swos.topTeamInGame.players[8].shortName, sizeof(swos.topTeamInGame.players[8].shortName), "%s", "T. MOONEY");
+            swos.topTeamInGame.players[8].shirtNumber = 9;
+            swos.topTeamData.inGameTeamPtr.set(&swos.topTeamInGame);
+            swos.bottomTeamData.inGameTeamPtr.set(&swos.bottomTeamInGame);
+            swos.topTeamData.playerNumber = 1;
+
+            // Place striker sprite in VM memory (re-using team1Player9Sprite inside SwosVM!)
+            Sprite& striker = swos.team1Player9Sprite;
+            Sprite savedStriker = striker;
+            striker = {};
+            striker.teamNumber = 1;
+            striker.playerOrdinal = 9;
+            striker.state = PlayerState::kNormal;
+            striker.x = FixedPoint::fromFloat(306.0f);
+            striker.y = FixedPoint::fromFloat(665.0f); // Outside lower penalty box (Y < 682)
+
+            // Frame 1: Mooney dribbling outside the box at Y=665, ball on the ground (Z=0)
+            swos.ballSprite.x = FixedPoint::fromFloat(306.0f);
+            swos.ballSprite.y = FixedPoint::fromFloat(666.0f);
+            swos.ballSprite.z = FixedPoint::fromFloat(0.0f);
+            swos.topTeamData.controlledPlayer.set(&striker);
+            swos.topTeamData.passingKickingPlayer.set(nullptr);
+            swos.topTeamData.playerHasBall = 1;
+            swos.topTeamData.passKickTimer = 0;
+            swos.topTeamData.shooting = 0;
+            updateMatchTelemetry();
+
+            // Frame 2: Mooney strikes from Y=665! SWOS sets passKickTimer=25, shooting=1, playerHasBall=0,
+            // and updateBall()/movePlayers() already step 1 frame (ballZ lifts to 3.5, striker steps to 667).
+            swos.topTeamData.playerHasBall = 0;
+            swos.topTeamData.controlledPlayer.set(nullptr);
+            swos.topTeamData.passingKickingPlayer.set(&striker);
+            swos.topTeamData.passKickTimer = 25;
+            swos.topTeamData.shooting = 1;
+            striker.y = FixedPoint::fromFloat(667.0f);
+            swos.ballSprite.y = FixedPoint::fromFloat(674.0f);
+            swos.ballSprite.z = FixedPoint::fromFloat(3.5f);
+            updateMatchTelemetry();
+
+            // Frames 3..20: Human holds Fire for aftertouch (shooting stays 1!) while Mooney sprints
+            // into the penalty box (Y=670 -> 706) and ball rises to Z=14.3 toward the goal!
+            for (int f = 1; f <= 18; ++f) {
+                swos.topTeamData.passKickTimer = static_cast<word>(25 - f);
+                swos.topTeamData.shooting = 1;
+                striker.y = FixedPoint::fromFloat(667.0f + f * 2.2f); // reaches Y = 706.6 (deep inside box >= 682)
+                swos.ballSprite.y = FixedPoint::fromFloat(674.0f + f * 5.2f); // reaches Y = 767.6 (goal line!)
+                swos.ballSprite.z = FixedPoint::fromFloat(3.5f + f * 0.6f);   // reaches Z = 14.3
+                updateMatchTelemetry();
+            }
+
+            // Ball crosses goal line at bottom goal (Y=770)
+            swos.ballSprite.y = FixedPoint::fromFloat(770.0f);
+            swos.lastTeamScoredNumber = 1;
+            swos.lastTeamScored.set(&swos.topTeamData);
+            swos.currentScorer.set(&striker);
+            swos.goalTypeScored = 0; // GoalType::kNormal
+            recordTelemetryMatchEvent("GOAL SCORED", true);
+
+            // Must be counted as a long-range goal (outsideBox=true, rawY ~ 665, NOT volley!)
+            auto lr = getLongRangeTelemetryGoals();
+            assertEqual(lr.first, 1);
+
+            const char *lrJson = "tmp_test_long_range.json";
+            assertTrue(exportMatchTelemetryJsonToPath(lrJson));
+            std::ifstream lin(lrJson);
+            assertTrue(static_cast<bool>(lin));
+            std::string lcontent((std::istreambuf_iterator<char>(lin)), std::istreambuf_iterator<char>());
+            lin.close();
+            std::remove(lrJson);
+
+            assertTrue(lcontent.find("\"longRangeGoals\": 1") != std::string::npos);
+            assertTrue(lcontent.find("\"outsideBox\": true") != std::string::npos);
+            assertTrue(lcontent.find("\"bodyPart\": \"foot\"") != std::string::npos);
+            assertTrue(lcontent.find("\"bodyPart\": \"volley\"") == std::string::npos);
+
+            // Restore VM state cleanly
+            striker = savedStriker;
+            swos.topTeamData = savedTopTeam;
+            swos.bottomTeamData = savedBotTeam;
+            swos.topTeamInGame = savedTopInGame;
+            swos.bottomTeamInGame = savedBotInGame;
+            swos.ballSprite = savedBall;
+            swos.gameStatePl = savedGameStatePl;
+            swos.halfNumber = savedHalf;
+            swos.g_trainingGame = savedTraining;
+            swos.playingPenalties = savedPlayingPens;
+            swos.penalty = savedPenalty;
+            swos.goalTypeScored = savedGoalType;
+            swos.lastTeamScoredNumber = savedLastTeamScoredNum;
+            swos.lastTeamScored = savedLastTeamScored;
+            swos.currentScorer = savedCurrentScorer;
+            resetMatchTelemetry();
+        }
     }
 
     setLlmTransportForTest(nullptr);

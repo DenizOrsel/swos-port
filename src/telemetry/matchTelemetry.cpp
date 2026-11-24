@@ -121,10 +121,13 @@ TouchRecord s_lastTouch;
 TouchRecord s_prevTouch;
 TouchRecord s_lastTouchByTeam[2];
 TouchRecord s_lastStrikeByTeam[2];
+TouchRecord s_lastCarryByTeam[2];
 std::array<std::array<TouchRecord, kNumPlayersInTeam>, 2> s_lastTouchByPlayer{};
 const Sprite *s_prevLastPlayerPlayed = nullptr;
 std::array<word, 2> s_prevPassKickTimer = { 0, 0 };
 std::array<word, 2> s_prevPlayerHasBall = { 0, 0 };
+std::array<word, 2> s_prevShooting = { 0, 0 };
+float s_prevBallZ = 0.0f;
 std::deque<MatchTelemetryEvent> s_recentEvents;
 std::vector<MatchTelemetryEvent> s_allMatchEvents;
 std::map<std::string, int> s_matchAssists;
@@ -534,7 +537,9 @@ std::string extractCareerRecordSummary()
     return {};
 }
 
-void recordPlayerTouchOrStrike(const Sprite *sp, bool isStrikeRelease, bool isHeading)
+void recordPlayerTouchOrStrike(
+    const Sprite *sp, bool isStrikeRelease, bool isHeading,
+    const TouchRecord *preKickCarry = nullptr, float overrideBallZ = -1.0f)
 {
     if (!sp || sp->playerOrdinal < 1 || sp->playerOrdinal > kNumPlayersInTeam)
         return;
@@ -548,15 +553,27 @@ void recordPlayerTouchOrStrike(const Sprite *sp, bool isStrikeRelease, bool isHe
     if (!pName || pName[0] == '\0')
         return;
 
-    // On a kick/shot release, prefer the striker's exact pitch coordinates (since the ball may already
-    // have jumped 15-25px forward in the kick frame, pushing an edge-of-box strike inside the box!).
+    // On a kick/shot release, prefer the immediately preceding ball-carry coordinates (<= 3 frames ago)
+    // for the same player so post-kick movement & launch deltaZ never drag an edge-of-box ground strike
+    // into the penalty box or falsely tag it as a volley!
     float bx = swos.ballSprite.x.asFloat();
     float by = swos.ballSprite.y.asFloat();
     float sx = sp->x.asFloat();
     float sy = sp->y.asFloat();
     float distSq = (bx - sx) * (bx - sx) + (by - sy) * (by - sy);
+
     float touchX = (isStrikeRelease || distSq > 16.0f * 16.0f) ? sx : bx;
     float touchY = (isStrikeRelease || distSq > 16.0f * 16.0f) ? sy : by;
+    float touchZ = (overrideBallZ >= 0.0f) ? overrideBallZ : swos.ballSprite.z.asFloat();
+
+    if (isStrikeRelease && preKickCarry &&
+        preKickCarry->teamNum == teamNum && preKickCarry->playerOrd == sp->playerOrdinal &&
+        preKickCarry->frameTick > 0 && s_frameCounter >= preKickCarry->frameTick &&
+        (s_frameCounter - preKickCarry->frameTick) <= 3) {
+        touchX = preKickCarry->x;
+        touchY = preKickCarry->y;
+        touchZ = preKickCarry->ballZ;
+    }
 
     bool samePlayer = (s_lastTouch.teamNum == teamNum && s_lastTouch.playerOrd == sp->playerOrdinal);
     if (!samePlayer) {
@@ -596,7 +613,7 @@ void recordPlayerTouchOrStrike(const Sprite *sp, bool isStrikeRelease, bool isHe
     rec.name = pName;
     rec.x = touchX;
     rec.y = touchY;
-    rec.ballZ = swos.ballSprite.z.asFloat();
+    rec.ballZ = touchZ;
     rec.wasHeader = isHeading || prevHeader;
     rec.frameTick = s_frameCounter;
 
@@ -605,6 +622,8 @@ void recordPlayerTouchOrStrike(const Sprite *sp, bool isStrikeRelease, bool isHe
     s_lastTouchByPlayer[teamNum - 1][sp->playerOrdinal - 1] = rec;
     if (isStrikeRelease)
         s_lastStrikeByTeam[teamNum - 1] = rec;
+    else
+        s_lastCarryByTeam[teamNum - 1] = rec;
 }
 
 void sampleBallTouch()
@@ -613,66 +632,110 @@ void sampleBallTouch()
     if (swos.gameStatePl != GameState::kInProgress) {
         s_prevPassKickTimer = { 0, 0 };
         s_prevPlayerHasBall = { 0, 0 };
+        s_prevShooting = { 0, 0 };
+        s_lastCarryByTeam[0] = {};
+        s_lastCarryByTeam[1] = {};
+        s_prevBallZ = swos.ballSprite.z.asFloat();
         return;
     }
 
     const TeamGeneralInfo *teams[2] = { &swos.topTeamData, &swos.bottomTeamData };
-    bool recordedThisFrame = false;
-
-    // 1. Check authoritative engine kick/shot release & active ball carry on BOTH teams
-    for (int t = 0; t < 2; ++t) {
-        const TeamGeneralInfo *ti = teams[t];
-        word curKick = ti->passKickTimer;
-        word curHas = ti->playerHasBall;
-        bool kickJustFired = (curKick > s_prevPassKickTimer[t]) || (ti->shooting != 0);
-        bool ballJustReleased = (s_prevPlayerHasBall[t] != 0 && curHas == 0);
-
-        if (kickJustFired || ballJustReleased) {
-            const Sprite *striker = ti->passingKickingPlayer.asAligned();
-            if (!striker || striker->playerOrdinal < 1 || striker->playerOrdinal > kNumPlayersInTeam)
-                striker = ti->controlledPlayer.asAligned();
-            if (striker && striker->playerOrdinal >= 1 && striker->playerOrdinal <= kNumPlayersInTeam) {
-                bool isHdr = (striker->state == PlayerState::kStaticHeader ||
-                              striker->state == PlayerState::kJumpHeader);
-                recordPlayerTouchOrStrike(striker, true, isHdr);
-                recordedThisFrame = true;
-            }
-        } else if (curHas != 0) {
-            const Sprite *carrier = ti->controlledPlayer.asAligned();
-            if (carrier && carrier->playerOrdinal >= 1 && carrier->playerOrdinal <= kNumPlayersInTeam) {
-                bool isHdr = (carrier->state == PlayerState::kStaticHeader ||
-                              carrier->state == PlayerState::kJumpHeader);
-                recordPlayerTouchOrStrike(carrier, false, isHdr);
-                recordedThisFrame = true;
-            }
-        }
-
-        s_prevPassKickTimer[t] = curKick;
-        s_prevPlayerHasBall[t] = curHas;
-    }
-
-    // 2. Check SWOS's authoritative lastPlayerPlayed (catches one-touch volleys, headers, & deflections)
     const Sprite *lastPl = getLastPlayerPlayed();
     if (!swos.lastKeeperPlayed.isNull() &&
         (lastPl == &swos.goalie1Sprite || lastPl == &swos.goalie2Sprite)) {
         lastPl = swos.lastKeeperPlayed.asAligned();
     }
 
-    if (lastPl && lastPl->playerOrdinal >= 1 && lastPl->playerOrdinal <= kNumPlayersInTeam) {
+    float bx = swos.ballSprite.x.asFloat();
+    float by = swos.ballSprite.y.asFloat();
+    auto distSqToBall = [&](const Sprite *sp) -> float {
+        if (!sp) return 1e9f;
+        float dx = bx - sp->x.asFloat();
+        float dy = by - sp->y.asFloat();
+        return dx * dx + dy * dy;
+    };
+    auto isValidPlayer = [](const Sprite *sp) {
+        return sp && sp->playerOrdinal >= 1 && sp->playerOrdinal <= kNumPlayersInTeam &&
+               (sp->teamNumber == 1 || sp->teamNumber == 2);
+    };
+
+    bool recordedThisFrame = false;
+
+    // 1. Check authoritative engine kick/shot release & active ball carry on BOTH teams.
+    //    CRITICAL: ti->shooting stays 1 for the entire SWOS aftertouch hold (~15-25 frames while Fire is held)
+    //    as the striker sprints forward and the ball rises into the air — so BOTH passKickTimer and shooting
+    //    MUST be strictly rising-edge triggered!
+    for (int t = 0; t < 2; ++t) {
+        const TeamGeneralInfo *ti = teams[t];
+        word curKick = ti->passKickTimer;
+        word curHas = ti->playerHasBall;
+        word curShooting = ti->shooting;
+        bool kickJustFired = (curKick > s_prevPassKickTimer[t]) ||
+                             (curShooting != 0 && s_prevShooting[t] == 0);
+        bool ballJustReleased = (s_prevPlayerHasBall[t] != 0 && curHas == 0);
+
+        if (kickJustFired || ballJustReleased) {
+            const Sprite *striker = nullptr;
+            const Sprite *pkp = ti->passingKickingPlayer.asAligned();
+            const Sprite *ctrl = ti->controlledPlayer.asAligned();
+            const Sprite *hdrTkl = ti->lastHeadingTacklingPlayer.asAligned();
+
+            if (isValidPlayer(pkp) && (curShooting != 0 || distSqToBall(pkp) <= 36.0f * 36.0f)) {
+                striker = pkp;
+            } else if (isValidPlayer(lastPl) &&
+                       ((ti->inGameTeamPtr.asAligned() == &swos.topTeamInGame && lastPl->teamNumber == 1) ||
+                        (ti->inGameTeamPtr.asAligned() == &swos.bottomTeamInGame && lastPl->teamNumber == 2)) &&
+                       distSqToBall(lastPl) <= 36.0f * 36.0f) {
+                striker = lastPl;
+            } else if (isValidPlayer(hdrTkl) && distSqToBall(hdrTkl) <= 36.0f * 36.0f) {
+                striker = hdrTkl;
+            } else if (isValidPlayer(pkp)) {
+                striker = pkp;
+            } else if (isValidPlayer(ctrl)) {
+                striker = ctrl;
+            }
+
+            if (isValidPlayer(striker)) {
+                const TouchRecord *carry = &s_lastCarryByTeam[striker->teamNumber - 1];
+                bool isHdr = (striker->state == PlayerState::kStaticHeader ||
+                              striker->state == PlayerState::kJumpHeader);
+                // Pass s_prevBallZ so foot-contact height is sampled BEFORE updateBall() adds launch deltaZ
+                recordPlayerTouchOrStrike(striker, true, isHdr, carry, s_prevBallZ);
+                recordedThisFrame = true;
+            }
+        } else if (curHas != 0 && curShooting == 0) {
+            const Sprite *carrier = ti->controlledPlayer.asAligned();
+            if (isValidPlayer(carrier)) {
+                bool samePlayerStillInKickWindow = (curKick > 0 &&
+                    s_lastStrikeByTeam[carrier->teamNumber - 1].playerOrd == carrier->playerOrdinal &&
+                    s_frameCounter >= s_lastStrikeByTeam[carrier->teamNumber - 1].frameTick &&
+                    (s_frameCounter - s_lastStrikeByTeam[carrier->teamNumber - 1].frameTick) <= 10);
+                if (!samePlayerStillInKickWindow) {
+                    bool isHdr = (carrier->state == PlayerState::kStaticHeader ||
+                                  carrier->state == PlayerState::kJumpHeader);
+                    recordPlayerTouchOrStrike(carrier, false, isHdr);
+                    recordedThisFrame = true;
+                }
+            }
+        }
+
+        s_prevPassKickTimer[t] = curKick;
+        s_prevPlayerHasBall[t] = curHas;
+        s_prevShooting[t] = curShooting;
+    }
+
+    // 2. Check SWOS's authoritative lastPlayerPlayed (catches one-touch volleys, headers, & deflections)
+    if (isValidPlayer(lastPl)) {
         bool pointerChanged = (lastPl != s_prevLastPlayerPlayed);
-        float dx = swos.ballSprite.x.asFloat() - lastPl->x.asFloat();
-        float dy = swos.ballSprite.y.asFloat() - lastPl->y.asFloat();
-        bool veryClose = (dx * dx + dy * dy <= 20.0f * 20.0f);
+        bool veryClose = (distSqToBall(lastPl) <= 20.0f * 20.0f);
         bool isHdr = (lastPl->state == PlayerState::kStaticHeader ||
                       lastPl->state == PlayerState::kJumpHeader);
         if (!recordedThisFrame && (pointerChanged || (veryClose && isHdr))) {
-            // Only treat as a real touch/strike if the player actually just made contact
-            if (pointerChanged || veryClose) {
-                recordPlayerTouchOrStrike(lastPl, pointerChanged, isHdr);
-            }
+            recordPlayerTouchOrStrike(lastPl, pointerChanged, isHdr, nullptr, pointerChanged ? s_prevBallZ : -1.0f);
         }
     }
     s_prevLastPlayerPlayed = lastPl;
+    s_prevBallZ = swos.ballSprite.z.asFloat();
 }
 
 void sampleSpatialPositionsAndTimeline()
@@ -1047,12 +1110,16 @@ void resetMatchTelemetry()
     s_lastTouchByTeam[1] = {};
     s_lastStrikeByTeam[0] = {};
     s_lastStrikeByTeam[1] = {};
+    s_lastCarryByTeam[0] = {};
+    s_lastCarryByTeam[1] = {};
     for (auto& arr : s_lastTouchByPlayer)
         for (auto& tr : arr)
             tr = TouchRecord{};
     s_prevLastPlayerPlayed = nullptr;
     s_prevPassKickTimer = { 0, 0 };
     s_prevPlayerHasBall = { 0, 0 };
+    s_prevShooting = { 0, 0 };
+    s_prevBallZ = 0.0f;
     s_recentEvents.clear();
     s_allMatchEvents.clear();
     s_matchAssists.clear();
