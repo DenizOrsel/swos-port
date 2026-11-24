@@ -207,6 +207,10 @@ def collectEngineFiles(args: argparse.Namespace, files: dict[str, PackageFile]) 
     for name in VC_RUNTIME_FILES:
         addFile(files, vcRuntimeDir / name, name)
 
+    whisperDir = ROOT / "3rd-party" / "whisper"
+    if whisperDir.is_dir():
+        addTree(files, whisperDir, "whisper")
+
     if args.includeSymbols:
         pdb = exe.with_suffix(".pdb")
         addFile(files, requireFile(pdb, "Release symbols"), pdb.name)
@@ -404,6 +408,13 @@ enabled = true
 exportMatchJson = false
 streamUpdateSeconds = 18
 maxVisibleTweets = 5
+
+[voice]
+enabled = true
+whisperCliPath = whisper\\whisper-cli.exe
+whisperModelPath = whisper\\ggml-base.bin
+whisperEndpoint = http://127.0.0.1:8178/inference
+whisperLanguage = auto
 
 [personalities]
 personalities = calm, fanatic, tactical, pessimist, joker, troll
