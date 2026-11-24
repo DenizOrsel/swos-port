@@ -125,7 +125,7 @@ All three currently interrupt the Career loop with passive prose popups that car
 ## Recommended Execution Order
 
 1. **P0 — Dressing Room Off-Gate Bug Fix (`DONE`):** Stop `onCareerWeeklyTickLlm()` from showing Dressing Room popups when disabled.
-2. **P1 — Sponsor Challenges V2:** 5 simultaneous offers, 18–20+ challenge types, tiered Clean Sweep jackpots, and optional multi-match contract slot.
+2. **P1 — Sponsor Challenges V2 (`DONE`):** 5 simultaneous offers, 21 single-match challenge types (Star Striker ATT-only 2+ goals, Total Football >=60%, Volley removed), tiered Combo/Clean Sweep jackpots (`+25% / +50% / +75%`), and 5 persistent Multi-Match Contracts (M1–M5) in Slot 5.
 3. **P1 — Stadium & Facilities V2:** Realistic build durations (`8–28` matches), smoothed capacity/cost curve, last-5-match dynamic ticket pricing, visible Medical prevention/notices, and clear VIP P&L + Sponsor Challenge synergy.
 4. **P2 — Global Achievements V2:** Expand from 50 → 100–120 with progression ladders, match-craft specials, and sponsor/stadium milestones.
 5. **P2 — Coach Charisma V2:** Contextual trade-offs, shuffled choices, slower climb + form decay, and Sponsor Challenge payout bonus.

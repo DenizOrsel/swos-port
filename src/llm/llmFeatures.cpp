@@ -689,6 +689,7 @@ void onViewResultMatchCompletedLlm()
         ms.opponentDivisionTier = evalTeam1 ? div2 : div1;
         achievementsOnMatchFinished(ms);
         onPostMatchStadiumUpdate(false);
+        onViewResultSponsorContractUpdate(hGoals, oGoals);
     }
 
     const auto& cfg = getLlmConfig();

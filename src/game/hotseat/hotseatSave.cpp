@@ -582,6 +582,35 @@ bool HotseatCareerManager::saveToFile(const std::string& path)
         }
     }
 
+    static constexpr char kSponsorContractTrailerTag[4] = { 'S', 'P', 'C', 'T' };
+    out.write(kSponsorContractTrailerTag, 4);
+    if (!out.good())
+        return false;
+    for (int i = 0; i < m_numPlayers; ++i) {
+        const auto& mc = m_players[i].sponsorContract;
+        uint8_t actB = mc.isActive ? 1 : 0;
+        uint8_t typB = static_cast<uint8_t>(mc.type);
+        uint16_t titleLen = static_cast<uint16_t>(std::min<size_t>(mc.title.size(), 64));
+        uint16_t descLen = static_cast<uint16_t>(std::min<size_t>(mc.description.size(), 128));
+        if (!writeBinary(out, actB) ||
+            !writeBinary(out, typB) ||
+            !writeBinary(out, mc.rewardAmount) ||
+            !writeBinary(out, mc.penaltyAmount) ||
+            !writeBinary(out, mc.matchesTotal) ||
+            !writeBinary(out, mc.matchesPlayed) ||
+            !writeBinary(out, mc.targetValue) ||
+            !writeBinary(out, mc.currentProgress) ||
+            !writeBinary(out, mc.perMatchMin) ||
+            !writeBinary(out, titleLen) ||
+            !writeBinary(out, descLen)) {
+            return false;
+        }
+        if (titleLen > 0) out.write(mc.title.data(), titleLen);
+        if (descLen > 0) out.write(mc.description.data(), descLen);
+        if (!out.good())
+            return false;
+    }
+
     out.flush();
     if (!out.good())
         return false;
@@ -904,6 +933,43 @@ bool HotseatCareerManager::loadFromFile(const std::string& path)
                         st.ticketPolicy = static_cast<TicketPolicy>(std::clamp<uint8_t>(pol, 0, 2));
                         st.activeProject.isActive = (projAct != 0);
                         st.activeProject.module = static_cast<StadiumModuleType>(std::clamp<uint8_t>(projMod, 0, 4));
+                    }
+                    char spctTag[4] = {};
+                    if (in.read(spctTag, 4) && std::memcmp(spctTag, "SPCT", 4) == 0) {
+                        for (int i = 0; i < m_numPlayers; ++i) {
+                            auto& mc = m_players[i].sponsorContract;
+                            uint8_t actB = 0, typB = 0;
+                            uint16_t titleLen = 0, descLen = 0;
+                            if (!readBinary(in, actB) ||
+                                !readBinary(in, typB) ||
+                                !readBinary(in, mc.rewardAmount) ||
+                                !readBinary(in, mc.penaltyAmount) ||
+                                !readBinary(in, mc.matchesTotal) ||
+                                !readBinary(in, mc.matchesPlayed) ||
+                                !readBinary(in, mc.targetValue) ||
+                                !readBinary(in, mc.currentProgress) ||
+                                !readBinary(in, mc.perMatchMin) ||
+                                !readBinary(in, titleLen) ||
+                                !readBinary(in, descLen) ||
+                                titleLen > 64 || descLen > 128) {
+                                reset();
+                                logWarn("HotseatCareerManager: Corrupted SPCT trailer in %s", path.c_str());
+                                return false;
+                            }
+                            mc.title.resize(titleLen);
+                            mc.description.resize(descLen);
+                            if (titleLen > 0) in.read(mc.title.data(), titleLen);
+                            if (descLen > 0) in.read(mc.description.data(), descLen);
+                            if (!in.good()) {
+                                reset();
+                                logWarn("HotseatCareerManager: Truncated SPCT strings in %s", path.c_str());
+                                return false;
+                            }
+                            mc.isActive = (actB != 0 && typB >= 1 && typB <= 5);
+                            mc.type = mc.isActive ? static_cast<MultiMatchContractType>(typB) : MultiMatchContractType::kNone;
+                        }
+                    } else {
+                        in.clear();
                     }
                 } else {
                     in.clear();

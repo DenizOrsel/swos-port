@@ -112,6 +112,12 @@ int s_longRangeGoals1 = 0;
 int s_longRangeGoals2 = 0;
 int s_headerGoals1 = 0;
 int s_headerGoals2 = 0;
+int s_earlyGoals1 = 0;
+int s_earlyGoals2 = 0;
+int s_lateGoals1 = 0;
+int s_lateGoals2 = 0;
+int s_setPieceGoals1 = 0;
+int s_setPieceGoals2 = 0;
 int s_maxDeficit1 = 0;
 int s_maxDeficit2 = 0;
 bool s_redBefore60_1 = false;
@@ -1100,6 +1106,12 @@ void resetMatchTelemetry()
     s_longRangeGoals2 = 0;
     s_headerGoals1 = 0;
     s_headerGoals2 = 0;
+    s_earlyGoals1 = 0;
+    s_earlyGoals2 = 0;
+    s_lateGoals1 = 0;
+    s_lateGoals2 = 0;
+    s_setPieceGoals1 = 0;
+    s_setPieceGoals2 = 0;
     s_maxDeficit1 = 0;
     s_maxDeficit2 = 0;
     s_redBefore60_1 = false;
@@ -1289,6 +1301,17 @@ void recordTelemetryMatchEvent(const char *eventType, bool isGoalEvent /* = fals
                 goalTouch && goalTouch->ballZ >= 6.0f);
             achGoal.scorerIsGoalkeeper = (scorerSprite && scorerSprite->playerOrdinal == 1);
             achGoal.matchMinute = static_cast<int>(gameTimeInMinutes());
+            if (!achGoal.isOwnGoal) {
+                if (scoringTeamNum == 1) {
+                    if (achGoal.matchMinute <= 15) ++s_earlyGoals1;
+                    if (achGoal.matchMinute >= 75) ++s_lateGoals1;
+                    if (achGoal.isFreeKick || achGoal.withinCornerWindow) ++s_setPieceGoals1;
+                } else if (scoringTeamNum == 2) {
+                    if (achGoal.matchMinute <= 15) ++s_earlyGoals2;
+                    if (achGoal.matchMinute >= 75) ++s_lateGoals2;
+                    if (achGoal.isFreeKick || achGoal.withinCornerWindow) ++s_setPieceGoals2;
+                }
+            }
             achGoal.isExtraTime = (swos.halfNumber > 2 || achGoal.matchMinute > 90);
             int g1 = swos.statsTeam1Goals;
             int g2 = swos.statsTeam2Goals;
@@ -1426,6 +1449,39 @@ std::pair<int, int> getLongRangeTelemetryGoals()
 std::pair<int, int> getHeaderTelemetryGoals()
 {
     return { s_headerGoals1, s_headerGoals2 };
+}
+
+std::pair<int, int> getEarlyTelemetryGoals()
+{
+    return { s_earlyGoals1, s_earlyGoals2 };
+}
+
+std::pair<int, int> getLateTelemetryGoals()
+{
+    return { s_lateGoals1, s_lateGoals2 };
+}
+
+std::pair<int, int> getSetPieceTelemetryGoals()
+{
+    return { s_setPieceGoals1, s_setPieceGoals2 };
+}
+
+std::vector<std::pair<int, std::string>> getMatchAssistEntries(int teamNum)
+{
+    std::vector<std::pair<int, std::string>> out;
+    if (teamNum != 1 && teamNum != 2)
+        return out;
+    const TeamGame& tg = (teamNum == 1) ? swos.topTeamInGame : swos.bottomTeamInGame;
+    for (int i = 0; i < kNumPlayersInTeam; ++i) {
+        int assists = s_playerAnalytics[teamNum - 1][i].assists;
+        if (assists <= 0)
+            continue;
+        std::string name = tg.players[i].shortName;
+        int shirt = static_cast<int>(tg.players[i].shirtNumber);
+        for (int a = 0; a < assists; ++a)
+            out.emplace_back(shirt, name);
+    }
+    return out;
 }
 
 std::pair<int, int> getMatchMaxGoalDeficits()

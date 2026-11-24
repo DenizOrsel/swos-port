@@ -417,19 +417,25 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
         assertFalse(evaluateSponsorChallenge(c, res));
 
         std::vector<SponsorStarterInfo> starters = {
-            { 9, "MARSCHALL", true, false, 12 },
-            { 10, "KUKA", true, false, 7 },
-            { 8, "WAGNER", false, true, 3 },
+            { 9, "MARSCHALL", true, false, 12, true },
+            { 10, "KUKA", true, false, 7, true },
+            { 8, "WAGNER", false, true, 3, false },
         };
         auto offline = generateOfflineSponsorChallenges("KAISERSLAUTERN", "ARSENAL", 0, starters, 42);
-        assertEqual(offline.size(), size_t{ 3 });
-        assertTrue(offline[0].type != offline[1].type && offline[1].type != offline[2].type && offline[0].type != offline[2].type);
+        assertEqual(offline.size(), size_t{ 5 });
+        for (size_t i = 0; i < offline.size(); ++i)
+            for (size_t j = i + 1; j < offline.size(); ++j)
+                assertTrue(offline[i].type != offline[j].type);
+
+        // Star Striker strictly clamps to >= 2 goals & Total Football strictly clamps to >= 60%
+        assertEqual(clampSponsorThreshold(SponsorChallengeType::kPlayerGoals, 1), int16_t{ 2 });
+        assertEqual(clampSponsorThreshold(SponsorChallengeType::kPossessionWin, 55), int16_t{ 60 });
 
         auto parsed = parseLlmSponsorChallenges(
             "CHALLENGE_CLEAN_SHEET_WIN|IRON WALL|Win without conceding.|NONE|0|90000\n"
             "CHALLENGE_PLAYER_GOALS|HOT STREAK|Marschall nets twice!|MARSCHALL|2|25000\n"
             "CHALLENGE_POSSESSION_WIN|BOSS THE BALL|Win with 61% ball.|NONE|61|32000",
-            "KAISERSLAUTERN", "ARSENAL", 0, starters, 7);
+            "KAISERSLAUTERN", "ARSENAL", 0, starters, 7, 3);
         assertEqual(parsed.size(), size_t{ 3 });
         assertEqual(parsed[0].rewardAmount, 50000); // clamped to top-flight max
         assertEqual(parsed[1].targetPlayerName, std::string("MARSCHALL"));
@@ -440,11 +446,103 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
             "CHALLENGE_TEAM_GOALS|GOAL RUSH|Score at least 3 goals.|NONE|3|22000\n"
             "CHALLENGE_LONG_RANGE_GOAL|OUTSIDE BOX|Score from outside the box.|NONE|1|28000\n"
             "CHALLENGE_HEADER_GOAL|AIR RAID|Score with a header.|NONE|1|26000",
-            "KAISERSLAUTERN", "ARSENAL", 0, starters, 9);
+            "KAISERSLAUTERN", "ARSENAL", 0, starters, 9, 3);
         assertEqual(parsedSpecial.size(), size_t{ 3 });
         assertTrue(parsedSpecial[0].type == SponsorChallengeType::kTeamGoals && parsedSpecial[0].thresholdValue == 3);
         assertTrue(parsedSpecial[1].type == SponsorChallengeType::kLongRangeGoal && parsedSpecial[1].thresholdValue == 1);
         assertTrue(parsedSpecial[2].type == SponsorChallengeType::kHeaderGoal && parsedSpecial[2].thresholdValue == 1);
+
+        // Verify all 12 new V2 single-match challenge types
+        {
+            SponsorMatchResult v2;
+            v2.clubGoals = 4;
+            v2.opponentGoals = 0;
+            v2.clubHtGoals = 2;
+            v2.opponentHtGoals = 0;
+            v2.clubPossessionPct = 62;
+            v2.clubShotsOnTarget = 6;
+            v2.opponentShotsOnTarget = 2;
+            v2.clubYellowCards = 0;
+            v2.clubRedCards = 0;
+            v2.clubEarlyGoals = 1;
+            v2.clubLateGoals = 1;
+            v2.clubSetPieceGoals = 1;
+            v2.clubNonAttackerGoals = 1;
+            v2.scorerEntries = { { 9, "MARSCHALL" }, { 9, "MARSCHALL" }, { 9, "MARSCHALL" }, { 8, "WAGNER" } };
+            v2.assistEntries = { { 8, "WAGNER" } };
+
+            SponsorChallenge tc;
+            tc.isActive = true;
+            tc.type = SponsorChallengeType::kNoCardsWin; assertTrue(evaluateSponsorChallenge(tc, v2));
+            v2.clubYellowCards = 1; assertFalse(evaluateSponsorChallenge(tc, v2)); v2.clubYellowCards = 0;
+            tc.type = SponsorChallengeType::kEarlyGoal; assertTrue(evaluateSponsorChallenge(tc, v2));
+            tc.type = SponsorChallengeType::kBothHalvesGoal; assertTrue(evaluateSponsorChallenge(tc, v2));
+            tc.type = SponsorChallengeType::kSecondHalfGoals; tc.thresholdValue = 2; assertTrue(evaluateSponsorChallenge(tc, v2));
+            tc.type = SponsorChallengeType::kLateGoal; assertTrue(evaluateSponsorChallenge(tc, v2));
+            tc.type = SponsorChallengeType::kLimitOppShots; tc.thresholdValue = 2; assertTrue(evaluateSponsorChallenge(tc, v2));
+            tc.type = SponsorChallengeType::kClinicalFinishing; tc.thresholdValue = 50; assertTrue(evaluateSponsorChallenge(tc, v2));
+            tc.type = SponsorChallengeType::kPlayerAssist; tc.targetShirtNumber = 8; tc.targetPlayerName = "WAGNER"; tc.thresholdValue = 1;
+            assertTrue(evaluateSponsorChallenge(tc, v2));
+            tc.type = SponsorChallengeType::kNonAttackerGoal; assertTrue(evaluateSponsorChallenge(tc, v2));
+            tc.type = SponsorChallengeType::kHatTrickHero; tc.thresholdValue = 3; assertTrue(evaluateSponsorChallenge(tc, v2));
+            tc.type = SponsorChallengeType::kSetPieceGoal; assertTrue(evaluateSponsorChallenge(tc, v2));
+            tc.type = SponsorChallengeType::kDifferentScorers; tc.thresholdValue = 3;
+            assertFalse(evaluateSponsorChallenge(tc, v2)); // only 2 unique scorers
+            v2.scorerEntries.emplace_back(10, "KUKA");
+            assertTrue(evaluateSponsorChallenge(tc, v2));  // now 3 unique scorers
+        }
+
+        // Tiered combo/sweep jackpots: 3/5 -> +25%, 5/5 -> +75%
+        {
+            SponsorChallenge s1{ true, SponsorChallengeType::kCleanSheetWin, "S1", "", 10000, -1, "", 0 };
+            SponsorChallenge s2{ true, SponsorChallengeType::kTeamGoals, "S2", "", 10000, -1, "", 2 };
+            SponsorChallenge s3{ true, SponsorChallengeType::kFirstHalfGoals, "S3", "", 10000, -1, "", 1 };
+            SponsorChallenge s4{ true, SponsorChallengeType::kPossessionWin, "S4", "", 10000, -1, "", 60 };
+            SponsorChallenge s5{ true, SponsorChallengeType::kWinByMargin, "S5", "", 10000, -1, "", 2 };
+            res.opponentGoals = 0;
+            auto eval3of5 = evaluateSponsorChallengeBatch({ s1, s2, s3 }, 5, res);
+            assertTrue(eval3of5.allInJackpotTriggered);
+            assertEqual(eval3of5.jackpotPct, 25);
+            assertEqual(eval3of5.jackpotBonus, 7500);
+            auto eval5of5 = evaluateSponsorChallengeBatch({ s1, s2, s3, s4, s5 }, 5, res);
+            assertTrue(eval5of5.allInJackpotTriggered);
+            assertEqual(eval5of5.jackpotPct, 75);
+            assertEqual(eval5of5.jackpotBonus, 37500);
+        }
+
+        // Multi-Match Contracts (M1..M5): exact rules + early completion + breach + sidecar persistence
+        {
+            // M1: Win 5 of next 5
+            auto m1 = generateOfflineMultiMatchContract(2, 0);
+            assertTrue(m1.type == MultiMatchContractType::kWinStreak && m1.matchesTotal == 5 && m1.targetValue == 5);
+            m1.isActive = true;
+            for (int k = 0; k < 4; ++k) {
+                auto u = advanceMultiMatchContract(m1, 2, 0);
+                assertTrue(u.status == ContractStepStatus::kInProgress);
+            }
+            auto u5 = advanceMultiMatchContract(m1, 1, 0);
+            assertTrue(u5.status == ContractStepStatus::kCompleted && u5.deltaCash == m1.rewardAmount || u5.deltaCash > 0);
+            assertFalse(m1.isActive);
+
+            // M3: Score 10+ goals across next 3 (completes early on match 2 if 5+5!)
+            auto m3 = generateOfflineMultiMatchContract(2, 2);
+            assertTrue(m3.type == MultiMatchContractType::kGoalsInMatches && m3.targetValue == 10 && m3.matchesTotal == 3);
+            m3.isActive = true;
+            auto u3a = advanceMultiMatchContract(m3, 6, 1);
+            assertTrue(u3a.status == ContractStepStatus::kInProgress);
+            auto u3b = advanceMultiMatchContract(m3, 4, 0);
+            assertTrue(u3b.status == ContractStepStatus::kCompleted && u3b.deltaCash > 0);
+
+            // M5: Score >= 2 goals in each of next 5 (breaches immediately on a 1-0!)
+            auto m5 = generateOfflineMultiMatchContract(2, 4);
+            assertTrue(m5.type == MultiMatchContractType::kMinGoalsEachMatch && m5.matchesTotal == 5 && m5.perMatchMin == 2);
+            m5.isActive = true;
+            int32_t expectedPen = m5.penaltyAmount;
+            auto u5a = advanceMultiMatchContract(m5, 2, 1);
+            assertTrue(u5a.status == ContractStepStatus::kInProgress);
+            auto u5b = advanceMultiMatchContract(m5, 1, 0);
+            assertTrue(u5b.status == ContractStepStatus::kFailed && u5b.deltaCash == -expectedPen);
+        }
 
         // Multi-select batch evaluation: symmetric fail penalty + All-In +50% Clean Sweep Jackpot
         SponsorChallenge b1{ true, SponsorChallengeType::kCleanSheetWin, "SHUTOUT", "", 15000, -1, "", 0 };
@@ -488,10 +586,19 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
 
         resetSponsorChallengeState();
         setSponsorCareerTotals(4, 2, 115000);
+        auto savedContract = generateOfflineMultiMatchContract(2, 2);
+        savedContract.isActive = true;
+        savedContract.matchesPlayed = 1;
+        savedContract.currentProgress = 4;
+        setActiveSponsorContract(savedContract);
         const char *tmpSch = "tmp_test_sponsor.sch";
         assertTrue(saveSponsorChallengeSidecar(tmpSch));
         resetSponsorChallengeState();
         assertTrue(loadSponsorChallengeSidecar(tmpSch));
+        auto loadedContract = getActiveSponsorContract();
+        assertTrue(loadedContract.isActive && loadedContract.type == MultiMatchContractType::kGoalsInMatches);
+        assertEqual(loadedContract.matchesPlayed, uint8_t{ 1 });
+        assertEqual(loadedContract.currentProgress, uint16_t{ 4 });
         uint16_t comp = 0, fail = 0;
         int64_t bonus = 0;
         getSponsorCareerTotals(comp, fail, bonus);

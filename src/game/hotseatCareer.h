@@ -6,6 +6,7 @@
 #include <vector>
 #include <map>
 #include <iosfwd>
+#include "sponsorChallenge.h"
 #include "stadiumFacilities.h"
 
 constexpr int kMaxHotseatPlayers = 32;
@@ -311,10 +312,11 @@ struct HotseatPlayerContext {
     bool matchPlayedThisTurn = false;
     bool turnCompleted = false;
 
-    // Pre-Match Sponsor Challenge career statistics (serialized in V10+)
+    // Pre-Match Sponsor Challenge career statistics (serialized in V10+ / SPCT trailer)
     uint16_t sponsorChallengesCompleted = 0;
     uint16_t sponsorChallengesFailed = 0;
     int64_t sponsorTotalBonusEarned = 0;
+    MultiMatchContract sponsorContract;
 
     // LLM Press Conference & Coach Charisma career state (serialized in PRSS trailer)
     int16_t pressCharismaPoints = 50;

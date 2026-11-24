@@ -1,5 +1,5 @@
 //
-// Pre-match Sponsor Challenge multi-select menu
+// Pre-match Sponsor Challenge V2 multi-select menu (5 offers + Multi-Match Contract slot)
 //
 
 #include "common.mh"
@@ -14,7 +14,7 @@ Menu sponsorChallengeMenu
         x: 34
         y: 0
         width: 236
-        height: 14
+        height: 12
 
         color: kHeaderColor
         text: "SPONSOR MATCH CHALLENGES"
@@ -22,9 +22,9 @@ Menu sponsorChallengeMenu
 
     Entry challenge1 {
         x: 8
-        y: 38
+        y: 31
         width: 288
-        height: 16
+        height: 13
 
         color: @kDarkBlue
         text: @kAlloc
@@ -34,9 +34,9 @@ Menu sponsorChallengeMenu
 
     Entry challenge2 {
         x: 8
-        y: 84
+        y: 58
         width: 288
-        height: 16
+        height: 13
 
         color: @kDarkBlue
         text: @kAlloc
@@ -47,39 +47,65 @@ Menu sponsorChallengeMenu
 
     Entry challenge3 {
         x: 8
-        y: 130
+        y: 85
         width: 288
-        height: 16
+        height: 13
 
         color: @kDarkBlue
         text: @kAlloc
         upEntry: challenge2
-        downEntry: confirmBtn
+        downEntry: challenge4
         onSelect: toggleSponsorChallenge3
+    }
+
+    Entry challenge4 {
+        x: 8
+        y: 112
+        width: 288
+        height: 13
+
+        color: @kDarkBlue
+        text: @kAlloc
+        upEntry: challenge3
+        downEntry: challenge5
+        onSelect: toggleSponsorChallenge4
+    }
+
+    Entry challenge5 {
+        x: 8
+        y: 139
+        width: 288
+        height: 13
+
+        color: @kDarkBlue
+        text: @kAlloc
+        upEntry: challenge4
+        downEntry: confirmBtn
+        onSelect: toggleSponsorChallenge5
     }
 
     Entry confirmBtn {
         x: 8
-        y: 178
-        width: 176
-        height: 17
+        y: 169
+        width: 184
+        height: 16
 
         color: @kGreen
         text: @kAlloc
-        upEntry: challenge3
+        upEntry: challenge5
         rightEntry: declineBtn
         onSelect: confirmSponsorChallenges
     }
 
     Entry declineBtn {
-        x: 192
-        y: 178
-        width: 104
-        height: 17
+        x: 198
+        y: 169
+        width: 98
+        height: 16
 
         color: kExitColor
         text: "DECLINE ALL"
-        upEntry: challenge3
+        upEntry: challenge5
         leftEntry: confirmBtn
         onSelect: declineSponsorChallenges
     }
