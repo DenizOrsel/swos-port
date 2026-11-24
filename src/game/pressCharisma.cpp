@@ -22,6 +22,7 @@
 #include "swos.h"
 #include "text.h"
 #include "util.h"
+#include "voiceInput.h"
 #include "pressConference.mnu.h"
 
 #include <SimpleIni.h>
@@ -625,7 +626,7 @@ void applyEvaluationResult(const std::string& answerText, const PressFreeTextEva
         s_levelBeforeChoice, s_levelAfterChoice, static_cast<int>(s_lastAppliedDelta));
 }
 
-void drawPressConferenceFrame(bool hoverSubmit, bool hoverNoComment)
+void drawPressConferenceFrame(bool hoverSubmit, bool hoverMic, bool hoverNoComment, const std::string& voiceStatusMsg, bool voiceStatusIsError)
 {
 #ifndef SWOS_TEST
     drawMenuBackground();
@@ -758,17 +759,58 @@ void drawPressConferenceFrame(bool hoverSubmit, bool hoverNoComment)
             inY += 9.5f * px;
         }
 
-        // Info footer inside card
-        char perkBuf[120];
-        std::snprintf(perkBuf, sizeof(perkBuf), "Perks at Lvl %d: Gate %.2fx | Sponsors +%d%% | Job Prestige Tier %d/10",
-            curLvl, getPressAttendanceMultiplier(s_state.charismaPoints),
-            getCharismaSponsorBonusPct(s_state.charismaPoints), curLvl);
-        drawCompactText(r, atlas, offX + 16.0f * gameScale, offY + 153.5f * gameScale,
-            fitPx(perkBuf, px * 0.86f, 288.0f * gameScale), perkBuf, mutedCol, 230, false);
+        // Info footer inside card (or live mic status / level meter when recording/transcribing!)
+        VoiceCaptureState vState = getVoiceCaptureState();
+        if (vState == VoiceCaptureState::kRecording) {
+            float recSec = getVoiceRecordingSeconds();
+            float lvl = getVoiceInputLevel();
+            bool pulse = ((SDL_GetTicks() / 320) & 1) == 0;
+            char recBuf[96];
+            std::snprintf(recBuf, sizeof(recBuf), "%s REC %.1fs - Release Ctrl+M / F2 or click STOP",
+                pulse ? "[*]" : "[ ]", recSec);
+            drawCompactText(r, atlas, offX + 16.0f * gameScale, offY + 153.5f * gameScale,
+                fitPx(recBuf, px * 0.86f, 212.0f * gameScale), recBuf, redCol, 255, true);
 
-        // Two buttons at bottom (y=174..192)
-        drawBtn(16.0f, 174.0f, 142.0f, 18.0f, "[ENTER] ANSWER PRESS", 26, 118, 56, hoverSubmit);
-        drawBtn(166.0f, 174.0f, 138.0f, 18.0f, "[ESC] NO COMMENT", 142, 36, 36, hoverNoComment);
+            // Live mic audio level bar (x=232..304)
+            SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+            SDL_FRect mBg{ offX + 232.0f * gameScale, offY + 154.0f * gameScale, 72.0f * gameScale, 7.0f * gameScale };
+            SDL_SetRenderDrawColor(r, 20, 26, 34, 230);
+            SDL_RenderFillRectF(r, &mBg);
+            SDL_FRect mFill{ mBg.x + 1.0f, mBg.y + 1.0f, std::max(0.0f, (mBg.w - 2.0f) * lvl), mBg.h - 2.0f };
+            SDL_SetRenderDrawColor(r, lvl > 0.7f ? 248 : 80, lvl > 0.7f ? 104 : 232, 110, 240);
+            SDL_RenderFillRectF(r, &mFill);
+            SDL_SetRenderDrawColor(r, 150, 170, 185, 220);
+            SDL_RenderDrawRectF(r, &mBg);
+            SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+        } else if (vState == VoiceCaptureState::kTranscribing) {
+            static const char kSpin[4] = { '|', '/', '-', '\\' };
+            char sp = kSpin[(SDL_GetTicks() / 120) & 3];
+            std::string trMsg = std::string("[") + sp + "] WHISPER TRANSCRIBING VOICE...";
+            drawCompactText(r, atlas, offX + 16.0f * gameScale, offY + 153.5f * gameScale,
+                px * 0.88f, trMsg, yellowCol, 255, true);
+        } else if (!voiceStatusMsg.empty()) {
+            drawCompactText(r, atlas, offX + 16.0f * gameScale, offY + 153.5f * gameScale,
+                fitPx(voiceStatusMsg, px * 0.84f, 288.0f * gameScale), voiceStatusMsg,
+                voiceStatusIsError ? redCol : greenCol, 245, false);
+        } else {
+            char perkBuf[120];
+            std::snprintf(perkBuf, sizeof(perkBuf), "Perks Lvl %d: Gate %.2fx | Sponsors +%d%% | Hold Ctrl+M/F2 to talk",
+                curLvl, getPressAttendanceMultiplier(s_state.charismaPoints),
+                getCharismaSponsorBonusPct(s_state.charismaPoints));
+            drawCompactText(r, atlas, offX + 16.0f * gameScale, offY + 153.5f * gameScale,
+                fitPx(perkBuf, px * 0.84f, 288.0f * gameScale), perkBuf, mutedCol, 230, false);
+        }
+
+        // Three buttons at bottom (y=174..192)
+        drawBtn(16.0f, 174.0f, 102.0f, 18.0f, "[ENTER] ANSWER", 26, 118, 56, hoverSubmit);
+        if (vState == VoiceCaptureState::kRecording) {
+            drawBtn(122.0f, 174.0f, 88.0f, 18.0f, "STOP REC", 184, 34, 38, hoverMic);
+        } else if (vState == VoiceCaptureState::kTranscribing) {
+            drawBtn(122.0f, 174.0f, 88.0f, 18.0f, "WHISPER...", 140, 104, 24, false);
+        } else {
+            drawBtn(122.0f, 174.0f, 88.0f, 18.0f, "[Ctrl+M] MIC", 34, 92, 152, hoverMic);
+        }
+        drawBtn(214.0f, 174.0f, 90.0f, 18.0f, "[ESC] NO CMT", 142, 36, 36, hoverNoComment);
     } else {
         int panelUnits = std::max(80, static_cast<int>((286.0f * gameScale) / px));
         float rx = offX + 16.0f * gameScale;
@@ -903,8 +945,43 @@ void runInteractivePressConferenceDialog()
         flushKeyBuffer();
     };
 
+    std::string voiceStatusMsg;
+    bool voiceStatusIsError = false;
+    Uint32 voiceStatusUntilTick = 0;
+    bool pttKeyHeld = false;
+    bool prevPttKeyHeld = false;
+
     while (true) {
         processControlEvents();
+
+        // Poll async Whisper transcription result
+        {
+            bool vOk = false;
+            std::string vRes;
+            if (pollVoiceTranscriptionResult(vOk, vRes)) {
+                if (vOk) {
+                    std::string clean = sanitizePressField(vRes, kMaxPressAnswerChars);
+                    if (!clean.empty()) {
+                        if (!s_userTypedAnswer.empty() && s_userTypedAnswer.back() != ' ' &&
+                            s_userTypedAnswer.size() < kMaxPressAnswerChars)
+                            s_userTypedAnswer.push_back(' ');
+                        size_t rem = (s_userTypedAnswer.size() < kMaxPressAnswerChars)
+                            ? (kMaxPressAnswerChars - s_userTypedAnswer.size()) : 0;
+                        if (rem > 0)
+                            s_userTypedAnswer += clean.substr(0, rem);
+                    }
+                    voiceStatusMsg = "Voice transcribed! Edit or press ENTER to submit.";
+                    voiceStatusIsError = false;
+                    voiceStatusUntilTick = SDL_GetTicks() + 4500;
+                } else {
+                    voiceStatusMsg = vRes;
+                    voiceStatusIsError = true;
+                    voiceStatusUntilTick = SDL_GetTicks() + 6500;
+                }
+            }
+            if (!voiceStatusMsg.empty() && SDL_GetTicks() > voiceStatusUntilTick)
+                voiceStatusMsg.clear();
+        }
 
         int mx = 0, my = 0;
         Uint32 mbtn = SDL_GetMouseState(&mx, &my);
@@ -912,22 +989,73 @@ void runInteractivePressConferenceDialog()
         bool mouseClicked = (mouseDown && !prevMouseDown);
         prevMouseDown = mouseDown;
 
+        // Push-to-talk key state: Hold Ctrl+M OR hold F2 (typing 'm' without Ctrl still types 'm' normally!)
+        const Uint8 *kb = SDL_GetKeyboardState(nullptr);
+        bool ctrlDown = kb && (kb[SDL_SCANCODE_LCTRL] != 0 || kb[SDL_SCANCODE_RCTRL] != 0);
+        pttKeyHeld = !s_showingReaction && kb && ((ctrlDown && kb[SDL_SCANCODE_M] != 0) || kb[SDL_SCANCODE_F2] != 0);
+        if (pttKeyHeld && !prevPttKeyHeld) {
+            if (getVoiceCaptureState() == VoiceCaptureState::kIdle) {
+                std::string err;
+                if (!startVoiceRecording(err)) {
+                    voiceStatusMsg = err;
+                    voiceStatusIsError = true;
+                    voiceStatusUntilTick = SDL_GetTicks() + 5000;
+                } else {
+                    voiceStatusMsg.clear();
+                }
+            }
+        } else if (!pttKeyHeld && prevPttKeyHeld) {
+            if (getVoiceCaptureState() == VoiceCaptureState::kRecording) {
+                std::string err;
+                if (!stopVoiceRecordingAndTranscribeAsync(err) && !err.empty()) {
+                    voiceStatusMsg = err;
+                    voiceStatusIsError = true;
+                    voiceStatusUntilTick = SDL_GetTicks() + 4500;
+                }
+            }
+        }
+        prevPttKeyHeld = pttKeyHeld;
+
         bool hoverSubmit = s_showingReaction
             ? hitVgaRect(mx, my, 88.0f, 174.0f, 144.0f, 18.0f)
-            : hitVgaRect(mx, my, 16.0f, 174.0f, 142.0f, 18.0f);
-        bool hoverNoComment = !s_showingReaction && hitVgaRect(mx, my, 166.0f, 174.0f, 138.0f, 18.0f);
+            : hitVgaRect(mx, my, 16.0f, 174.0f, 102.0f, 18.0f);
+        bool hoverMic = !s_showingReaction && hitVgaRect(mx, my, 122.0f, 174.0f, 88.0f, 18.0f);
+        bool hoverNoComment = !s_showingReaction && hitVgaRect(mx, my, 214.0f, 174.0f, 90.0f, 18.0f);
 
-        drawPressConferenceFrame(hoverSubmit, hoverNoComment);
+        drawPressConferenceFrame(hoverSubmit, hoverMic, hoverNoComment, voiceStatusMsg, voiceStatusIsError);
         updateScreen(false);
         SDL_Delay(16);
 
         if (!s_showingReaction) {
+            if (mouseClicked && hoverMic) {
+                VoiceCaptureState vst = getVoiceCaptureState();
+                std::string err;
+                if (vst == VoiceCaptureState::kIdle) {
+                    if (!startVoiceRecording(err)) {
+                        voiceStatusMsg = err;
+                        voiceStatusIsError = true;
+                        voiceStatusUntilTick = SDL_GetTicks() + 5000;
+                    } else {
+                        voiceStatusMsg.clear();
+                    }
+                } else if (vst == VoiceCaptureState::kRecording) {
+                    if (!stopVoiceRecordingAndTranscribeAsync(err) && !err.empty()) {
+                        voiceStatusMsg = err;
+                        voiceStatusIsError = true;
+                        voiceStatusUntilTick = SDL_GetTicks() + 4500;
+                    }
+                }
+                continue;
+            }
             if (mouseClicked && hoverSubmit) {
+                if (getVoiceCaptureState() == VoiceCaptureState::kRecording)
+                    cancelVoiceRecording();
                 if (!trimStr(s_userTypedAnswer).empty()) {
                     triggerSubmit();
                     continue;
                 }
             } else if (mouseClicked && hoverNoComment) {
+                cancelVoiceRecording();
                 triggerNoComment();
                 continue;
             }
@@ -936,12 +1064,18 @@ void runInteractivePressConferenceDialog()
                 auto key = getExtendedKey();
                 if (key.first == SDL_SCANCODE_UNKNOWN && key.second == SDLK_UNKNOWN)
                     break;
+                // Swallow Ctrl+M and F2 so push-to-talk never inserts 'm' into the textbox
+                if ((ctrlDown && key.first == SDL_SCANCODE_M) || key.first == SDL_SCANCODE_F2)
+                    continue;
                 if (key.first == SDL_SCANCODE_ESCAPE) {
+                    cancelVoiceRecording();
                     triggerNoComment();
                     break;
                 }
                 if (key.first == SDL_SCANCODE_RETURN || key.first == SDL_SCANCODE_RETURN2 ||
                     key.first == SDL_SCANCODE_KP_ENTER) {
+                    if (getVoiceCaptureState() == VoiceCaptureState::kRecording)
+                        cancelVoiceRecording();
                     if (!trimStr(s_userTypedAnswer).empty()) {
                         triggerSubmit();
                         break;
@@ -977,6 +1111,7 @@ void runInteractivePressConferenceDialog()
     }
 
 exit_press_dialog:
+    cancelVoiceRecording();
     flushKeyBuffer();
     menuFadeOut();
 #endif

@@ -14,6 +14,7 @@
 #include "transferImpact.h"
 #include "supporterStream.h"
 #include "tabloidNewspaper.h"
+#include "voiceInput.h"
 #include "achievements.h"
 #include "stadiumFacilities.h"
 #include <fstream>
@@ -1640,6 +1641,20 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
                 { 9, "C. GAUTIERI" }, { 9, "C. GAUTIERI" }, { 9, "C. GAUTIERI" },
             };
             assertTrue(evaluateSponsorChallenge(parsed[0], res));
+        }
+
+        // Voice push-to-talk helpers: 16kHz PCM WAV builder + Whisper JSON/plain text extraction
+        {
+            std::vector<int16_t> samples = { 0, 1200, -1200, 3400 };
+            auto wav = buildPcm16MonoWav(samples.data(), samples.size(), 16000);
+            assertEqual(static_cast<int>(wav.size()), 44 + 8);
+            assertTrue(wav[0] == 'R' && wav[1] == 'I' && wav[2] == 'F' && wav[3] == 'F');
+            assertTrue(wav[8] == 'W' && wav[9] == 'A' && wav[10] == 'V' && wav[11] == 'E');
+
+            assertEqual(extractWhisperTextFromJsonOrPlain("{\"text\": \"  We played brilliant football today!\\n\"}"),
+                std::string("We played brilliant football today!"));
+            assertEqual(extractWhisperTextFromJsonOrPlain("[00:00:00.000 --> 00:00:02.500]  Gautieri was unstoppable! [BLANK_AUDIO]"),
+                std::string("Gautieri was unstoppable!"));
         }
     }
 

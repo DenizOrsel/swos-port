@@ -124,6 +124,12 @@ void writeAiIni(const std::string& path, const LlmConfig& cfg)
     ini.SetLongValue("telemetry", "maxVisibleTweets", cfg.telemetry.maxVisibleTweets);
     ini.SetLongValue("telemetry", "streamBoxHeightPct", cfg.telemetry.streamBoxHeightPct);
 
+    ini.SetBoolValue("voice", "enabled", cfg.voice.enabled);
+    ini.SetValue("voice", "whisperCliPath", cfg.voice.whisperCliPath.c_str());
+    ini.SetValue("voice", "whisperModelPath", cfg.voice.whisperModelPath.c_str());
+    ini.SetValue("voice", "whisperEndpoint", cfg.voice.whisperEndpoint.c_str());
+    ini.SetValue("voice", "whisperLanguage", cfg.voice.whisperLanguage.empty() ? "auto" : cfg.voice.whisperLanguage.c_str());
+
     const auto& plist = cfg.personalities.empty() ? defaultFanPersonalities() : cfg.personalities;
     std::string namesList;
     for (size_t i = 0; i < plist.size(); ++i) {
@@ -471,6 +477,14 @@ bool loadLlmConfig(const char *iniPath /* = nullptr */)
         static_cast<int>(ini.GetLongValue("telemetry", "maxVisibleTweets", s_config.telemetry.maxVisibleTweets)), 3, 6);
     s_config.telemetry.streamBoxHeightPct = std::clamp(
         static_cast<int>(ini.GetLongValue("telemetry", "streamBoxHeightPct", s_config.telemetry.streamBoxHeightPct)), 30, 85);
+
+    s_config.voice.enabled = ini.GetBoolValue("voice", "enabled", s_config.voice.enabled);
+    s_config.voice.whisperCliPath = trimCopy(ini.GetValue("voice", "whisperCliPath", s_config.voice.whisperCliPath.c_str()));
+    s_config.voice.whisperModelPath = trimCopy(ini.GetValue("voice", "whisperModelPath", s_config.voice.whisperModelPath.c_str()));
+    s_config.voice.whisperEndpoint = trimCopy(ini.GetValue("voice", "whisperEndpoint", s_config.voice.whisperEndpoint.c_str()));
+    s_config.voice.whisperLanguage = trimCopy(ini.GetValue("voice", "whisperLanguage", s_config.voice.whisperLanguage.c_str()));
+    if (s_config.voice.whisperLanguage.empty())
+        s_config.voice.whisperLanguage = "auto";
 
     const char *rawPersonalities = ini.GetValue("personalities", "personalities", nullptr);
     if (rawPersonalities && rawPersonalities[0] != '\0') {

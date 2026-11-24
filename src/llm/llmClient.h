@@ -38,6 +38,14 @@ struct LlmTelemetryConfig {
     int streamBoxHeightPct = 62;
 };
 
+struct LlmVoiceConfig {
+    bool enabled = true;
+    std::string whisperCliPath = "whisper\\whisper-cli.exe";
+    std::string whisperModelPath = "whisper\\ggml-base.bin";
+    std::string whisperEndpoint = "http://127.0.0.1:8178/inference";
+    std::string whisperLanguage = "auto";
+};
+
 struct LlmConfig {
     bool enabled = false;
     LlmProvider provider = LlmProvider::kOllama;
@@ -52,6 +60,7 @@ struct LlmConfig {
     bool think = false;
     LlmFeaturesConfig features;
     LlmTelemetryConfig telemetry;
+    LlmVoiceConfig voice;
     std::vector<FanPersonality> personalities = defaultFanPersonalities();
 };
 
