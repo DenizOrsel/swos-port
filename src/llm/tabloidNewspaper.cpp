@@ -13,6 +13,13 @@
 
 #include <SDL_image.h>
 
+#if defined(_WIN32) && !defined(SWOS_TEST)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -117,6 +124,169 @@ void drawRectF(SDL_Renderer *r, float x, float y, float w, float h, SDL_Color co
     SDL_FRect fr{ x, y, w, h };
     SDL_RenderDrawRectF(r, &fr);
 }
+
+#ifdef _WIN32
+struct SerifTex {
+    SDL_Texture *tex = nullptr;
+    int w = 0;
+    int h = 0;
+    void destroy()
+    {
+        if (tex) {
+            SDL_DestroyTexture(tex);
+            tex = nullptr;
+        }
+        w = 0;
+        h = 0;
+    }
+};
+
+SerifTex rasterizeTimesNewRoman(
+    SDL_Renderer *r,
+    const std::string& utf8Text,
+    int maxW,
+    int maxH,
+    int desiredPx,
+    int minPx,
+    bool bold,
+    bool italic,
+    bool centered,
+    SDL_Color col,
+    bool singleLine = false)
+{
+    SerifTex out;
+    if (!r || utf8Text.empty() || maxW <= 4 || maxH <= 4)
+        return out;
+
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8Text.c_str(), -1, nullptr, 0);
+    if (wlen <= 1)
+        return out;
+    std::wstring wtext(static_cast<size_t>(wlen - 1), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, utf8Text.c_str(), -1, wtext.data(), wlen);
+
+    HDC hdc = CreateCompatibleDC(nullptr);
+    if (!hdc)
+        return out;
+
+    UINT baseFlags = DT_NOPREFIX | (centered ? DT_CENTER : DT_LEFT) |
+                     (singleLine ? (DT_SINGLELINE | DT_END_ELLIPSIS) : DT_WORDBREAK);
+
+    int chosenPx = std::max(minPx, desiredPx);
+    int measuredW = maxW;
+    int measuredH = maxH;
+    HFONT bestFont = nullptr;
+
+    for (int pxTry = std::max(minPx, desiredPx); pxTry >= minPx; --pxTry) {
+        HFONT f = CreateFontW(
+            -pxTry, 0, 0, 0,
+            bold ? FW_BOLD : FW_NORMAL,
+            italic ? TRUE : FALSE,
+            FALSE, FALSE,
+            DEFAULT_CHARSET,
+            OUT_TT_PRECIS,
+            CLIP_DEFAULT_PRECIS,
+            ANTIALIASED_QUALITY,
+            VARIABLE_PITCH | FF_ROMAN,
+            L"Times New Roman");
+        if (!f)
+            continue;
+
+        HGDIOBJ oldF = SelectObject(hdc, f);
+        RECT rc{ 0, 0, maxW, 0 };
+        DrawTextW(hdc, wtext.c_str(), -1, &rc, baseFlags | DT_CALCRECT);
+        SelectObject(hdc, oldF);
+
+        int reqW = std::max(1, static_cast<int>(rc.right - rc.left));
+        int reqH = std::max(1, static_cast<int>(rc.bottom - rc.top));
+        bool fits = singleLine ? (reqW <= maxW && reqH <= maxH) : (reqH <= maxH && reqW <= maxW + 2);
+
+        if (bestFont)
+            DeleteObject(bestFont);
+        bestFont = f;
+        chosenPx = pxTry;
+        measuredW = centered ? maxW : std::min(maxW, reqW + 2);
+        measuredH = std::min(maxH, reqH + 2);
+
+        if (fits)
+            break;
+    }
+
+    if (!bestFont) {
+        DeleteDC(hdc);
+        return out;
+    }
+
+    int texW = std::max(1, std::min(maxW, measuredW));
+    int texH = std::max(1, std::min(maxH, measuredH));
+
+    BITMAPINFO bmi{};
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = texW;
+    bmi.bmiHeader.biHeight = -texH; // top-down DIB
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+
+    void *dibBits = nullptr;
+    HBITMAP bmp = CreateDIBSection(hdc, &bmi, DIB_RGB_COLORS, &dibBits, nullptr, 0);
+    if (!bmp || !dibBits) {
+        if (bmp) DeleteObject(bmp);
+        DeleteObject(bestFont);
+        DeleteDC(hdc);
+        return out;
+    }
+
+    std::memset(dibBits, 0, static_cast<size_t>(texW) * static_cast<size_t>(texH) * 4u);
+    HGDIOBJ oldBmp = SelectObject(hdc, bmp);
+    HGDIOBJ oldFont = SelectObject(hdc, bestFont);
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, RGB(255, 255, 255));
+
+    RECT drawRc{ 0, 0, texW, texH };
+    DrawTextW(hdc, wtext.c_str(), -1, &drawRc, baseFlags);
+    GdiFlush();
+
+    // Convert grayscale GDI coverage into colored ABGR8888 (R, G, B, A bytes) for crisp alpha blending on newsprint
+    std::vector<uint8_t> rgba(static_cast<size_t>(texW) * static_cast<size_t>(texH) * 4u);
+    const auto *src = static_cast<const uint8_t *>(dibBits);
+    const size_t pixelCount = static_cast<size_t>(texW) * static_cast<size_t>(texH);
+    for (size_t i = 0; i < pixelCount; ++i) {
+        uint8_t b = src[i * 4 + 0];
+        uint8_t g = src[i * 4 + 1];
+        uint8_t rr = src[i * 4 + 2];
+        uint8_t cov = std::max(rr, std::max(g, b));
+        rgba[i * 4 + 0] = col.r;
+        rgba[i * 4 + 1] = col.g;
+        rgba[i * 4 + 2] = col.b;
+        rgba[i * 4 + 3] = static_cast<uint8_t>((static_cast<uint32_t>(cov) * col.a) / 255u);
+    }
+
+    SelectObject(hdc, oldFont);
+    SelectObject(hdc, oldBmp);
+    DeleteObject(bmp);
+    DeleteObject(bestFont);
+    DeleteDC(hdc);
+
+    SDL_Texture *tex = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, texW, texH);
+    if (tex) {
+        SDL_UpdateTexture(tex, nullptr, rgba.data(), texW * 4);
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+        out.tex = tex;
+        out.w = texW;
+        out.h = texH;
+    }
+    (void)chosenPx;
+    return out;
+}
+
+void drawSerifTex(SDL_Renderer *r, const SerifTex& st, float x, float y)
+{
+    if (!st.tex || st.w <= 0 || st.h <= 0)
+        return;
+    SDL_FRect dst{ std::floor(x), std::floor(y), static_cast<float>(st.w), static_cast<float>(st.h) };
+    SDL_RenderCopyF(r, st.tex, nullptr, &dst);
+}
+#endif
 
 // Procedural pixel-art SWOS footballer sprite drawn in club's actual kit colors (12x16 logical units)
 void drawPixelSwosPlayerSprite(SDL_Renderer *r, float x, float y, float u, const TabloidKitColors& kit, bool celebrating)
@@ -748,6 +918,36 @@ void showTabloidNewspaperModal(const TabloidNewspaperEdition& edition)
         return (needed <= maxW) ? basePx : std::max(0.75f, basePx * (maxW / needed));
     };
 
+#ifdef _WIN32
+    struct SerifSheetCache {
+        int cachedOutW = 0;
+        int cachedOutH = 0;
+        SerifTex masthead;
+        SerifTex headline;
+        SerifTex subhead;
+        SerifTex caption;
+        SerifTex chairman;
+        SerifTex story;
+        SerifTex briefing;
+        SerifTex motmName;
+        SerifTex motmStats;
+        void clear()
+        {
+            masthead.destroy();
+            headline.destroy();
+            subhead.destroy();
+            caption.destroy();
+            chairman.destroy();
+            story.destroy();
+            briefing.destroy();
+            motmName.destroy();
+            motmStats.destroy();
+            cachedOutW = 0;
+            cachedOutH = 0;
+        }
+    } serifCache;
+#endif
+
     while (true) {
         processControlEvents();
 
@@ -826,9 +1026,42 @@ void showTabloidNewspaperModal(const TabloidNewspaperEdition& edition)
         float titleAreaX = innerX + badgeW + 6.0f;
         float titleAreaW = std::max(40.0f, priceX - titleAreaX - 6.0f);
         std::string paperTitle = "THE DAILY SOCCER ECHO";
+#ifdef _WIN32
+        bool rebuildSerif = (serifCache.cachedOutW != outW || serifCache.cachedOutH != outH);
+        if (rebuildSerif) {
+            serifCache.clear();
+            serifCache.cachedOutW = outW;
+            serifCache.cachedOutH = outH;
+            int mastPx = std::clamp(static_cast<int>(std::round(sheetH * 0.046f)), 18, 52);
+            serifCache.masthead = rasterizeTimesNewRoman(
+                r, paperTitle, static_cast<int>(titleAreaW), static_cast<int>(mastH * 0.68f),
+                mastPx, 13, true, false, true, inkBlack, true);
+
+            int hlDesired = std::clamp(static_cast<int>(std::round(sheetH * 0.045f)), 18, 48);
+            serifCache.headline = rasterizeTimesNewRoman(
+                r, edition.headline, static_cast<int>(innerW - 6.0f), static_cast<int>(sheetH * 0.068f),
+                hlDesired, 14, true, false, true, inkBlack, true);
+
+            if (!edition.subhead.empty()) {
+                int shDesired = std::clamp(static_cast<int>(std::round(sheetH * 0.024f)), 13, 28);
+                serifCache.subhead = rasterizeTimesNewRoman(
+                    r, edition.subhead, static_cast<int>(innerW - 8.0f), static_cast<int>(sheetH * 0.042f),
+                    shDesired, 11, true, true, true, tabloidRedDark, true);
+            }
+        }
+        if (serifCache.masthead.tex) {
+            drawSerifTex(r, serifCache.masthead, titleAreaX,
+                curY + std::max(1.0f, (mastH * 0.68f - static_cast<float>(serifCache.masthead.h)) * 0.5f));
+        } else {
+            float titlePx = fitPx(paperTitle, px * 1.72f, titleAreaW);
+            drawCompactTextCentered(r, atlas, titleAreaX + titleAreaW * 0.5f, curY + (mastH - 8.0f * titlePx) * 0.36f,
+                titlePx, paperTitle, inkBlack, 255, true);
+        }
+#else
         float titlePx = fitPx(paperTitle, px * 1.72f, titleAreaW);
         drawCompactTextCentered(r, atlas, titleAreaX + titleAreaW * 0.5f, curY + (mastH - 8.0f * titlePx) * 0.36f,
             titlePx, paperTitle, inkBlack, 255, true);
+#endif
         drawCompactTextCentered(r, atlas, titleAreaX + titleAreaW * 0.5f, curY + mastH - 8.5f * px * 0.76f,
             fitPx("BRITAIN'S NO.1 SENSIBLE FOOTBALL TABLOID", px * 0.72f, titleAreaW),
             "BRITAIN'S NO.1 SENSIBLE FOOTBALL TABLOID", inkMuted, 255, false);
@@ -853,6 +1086,26 @@ void showTabloidNewspaperModal(const TabloidNewspaperEdition& edition)
         curY += ribH + 5.0f;
 
         // 3. Screaming Tabloid Banner Headline + Sub-Headline
+#ifdef _WIN32
+        if (serifCache.headline.tex) {
+            drawSerifTex(r, serifCache.headline, innerX + 3.0f, curY);
+            curY += static_cast<float>(serifCache.headline.h) + 2.0f;
+        } else {
+            float hlPx = fitPx(edition.headline, px * 1.85f, innerW - 4.0f);
+            drawCompactTextCentered(r, atlas, innerX + innerW * 0.5f, curY, hlPx, edition.headline, inkBlack, 255, true);
+            curY += 9.0f * hlPx + 2.0f;
+        }
+        if (!edition.subhead.empty()) {
+            if (serifCache.subhead.tex) {
+                drawSerifTex(r, serifCache.subhead, innerX + 4.0f, curY);
+                curY += static_cast<float>(serifCache.subhead.h) + 3.0f;
+            } else {
+                float shPx = fitPx(edition.subhead, px * 0.96f, innerW - 6.0f);
+                drawCompactTextCentered(r, atlas, innerX + innerW * 0.5f, curY, shPx, edition.subhead, tabloidRedDark, 255, true);
+                curY += 9.5f * shPx + 2.0f;
+            }
+        }
+#else
         float hlPx = fitPx(edition.headline, px * 1.85f, innerW - 4.0f);
         drawCompactTextCentered(r, atlas, innerX + innerW * 0.5f, curY, hlPx, edition.headline, inkBlack, 255, true);
         curY += 9.0f * hlPx + 2.0f;
@@ -862,6 +1115,7 @@ void showTabloidNewspaperModal(const TabloidNewspaperEdition& edition)
             drawCompactTextCentered(r, atlas, innerX + innerW * 0.5f, curY, shPx, edition.subhead, tabloidRedDark, 255, true);
             curY += 9.5f * shPx + 2.0f;
         }
+#endif
         fillRectF(r, innerX, curY, innerW, 1.5f, inkBlack);
         curY += 5.0f;
 
@@ -904,16 +1158,31 @@ void showTabloidNewspaperModal(const TabloidNewspaperEdition& edition)
 
         float leftCurY = photoY + photoH + 3.0f;
 
-        // Photo Caption (up to 2 crisp lines)
+        // Photo Caption (up to 2 crisp lines in Times New Roman Italic)
         if (!edition.photoCaption.empty()) {
-            float capPx = px * 0.80f;
-            int capUnits = std::max(30, static_cast<int>((leftW - 4.0f) / capPx));
-            auto capLines = wrapCompactTextUnits(edition.photoCaption, capUnits);
-            for (size_t i = 0; i < capLines.size() && i < 2; ++i) {
-                drawCompactText(r, atlas, innerX + 2.0f, leftCurY, capPx, capLines[i], inkCharcoal, 255, i == 0);
-                leftCurY += 9.0f * capPx;
+#ifdef _WIN32
+            if (rebuildSerif) {
+                int capDesired = std::clamp(static_cast<int>(std::round(sheetH * 0.021f)), 12, 23);
+                int capMaxH = std::max(24, static_cast<int>(std::round(capDesired * 2.5f)));
+                serifCache.caption = rasterizeTimesNewRoman(
+                    r, edition.photoCaption, static_cast<int>(leftW - 4.0f), capMaxH,
+                    capDesired, 10, false, true, false, inkCharcoal, false);
             }
-            leftCurY += 3.0f;
+            if (serifCache.caption.tex) {
+                drawSerifTex(r, serifCache.caption, innerX + 2.0f, leftCurY);
+                leftCurY += static_cast<float>(serifCache.caption.h) + 4.0f;
+            } else
+#endif
+            {
+                float capPx = px * 0.80f;
+                int capUnits = std::max(30, static_cast<int>((leftW - 4.0f) / capPx));
+                auto capLines = wrapCompactTextUnits(edition.photoCaption, capUnits);
+                for (size_t i = 0; i < capLines.size() && i < 2; ++i) {
+                    drawCompactText(r, atlas, innerX + 2.0f, leftCurY, capPx, capLines[i], inkCharcoal, 255, i == 0);
+                    leftCurY += 9.0f * capPx;
+                }
+                leftCurY += 3.0f;
+            }
         }
 
         // Chairman's Verdict Box (fills remainder of left column cleanly)
@@ -925,51 +1194,77 @@ void showTabloidNewspaperModal(const TabloidNewspaperEdition& edition)
         float chPadX = innerX + 8.0f;
         float chY = leftCurY + 4.0f;
         drawCompactText(r, atlas, chPadX, chY, px * 0.86f, "CHAIRMAN'S VERDICT", tabloidRedDark, 255, true);
-        chY += 10.0f * px * 0.86f;
+        chY += 10.0f * px * 0.86f + 2.0f;
 
-        float chBodyPx = px * 0.84f;
-        int chMaxUnits = std::max(28, static_cast<int>((leftW - 14.0f) / chBodyPx));
-        auto chLines = wrapCompactTextUnits("\"" + edition.chairmanQuote + "\"", chMaxUnits);
-        float chBottom = leftCurY + chairH - 3.0f;
-        for (const auto& cl : chLines) {
-            if (chY + 8.0f * chBodyPx > chBottom) break;
-            drawCompactText(r, atlas, chPadX, chY, chBodyPx, cl, inkBlack, 255, false);
-            chY += 9.2f * chBodyPx;
+        float chBottom = leftCurY + chairH - 4.0f;
+#ifdef _WIN32
+        if (rebuildSerif) {
+            int chDesired = std::clamp(static_cast<int>(std::round(sheetH * 0.022f)), 13, 24);
+            int chAvailH = std::max(16, static_cast<int>(chBottom - chY));
+            serifCache.chairman = rasterizeTimesNewRoman(
+                r, "\"" + edition.chairmanQuote + "\"", static_cast<int>(leftW - 14.0f), chAvailH,
+                chDesired, 10, false, true, false, inkBlack, false);
+        }
+        if (serifCache.chairman.tex) {
+            drawSerifTex(r, serifCache.chairman, chPadX, chY);
+        } else
+#endif
+        {
+            float chBodyPx = px * 0.84f;
+            int chMaxUnits = std::max(28, static_cast<int>((leftW - 14.0f) / chBodyPx));
+            auto chLines = wrapCompactTextUnits("\"" + edition.chairmanQuote + "\"", chMaxUnits);
+            for (const auto& cl : chLines) {
+                if (chY + 8.0f * chBodyPx > chBottom) break;
+                drawCompactText(r, atlas, chPadX, chY, chBodyPx, cl, inkBlack, 255, false);
+                chY += 9.2f * chBodyPx;
+            }
         }
 
         // --- RIGHT COLUMN: Match Report + Star Man (MOTM) Card + Back-Page Briefing ---
         float rightCurY = curY;
 
         // Reserve bottom space for Star Man Card + Briefing Strip
-        float motmH = edition.motm.valid ? std::max(30.0f, 24.0f * px) : 0.0f;
-        float briefH = edition.briefingBullets.empty() ? 0.0f : std::max(24.0f, (static_cast<float>(std::min<size_t>(3, edition.briefingBullets.size())) * 9.0f + 11.0f) * px * 0.82f);
+        float motmH = edition.motm.valid ? std::max(34.0f, 25.0f * px) : 0.0f;
+        float briefH = edition.briefingBullets.empty() ? 0.0f : std::max(32.0f, (static_cast<float>(std::min<size_t>(3, edition.briefingBullets.size())) * 10.5f + 12.0f) * px * 0.82f);
         float reservedBottom = (motmH > 0 ? motmH + 4.0f : 0.0f) + (briefH > 0 ? briefH + 4.0f : 0.0f);
         float storyMaxBottom = curY + bodyH - reservedBottom;
 
         drawCompactText(r, atlas, rightX, rightCurY, px * 0.88f, "MATCH REPORT", tabloidRedDark, 255, true);
         rightCurY += 9.5f * px * 0.88f;
         fillRectF(r, rightX, rightCurY, rightW * 0.45f, 1.0f, tabloidRedDark);
-        rightCurY += 3.0f;
+        rightCurY += 4.0f;
 
-        float storyPx = px * 0.85f;
-        int storyUnits = std::max(32, static_cast<int>((rightW - 2.0f) / storyPx));
-        auto storyLines = wrapCompactTextUnits(edition.story, storyUnits);
-        // Shrink slightly if story is long so all paragraphs fit cleanly on 1 broadsheet page
         float availStoryH = std::max(24.0f, storyMaxBottom - rightCurY);
-        if (static_cast<float>(storyLines.size()) * 9.4f * storyPx > availStoryH) {
-            storyPx = std::max(0.75f, storyPx * 0.86f);
-            storyUnits = std::max(34, static_cast<int>((rightW - 2.0f) / storyPx));
-            storyLines = wrapCompactTextUnits(edition.story, storyUnits);
+#ifdef _WIN32
+        if (rebuildSerif) {
+            int storyDesired = std::clamp(static_cast<int>(std::round(sheetH * 0.0235f)), 14, 26);
+            serifCache.story = rasterizeTimesNewRoman(
+                r, edition.story, static_cast<int>(rightW - 2.0f), static_cast<int>(availStoryH),
+                storyDesired, 11, false, false, false, inkBlack, false);
         }
-        for (const auto& sl : storyLines) {
-            if (sl.empty()) {
-                rightCurY += 4.5f * storyPx;
-                continue;
+        if (serifCache.story.tex) {
+            drawSerifTex(r, serifCache.story, rightX, rightCurY);
+        } else
+#endif
+        {
+            float storyPx = px * 0.85f;
+            int storyUnits = std::max(32, static_cast<int>((rightW - 2.0f) / storyPx));
+            auto storyLines = wrapCompactTextUnits(edition.story, storyUnits);
+            if (static_cast<float>(storyLines.size()) * 9.4f * storyPx > availStoryH) {
+                storyPx = std::max(0.75f, storyPx * 0.86f);
+                storyUnits = std::max(34, static_cast<int>((rightW - 2.0f) / storyPx));
+                storyLines = wrapCompactTextUnits(edition.story, storyUnits);
             }
-            if (rightCurY + 8.0f * storyPx > storyMaxBottom)
-                break;
-            drawCompactText(r, atlas, rightX, rightCurY, storyPx, sl, inkBlack, 255, false);
-            rightCurY += 9.2f * storyPx;
+            for (const auto& sl : storyLines) {
+                if (sl.empty()) {
+                    rightCurY += 4.5f * storyPx;
+                    continue;
+                }
+                if (rightCurY + 8.0f * storyPx > storyMaxBottom)
+                    break;
+                drawCompactText(r, atlas, rightX, rightCurY, storyPx, sl, inkBlack, 255, false);
+                rightCurY += 9.2f * storyPx;
+            }
         }
 
         // ★ STAR MAN (MOTM) Box with pixel-art SWOS player sprite in real kit colors!
@@ -979,13 +1274,32 @@ void showTabloidNewspaperModal(const TabloidNewspaperEdition& edition)
             fillRectF(r, rightX, bY, rightW, briefH, calloutBg);
             drawRectF(r, rightX, bY, rightW, briefH, inkBlack);
             drawCompactText(r, atlas, rightX + 5.0f, bY + 3.0f, px * 0.78f, "BACK-PAGE BRIEFING", inkBlack, 255, true);
-            float lineY = bY + 3.0f + 9.2f * px * 0.78f;
-            float bPx = px * 0.76f;
-            for (size_t i = 0; i < edition.briefingBullets.size() && i < 3; ++i) {
-                std::string bullet = "* " + edition.briefingBullets[i];
-                drawCompactText(r, atlas, rightX + 5.0f, lineY,
-                    fitPx(bullet, bPx, rightW - 10.0f), bullet, inkCharcoal, 255, false);
-                lineY += 9.0f * bPx;
+            float lineY = bY + 3.0f + 9.2f * px * 0.78f + 1.0f;
+#ifdef _WIN32
+            if (rebuildSerif) {
+                std::string joined;
+                for (size_t i = 0; i < edition.briefingBullets.size() && i < 3; ++i) {
+                    if (!joined.empty()) joined += "\n";
+                    joined += "- " + edition.briefingBullets[i];
+                }
+                int bDesired = std::clamp(static_cast<int>(std::round(sheetH * 0.019f)), 12, 21);
+                int bAvailH = std::max(14, static_cast<int>((bY + briefH - 3.0f) - lineY));
+                serifCache.briefing = rasterizeTimesNewRoman(
+                    r, joined, static_cast<int>(rightW - 10.0f), bAvailH,
+                    bDesired, 10, false, false, false, inkCharcoal, false);
+            }
+            if (serifCache.briefing.tex) {
+                drawSerifTex(r, serifCache.briefing, rightX + 5.0f, lineY);
+            } else
+#endif
+            {
+                float bPx = px * 0.76f;
+                for (size_t i = 0; i < edition.briefingBullets.size() && i < 3; ++i) {
+                    std::string bullet = "* " + edition.briefingBullets[i];
+                    drawCompactText(r, atlas, rightX + 5.0f, lineY,
+                        fitPx(bullet, bPx, rightW - 10.0f), bullet, inkCharcoal, 255, false);
+                    lineY += 9.0f * bPx;
+                }
             }
             bottomAnchorY = bY - 4.0f;
         }
@@ -1004,19 +1318,38 @@ void showTabloidNewspaperModal(const TabloidNewspaperEdition& edition)
             drawCompactText(r, atlas, textX, mY + 3.5f, px * 0.76f, "STAR MAN (MOTM)", tabloidRedDark, 255, true);
 
             std::string plLine = toUpperAscii(edition.motm.name) + " (" + toUpperAscii(edition.motm.team) + ")";
-            drawCompactText(r, atlas, textX, mY + 3.5f + 8.8f * px * 0.76f,
-                fitPx(plLine, px * 0.88f, textMaxW), plLine, inkBlack, 255, true);
-
             char statBuf[96];
             if (edition.motm.pos == "GK") {
-                std::snprintf(statBuf, sizeof(statBuf), "RATING %.1f/10  |  GK  |  %d SAVES",
+                std::snprintf(statBuf, sizeof(statBuf), "Rating %.1f/10  |  GK  |  %d Saves",
                     edition.motm.rating, edition.motm.gkSaves);
             } else {
-                std::snprintf(statBuf, sizeof(statBuf), "RATING %.1f/10  |  %s  |  %dG %dA",
+                std::snprintf(statBuf, sizeof(statBuf), "Rating %.1f/10  |  %s  |  %dG %dA",
                     edition.motm.rating, edition.motm.pos.c_str(), edition.motm.goals, edition.motm.assists);
             }
-            drawCompactText(r, atlas, textX, mY + 3.5f + 18.2f * px * 0.80f,
-                fitPx(statBuf, px * 0.78f, textMaxW), statBuf, inkCharcoal, 255, true);
+#ifdef _WIN32
+            if (rebuildSerif) {
+                int mnDesired = std::clamp(static_cast<int>(std::round(sheetH * 0.022f)), 13, 24);
+                int msDesired = std::clamp(static_cast<int>(std::round(sheetH * 0.019f)), 11, 20);
+                serifCache.motmName = rasterizeTimesNewRoman(
+                    r, plLine, static_cast<int>(textMaxW), static_cast<int>(motmH * 0.40f),
+                    mnDesired, 10, true, false, false, inkBlack, true);
+                serifCache.motmStats = rasterizeTimesNewRoman(
+                    r, statBuf, static_cast<int>(textMaxW), static_cast<int>(motmH * 0.36f),
+                    msDesired, 10, false, false, false, inkCharcoal, true);
+            }
+            float nameY = mY + 3.5f + 8.8f * px * 0.76f;
+            if (serifCache.motmName.tex) {
+                drawSerifTex(r, serifCache.motmName, textX, nameY);
+                if (serifCache.motmStats.tex)
+                    drawSerifTex(r, serifCache.motmStats, textX, nameY + static_cast<float>(serifCache.motmName.h) + 1.0f);
+            } else
+#endif
+            {
+                drawCompactText(r, atlas, textX, mY + 3.5f + 8.8f * px * 0.76f,
+                    fitPx(plLine, px * 0.88f, textMaxW), plLine, inkBlack, 255, true);
+                drawCompactText(r, atlas, textX, mY + 3.5f + 18.2f * px * 0.80f,
+                    fitPx(statBuf, px * 0.78f, textMaxW), statBuf, inkCharcoal, 255, true);
+            }
         }
 
         // 5. Bottom Footer Bar ([S] Save Edition PNG + [ENTER / SPACE] Fold Paper)
@@ -1105,6 +1438,9 @@ void showTabloidNewspaperModal(const TabloidNewspaperEdition& edition)
         SDL_Delay(16);
     }
 
+#ifdef _WIN32
+    serifCache.clear();
+#endif
     if (photoTex)
         SDL_DestroyTexture(photoTex);
 
