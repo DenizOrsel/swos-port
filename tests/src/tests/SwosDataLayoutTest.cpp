@@ -9,6 +9,7 @@
 #include "matchTelemetry.h"
 #include "sponsorChallenge.h"
 #include "pressCharisma.h"
+#include "preMatchAssistant.h"
 #include "supporterStream.h"
 #include "tabloidNewspaper.h"
 #include "achievements.h"
@@ -1249,6 +1250,82 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
             assertTrue(parsed.photoCaption.find("74' Stuart") != std::string::npos);
             assertTrue(parsed.story.find("Brighton blew Fulham") != std::string::npos);
             assertTrue(parsed.chairmanQuote.find("Brilliant display") != std::string::npos);
+        }
+
+        // Pre-Match Assistant V2: real opponent scouting, tactical focus bounds [0..7], man-mark, physio costs, & shop window eval
+        {
+            TeamGame myTg{};
+            std::strcpy(myTg.teamName, "BRIGHTON");
+            myTg.players[0].position = PlayerPosition::kGoalkeeper;
+            std::strcpy(myTg.players[0].shortName, "ORMEROD");
+            myTg.players[0].goalieSkill = 4;
+
+            myTg.players[1].position = PlayerPosition::kDefender;
+            std::strcpy(myTg.players[1].shortName, "MAYO");
+            myTg.players[1].tackling = 3;
+            myTg.players[1].heading = 3;
+
+            myTg.players[2].position = PlayerPosition::kMidfielder;
+            std::strcpy(myTg.players[2].shortName, "HOBSON");
+            myTg.players[2].passing = 4;
+            myTg.players[2].ballControl = 4;
+
+            myTg.players[3].position = PlayerPosition::kAttacker;
+            std::strcpy(myTg.players[3].shortName, "STUART");
+            myTg.players[3].finishing = 6;
+            myTg.players[3].shooting = 6;
+            myTg.players[3].speed = 7;
+
+            TeamGame oppTg{};
+            std::strcpy(oppTg.teamName, "FULHAM");
+            oppTg.players[0].position = PlayerPosition::kGoalkeeper;
+            std::strcpy(oppTg.players[0].shortName, "TAYLOR");
+            oppTg.players[0].goalieSkill = 2; // weak GK!
+
+            oppTg.players[1].position = PlayerPosition::kDefender;
+            std::strcpy(oppTg.players[1].shortName, "BLAKE");
+            oppTg.players[1].speed = 4;
+            oppTg.players[1].tackling = 4;
+
+            oppTg.players[2].position = PlayerPosition::kAttacker;
+            std::strcpy(oppTg.players[2].shortName, "CONROY");
+            oppTg.players[2].finishing = 7;
+            oppTg.players[2].shooting = 6;
+            oppTg.players[2].speed = 6;
+            oppTg.players[2].ballControl = 5;
+
+            auto scout = analyzeOpponentScouting(myTg, oppTg);
+            assertEqual(scout.dangerManName, std::string("CONROY"));
+            assertEqual(scout.dangerManIndex, 2);
+            assertTrue(scout.weakLinkLabel.find("TAYLOR") != std::string::npos);
+
+            // All-Out Attack + Man-Mark (Training L1 applies trade-off; skills strictly clamped to [0,7])
+            TeamGame myCopy = myTg, oppCopy = oppTg;
+            applyTacticalFocusToTeams(myCopy, oppCopy, TacticalFocusType::kAllOutAttack, 1, true, scout.dangerManIndex);
+            assertEqual(myCopy.players[3].finishing, byte{ 7 }); // 6 + 2 clamped to 7!
+            assertEqual(myCopy.players[3].speed, byte{ 7 });     // 7 + 1 clamped to 7!
+            assertEqual(myCopy.players[1].tackling, byte{ 2 });  // 3 - 1 trade-off
+            assertEqual(myCopy.players[2].passing, byte{ 3 });   // 4 - 1 man-mark shadow cost
+            assertEqual(oppCopy.players[2].finishing, byte{ 6 });// 7 - 1 man-marked!
+
+            // Training L4+ waives all trade-off penalties!
+            TeamGame myL4 = myTg, oppL4 = oppTg;
+            applyTacticalFocusToTeams(myL4, oppL4, TacticalFocusType::kIronDefence, 4, true, scout.dangerManIndex);
+            assertEqual(myL4.players[0].goalieSkill, byte{ 5 }); // GK +1!
+            assertEqual(myL4.players[1].tackling, byte{ 5 });    // DEF +2!
+            assertEqual(myL4.players[3].finishing, byte{ 6 });   // NO penalty at Training L4+!
+
+            // Emergency Physio discounts & risk reduction by Medical level
+            assertTrue(computeEmergencyPhysioCost(3, 5, true) < computeEmergencyPhysioCost(3, 1, true));
+            assertTrue(computePainkillerAggravationPct(5) < computePainkillerAggravationPct(1));
+
+            // Shop Window Spotlight evaluation
+            auto hit = evaluateSpotlightPerformance("STUART", 2, 0, 0, 8.4);
+            assertTrue(hit.succeeded);
+            assertTrue(hit.masterclassSkillBoost);
+            auto flop = evaluateSpotlightPerformance("STUART", 0, 0, 1, 5.2);
+            assertTrue(flop.flopped);
+            assertFalse(flop.succeeded);
         }
         std::remove(tmpStd);
         resetStadiumFacilitiesState();

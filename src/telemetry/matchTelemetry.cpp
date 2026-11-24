@@ -11,6 +11,7 @@
 #include "result.h"
 #include "sponsorChallenge.h"
 #include "pressCharisma.h"
+#include "preMatchAssistant.h"
 #include "stadiumFacilities.h"
 #include "stats.h"
 #include "swos.h"
@@ -1625,6 +1626,7 @@ MatchTelemetrySnapshot captureMatchTelemetrySnapshot()
     snap.activeSponsorChallengeSummary = formatActiveSponsorChallengeForTelemetry();
     snap.pressCharismaSummary = formatPressContextForTelemetry();
     snap.stadiumFacilitiesSummary = formatStadiumContextForTelemetry();
+    snap.preMatchTacticalSummary = formatPreMatchAssistantContextForTelemetry();
     snap.recentEvents.assign(s_recentEvents.begin(), s_recentEvents.end());
     return snap;
 }
@@ -1678,6 +1680,8 @@ std::string formatTelemetryPromptBlock(const MatchTelemetrySnapshot& snap)
     if (!snap.stadiumFacilitiesSummary.empty())
         out += "\n" + snap.stadiumFacilitiesSummary +
                " (Fans, pundits, and journalists may organically praise or criticize the stadium atmosphere, pitch surface, facilities, construction, or ticket prices.)";
+    if (!snap.preMatchTacticalSummary.empty())
+        out += "\n" + snap.preMatchTacticalSummary;
 
     if (!snap.recentEvents.empty()) {
         out += "\nRecent events:";
@@ -1806,6 +1810,53 @@ MatchMotmSummary getMatchManOfTheMatch()
     evalTeam(1, swos.topTeamInGame, t1, swos.statsTeam2Goals, t1Won, t2Won);
     evalTeam(2, swos.bottomTeamInGame, t2, swos.statsTeam1Goals, t2Won, t1Won);
     return best;
+}
+
+PlayerTelemetryPerformance getPlayerMatchPerformance(int teamNum, int shirtNumber, const std::string& shortName)
+{
+    PlayerTelemetryPerformance out;
+    if (teamNum != 1 && teamNum != 2)
+        return out;
+
+    const TeamGame& tg = (teamNum == 1) ? swos.topTeamInGame : swos.bottomTeamInGame;
+    bool pens = (swos.playingPenalties != 0);
+    bool t1Won = pens ? (swos.team1PenaltyGoals > swos.team2PenaltyGoals) : (swos.statsTeam1Goals > swos.statsTeam2Goals);
+    bool t2Won = pens ? (swos.team2PenaltyGoals > swos.team1PenaltyGoals) : (swos.statsTeam2Goals > swos.statsTeam1Goals);
+    bool won = (teamNum == 1) ? t1Won : t2Won;
+    bool lost = (teamNum == 1) ? t2Won : t1Won;
+    int oppGoals = (teamNum == 1) ? swos.statsTeam2Goals : swos.statsTeam1Goals;
+
+    auto up = [](const std::string& s) {
+        std::string r = s;
+        for (char& c : r) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        return r;
+    };
+    std::string targetUp = up(shortName);
+
+    for (int i = 0; i < kNumPlayersInTeam; ++i) {
+        const auto& pl = tg.players[i];
+        if (pl.shortName[0] == '\0')
+            continue;
+        bool match = (shirtNumber > 0 && static_cast<int>(pl.shirtNumber) == shirtNumber) ||
+                     (!targetUp.empty() && up(pl.shortName) == targetUp);
+        if (!match)
+            continue;
+        const auto& pa = s_playerAnalytics[teamNum - 1][i];
+        out.found = true;
+        out.goals = std::max(pa.goals, static_cast<int>(pl.goalsScored));
+        out.assists = pa.assists;
+        out.yellowCards = pa.yellowCards;
+        out.redCards = pa.redCards;
+        int shots = std::max(pa.shots, out.goals);
+        int sot = std::max(pa.shotsOnTarget, out.goals);
+        bool isGk = (i == 0 || pl.position == PlayerPosition::kGoalkeeper);
+        out.rating = computePlayerMatchRating(
+            out.goals, out.assists, sot, std::max(0, shots - sot),
+            pa.passesCompleted, pa.turnovers, pa.tacklesWon,
+            pa.gkSaves, oppGoals, isGk, out.yellowCards, out.redCards, won, lost);
+        break;
+    }
+    return out;
 }
 
 bool exportMatchTelemetryJsonToPath(const std::string& fullPath)

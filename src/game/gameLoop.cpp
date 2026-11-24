@@ -38,6 +38,7 @@
 #include "options.h"
 #include "replays.h"
 #include "stadiumMenu.h"
+#include "preMatchAssistant.h"
 #include "tabloidNewspaper.h"
 #include "replayExitMenu.h"
 #include "llmFeatures.h"
@@ -224,8 +225,10 @@ void gameLoop(TeamGame *topTeam, TeamGame *bottomTeam)
         }
         beginPostMatchNewspaperRequest();
         beginPostMatchPressConference(swos.statsTeam1Goals, swos.statsTeam2Goals);
+        onMatchFinishedPreMatchAssistant();
         showPostMatchSponsorPayoutIfNeeded();
         showPostMatchStadiumReportIfNotable();
+        showPostMatchAssistantPayoffIfNeeded();
         showPostMatchNewspaperIfReady();
         showPostMatchPressConferenceIfReady();
         onCareerMatchCompletedLlm(swos.statsTeam1Goals, swos.statsTeam2Goals);
@@ -238,18 +241,20 @@ void showStadiumScreenAndFadeOutMusic(TeamGame *topTeam, TeamGame *bottomTeam, i
         showStadiumMenu(topTeam, bottomTeam, maxSubstitutes, [&]() {
             initMatch(topTeam, bottomTeam, true);
             onPreMatchStadiumSnapshot(topTeam, bottomTeam);
-            beginPreMatchScoutingRequest(topTeam, bottomTeam);
+            beginPreMatchAssistantBriefing(topTeam, bottomTeam);
             beginSponsorChallengeGeneration(topTeam, bottomTeam);
             beginPreMatchPressConference(topTeam, bottomTeam);
         });
-        showPreMatchScoutingIfReady();
+        showPreMatchAssistantMenuIfReady();
         showPreMatchSponsorChallengeMenuIfReady();
         showPreMatchPressConferenceIfReady();
     } else {
         initMatch(topTeam, bottomTeam, true);
         onPreMatchStadiumSnapshot(topTeam, bottomTeam);
+        beginPreMatchAssistantBriefing(topTeam, bottomTeam);
         beginSponsorChallengeGeneration(topTeam, bottomTeam);
         beginPreMatchPressConference(topTeam, bottomTeam);
+        showPreMatchAssistantMenuIfReady();
         showPreMatchSponsorChallengeMenuIfReady();
         showPreMatchPressConferenceIfReady();
     }

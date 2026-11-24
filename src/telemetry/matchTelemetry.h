@@ -68,6 +68,7 @@ struct MatchTelemetrySnapshot {
     std::string activeSponsorChallengeSummary;
     std::string pressCharismaSummary;
     std::string stadiumFacilitiesSummary;
+    std::string preMatchTacticalSummary;
     std::vector<MatchTelemetryEvent> recentEvents;
 };
 
@@ -118,5 +119,15 @@ struct MatchMotmSummary {
     double rating = 0.0;
 };
 
+struct PlayerTelemetryPerformance {
+    bool found = false;
+    int goals = 0;
+    int assists = 0;
+    int yellowCards = 0;
+    int redCards = 0;
+    double rating = 6.0;
+};
+
 MatchMotmSummary getMatchManOfTheMatch();
+PlayerTelemetryPerformance getPlayerMatchPerformance(int teamNum, int shirtNumber, const std::string& shortName);
 bool exportMatchTelemetryJsonToPath(const std::string& fullPath);
