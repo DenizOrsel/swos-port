@@ -90,6 +90,7 @@ constexpr int32_t kTicketPricesByDivision[4][3] = {
 
 StadiumData s_stadium;
 StadiumMatchdayReport s_lastReport;
+StadiumMatchdayReport s_liveMatchPreview;
 bool s_pendingNotableReportPopup = false;
 
 // Pre-match snapshot state for home gate delta & medical injury reduction
@@ -841,8 +842,10 @@ void resetStadiumFacilitiesState()
     s_lastReport = StadiumMatchdayReport{};
     s_pendingNotableReportPopup = false;
     s_matchTrackingActive = false;
+    s_liveMatchPreview = StadiumMatchdayReport{};
     s_matchHumanIsHome = false;
     s_preMatchInjuryCaptured = false;
+    s_liveMatchPreview = StadiumMatchdayReport{};
     s_confirmingUpgrade = false;
     s_statusFeedback.clear();
 }
@@ -915,9 +918,11 @@ void applyStadiumPitchQualityOverride(int& pitchType)
 void onPreMatchStadiumSnapshot(const TeamGame *topTeam, const TeamGame *bottomTeam)
 {
     s_matchTrackingActive = false;
+    s_liveMatchPreview = StadiumMatchdayReport{};
     s_matchHumanIsHome = false;
     s_preMatchInjuryCaptured = false;
     s_pendingNotableReportPopup = false;
+    s_liveMatchPreview = StadiumMatchdayReport{};
 
     if (swos.g_gameType != kGameTypeCareer || swos.g_trainingGame || HotseatInternal::isVmNationalSelector())
         return;
@@ -948,6 +953,12 @@ void onPreMatchStadiumSnapshot(const TeamGame *topTeam, const TeamGame *bottomTe
     s_matchOppRank = 8;
     s_matchIsDerby = detectClassicDerby(s_matchHumanIsHome ? homeName : awayName, s_matchOpponentName, s_matchClubRank, s_matchOppRank);
 
+    if (s_matchHumanIsHome) {
+        s_liveMatchPreview = stadiumCalculateMatchday(
+            s_stadium, s_matchClubDivision, s_matchClubRank, s_matchOppRank,
+            s_matchIsDerby, readCurrentCharismaPoints(), s_matchOpponentName);
+    }
+
     // Snapshot pre-match squad injury bytes so Medical Center can reduce newly acquired injuries
     s_preMatchInjuryBytes.fill(0);
     const uint8_t *matchPlayers = &SwosVM::g_memByte[CareerOffsets::kCurrentMatchPlayers];
@@ -972,6 +983,7 @@ void onPostMatchStadiumUpdate(bool isPlayedMatch)
     if (swos.g_gameType != kGameTypeCareer || swos.g_trainingGame || swos.gameCanceled ||
         HotseatInternal::isVmNationalSelector()) {
         s_matchTrackingActive = false;
+    s_liveMatchPreview = StadiumMatchdayReport{};
         return;
     }
 
@@ -996,6 +1008,7 @@ void onPostMatchStadiumUpdate(bool isPlayedMatch)
         s_preMatchGateReceipts = *reinterpret_cast<const int32_t *>(&SwosVM::g_memByte[CareerOffsets::kGateReceipts]);
     }
     s_matchTrackingActive = false;
+    s_liveMatchPreview = StadiumMatchdayReport{};
 
     // 0. Record last-5 match form & update dynamic effective ticket price
     {
@@ -1780,6 +1793,62 @@ void showStadiumFacilitiesMenu()
 
 // --- LLM Telemetry Synergy (Live Stream, Daily Echo Newspaper, Press Conferences) ---
 
+std::string describeRecentFormStreak(const char *recentForm)
+{
+    if (!recentForm || recentForm[0] == '\0')
+        return {};
+
+    std::string cleaned;
+    for (int i = 0; recentForm[i] != '\0' && cleaned.size() < 5; ++i) {
+        char ch = static_cast<char>(std::toupper(static_cast<unsigned char>(recentForm[i])));
+        if (ch == 'W' || ch == 'D' || ch == 'L')
+            cleaned.push_back(ch);
+    }
+    if (cleaned.empty())
+        return {};
+
+    int wins = 0, draws = 0, losses = 0;
+    for (char ch : cleaned) {
+        if (ch == 'W') ++wins;
+        else if (ch == 'D') ++draws;
+        else if (ch == 'L') ++losses;
+    }
+
+    int n = static_cast<int>(cleaned.size());
+    int winStreak = 0;
+    for (int i = n - 1; i >= 0 && cleaned[i] == 'W'; --i) ++winStreak;
+    int lossStreak = 0;
+    for (int i = n - 1; i >= 0 && cleaned[i] == 'L'; --i) ++lossStreak;
+    int unbeatenStreak = 0;
+    for (int i = n - 1; i >= 0 && cleaned[i] != 'L'; --i) ++unbeatenStreak;
+    int winlessStreak = 0;
+    for (int i = n - 1; i >= 0 && cleaned[i] != 'W'; --i) ++winlessStreak;
+
+    std::string hyphenated;
+    for (size_t i = 0; i < cleaned.size(); ++i) {
+        if (i > 0) hyphenated.push_back('-');
+        hyphenated.push_back(cleaned[i]);
+    }
+
+    std::string note;
+    if (winStreak >= 4)
+        note = std::to_string(winStreak) + " wins in a row — red-hot winning streak!";
+    else if (winStreak == 3)
+        note = (unbeatenStreak >= 4)
+            ? ("3 straight wins, " + std::to_string(unbeatenStreak) + " unbeaten!")
+            : "3 wins in a row!";
+    else if (unbeatenStreak >= 4)
+        note = std::to_string(unbeatenStreak) + " matches unbeaten";
+    else if (lossStreak >= 3)
+        note = std::to_string(lossStreak) + " defeats in a row — slump under pressure";
+    else if (winlessStreak >= 4)
+        note = std::to_string(winlessStreak) + " matches without a win — fans getting restless";
+    else
+        note = std::to_string(wins) + "W " + std::to_string(draws) + "D " + std::to_string(losses) + "L in last " + std::to_string(n);
+
+    return hyphenated + " (" + note + ")";
+}
+
 std::string formatStadiumContextForTelemetry()
 {
     if (swos.g_gameType != kGameTypeCareer || HotseatInternal::isVmNationalSelector())
@@ -1799,8 +1868,9 @@ std::string formatStadiumContextForTelemetry()
 
     out += "Ticket Policy: " + std::string(getTicketPolicyName(s_stadium.ticketPolicy)) +
            " (effective GBP " + std::to_string(s_stadium.ticketPrice) + ")";
-    if (s_stadium.recentForm[0] != '\0')
-        out += "; Last-5 Form: " + std::string(s_stadium.recentForm);
+    std::string formDesc = describeRecentFormStreak(s_stadium.recentForm);
+    if (!formDesc.empty())
+        out += "; Last-5 Form (oldest->newest): " + formDesc;
     if (s_stadium.ticketPolicy == TicketPolicy::kCheap)
         out += " [supporters appreciate the fair ticket prices]";
     else if (s_stadium.ticketPolicy == TicketPolicy::kExpensive)
@@ -1812,13 +1882,30 @@ std::string formatStadiumContextForTelemetry()
         out += "; immaculate playing surface draws praise";
 
     if (s_stadium.activeProject.isActive) {
-        out += ". Active Construction: upgrading " +
+        out += ". ONGOING STADIUM CONSTRUCTION: upgrading " +
                std::string(getStadiumModuleName(s_stadium.activeProject.module)) + " to Level " +
                std::to_string(s_stadium.activeProject.targetLevel) + " (" +
-               std::to_string(s_stadium.activeProject.matchesRemaining) + " matches left)";
+               std::to_string(s_stadium.activeProject.matchesRemaining) + " matches remaining; cranes/work visible around the ground)";
     }
 
-    if (s_lastReport.valid && s_lastReport.isHomeMatch && s_lastReport.attendance > 0) {
+    if (s_matchTrackingActive) {
+        if (s_matchHumanIsHome && s_liveMatchPreview.valid && s_liveMatchPreview.attendance > 0) {
+            out += ". TODAY'S MATCH VENUE: AT HOME (" + std::string(s_stadium.stadiumName) + ") — Live Crowd: " +
+                   formatNumberCommas(s_liveMatchPreview.attendance) + "/" +
+                   formatNumberCommas(s_liveMatchPreview.maxCapacity) + " (" +
+                   std::to_string(s_liveMatchPreview.fillPct) + "% full";
+            if (s_liveMatchPreview.isSellout)
+                out += ", ROARING SELLOUT!";
+            else if (s_liveMatchPreview.fillPct >= 90)
+                out += ", PACKED HOUSE";
+            if (s_liveMatchPreview.isDerby)
+                out += ", FIERCE DERBY ATMOSPHERE";
+            out += ")";
+        } else if (!s_matchHumanIsHome) {
+            out += ". TODAY'S MATCH VENUE: PLAYING AWAY FROM HOME (do NOT describe today's crowd as a home sellout at " +
+                   std::string(s_stadium.stadiumName) + ")";
+        }
+    } else if (s_lastReport.valid && s_lastReport.isHomeMatch && s_lastReport.attendance > 0) {
         out += ". Latest Home Attendance: " + formatNumberCommas(s_lastReport.attendance) + "/" +
                formatNumberCommas(s_lastReport.maxCapacity) + " (" + std::to_string(s_lastReport.fillPct) + "% full";
         if (s_lastReport.isSellout)
@@ -1826,5 +1913,64 @@ std::string formatStadiumContextForTelemetry()
         out += ")";
     }
 
+    return out;
+}
+
+std::string getLiveStadiumAndFormStreamNote()
+{
+    if (swos.g_gameType != kGameTypeCareer || HotseatInternal::isVmNationalSelector())
+        return {};
+
+    ensureCurrentCareerStadiumInitialized();
+    if (!s_stadium.initialized)
+        return {};
+
+    std::vector<std::string> hooks;
+
+    // 1. Live home sellout / packed house (strictly when playing at home today)
+    if (s_matchTrackingActive && s_matchHumanIsHome && s_liveMatchPreview.valid && s_liveMatchPreview.attendance > 0) {
+        if (s_liveMatchPreview.isSellout) {
+            hooks.push_back("ROARING HOME SELLOUT at " + std::string(s_stadium.stadiumName) + " (" +
+                            formatNumberCommas(s_liveMatchPreview.attendance) + "/" +
+                            formatNumberCommas(s_liveMatchPreview.maxCapacity) + ", " +
+                            std::to_string(s_liveMatchPreview.fillPct) + "% full" +
+                            (s_liveMatchPreview.isDerby ? ", fierce derby!" : "!)"));
+        } else if (s_liveMatchPreview.fillPct >= 90) {
+            hooks.push_back("Packed home crowd at " + std::string(s_stadium.stadiumName) + " (" +
+                            formatNumberCommas(s_liveMatchPreview.attendance) + ", " +
+                            std::to_string(s_liveMatchPreview.fillPct) + "% full)");
+        }
+    }
+
+    // 2. Ongoing construction project
+    if (s_stadium.activeProject.isActive) {
+        hooks.push_back("Ongoing construction at " + std::string(s_stadium.stadiumName) + ": " +
+                        std::string(getStadiumModuleName(s_stadium.activeProject.module)) + " -> Lvl " +
+                        std::to_string(s_stadium.activeProject.targetLevel) + " (" +
+                        std::to_string(s_stadium.activeProject.matchesRemaining) + " matches left)");
+    }
+
+    // 3. Notable last-5 form streak (3+ wins, 4+ unbeaten, 3+ losses, or 4+ winless)
+    std::string cleaned = s_stadium.recentForm;
+    int n = static_cast<int>(cleaned.size());
+    if (n >= 3) {
+        int winStreak = 0, lossStreak = 0, unbeatenStreak = 0, winlessStreak = 0;
+        for (int i = n - 1; i >= 0 && cleaned[i] == 'W'; --i) ++winStreak;
+        for (int i = n - 1; i >= 0 && cleaned[i] == 'L'; --i) ++lossStreak;
+        for (int i = n - 1; i >= 0 && cleaned[i] != 'L'; --i) ++unbeatenStreak;
+        for (int i = n - 1; i >= 0 && cleaned[i] != 'W'; --i) ++winlessStreak;
+        if (winStreak >= 3 || unbeatenStreak >= 4 || lossStreak >= 3 || winlessStreak >= 4) {
+            hooks.push_back("Last-5 Form: " + describeRecentFormStreak(s_stadium.recentForm));
+        }
+    }
+
+    if (hooks.empty())
+        return {};
+
+    std::string out;
+    for (size_t i = 0; i < hooks.size(); ++i) {
+        if (i > 0) out += " | ";
+        out += hooks[i];
+    }
     return out;
 }

@@ -159,4 +159,6 @@ bool handleCareerHubStadiumInput();
 void showStadiumFacilitiesMenu();
 
 // --- LLM Telemetry Context (Supporter Stream, Newspaper, Press) ---
+std::string describeRecentFormStreak(const char *recentForm);
 std::string formatStadiumContextForTelemetry();
+std::string getLiveStadiumAndFormStreamNote();

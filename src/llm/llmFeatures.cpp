@@ -1040,6 +1040,35 @@ void triggerLivePunditEvent(const char *eventLabel, bool highPriority)
     bool useUrundul = isTurkishLlmLanguage(cfg.language) && (forceUrundul || (s_punditCallCount % 2u) == 0u);
     s_pendingPunditIsUrundul = useUrundul;
 
+    // Gentle, non-intrusive broadcast angles for active Sponsor Challenges, Last-5 form streaks, & Stadium sellouts/construction
+    std::string broadcastAngle;
+    {
+        const std::string sponsorNote = getLiveSponsorChallengeStreamNote();
+        const std::string stadiumFormNote = getLiveStadiumAndFormStreamNote();
+        bool isSponsorRelevantEvent = forceUrundul ||
+            (std::strstr(eventLabel, "GOAL") != nullptr) ||
+            (std::strstr(eventLabel, "CARD") != nullptr) ||
+            (std::strstr(eventLabel, "HALF TIME") != nullptr) ||
+            (std::strstr(eventLabel, "FULL TIME") != nullptr) ||
+            (std::strstr(eventLabel, "SAVE") != nullptr);
+        if (!sponsorNote.empty() && isSponsorRelevantEvent &&
+            (sponsorNote.find("ALMOST THERE") != std::string::npos ||
+             sponsorNote.find("LOCKED IN") != std::string::npos ||
+             sponsorNote.find("BROKEN") != std::string::npos ||
+             sponsorNote.find("JACKPOT") != std::string::npos ||
+             (s_punditCallCount % 3u) == 0u)) {
+            broadcastAngle = "Sponsor Bonus Context: " + sponsorNote;
+        }
+        if (!stadiumFormNote.empty() && (forceUrundul || (s_punditCallCount % 3u) == 1u ||
+            std::strstr(eventLabel, "HALF TIME") != nullptr || std::strstr(eventLabel, "FULL TIME") != nullptr)) {
+            if (!broadcastAngle.empty()) broadcastAngle += " | ";
+            broadcastAngle += "Stadium/Form Context: " + stadiumFormNote;
+        }
+    }
+    if (!broadcastAngle.empty()) {
+        prompt += "\nOptional broadcast angle (weave in ONLY if it fits naturally alongside calling the play — never neglect the actual match event): " + broadcastAngle;
+    }
+
     if (useUrundul) {
         prompt += "\nYou are legendary Turkish football TV commentator Omer Urundul chiming in live on the broadcast! "
                   "React to this exact match situation in 1-2 short, punchy Turkish sentences grounded strictly in the real clubs, players, score, and event above.\n"

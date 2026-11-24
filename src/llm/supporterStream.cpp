@@ -5,6 +5,7 @@
 #include "matchTelemetry.h"
 #include "render.h"
 #include "sponsorChallenge.h"
+#include "stadiumFacilities.h"
 #include "stats.h"
 #include "swos.h"
 
@@ -225,22 +226,45 @@ void enqueueSupporterBatchRequest(const char *triggerContext)
         prompt += "\n- INTERACTION RULE: At least ONE message MUST directly reply to or tease an earlier fan from the Recent chat stream by placing @TheirExactHandle in front of their nickname (e.g. @archy_brown ...).";
     }
 
+    bool isKickoff = (triggerContext && std::strcmp(triggerContext, "KICKOFF") == 0);
     bool isAmbientFlow = (!triggerContext ||
                           std::strcmp(triggerContext, "LIVE MATCH FLOW") == 0 ||
-                          std::strcmp(triggerContext, "KICKOFF") == 0);
-    if (isAmbientFlow) {
-        size_t topic = (s_banterTopicCursor++) % 4;
-        if (topic == 0) {
-            prompt += "\n- BANTER TOPIC: Include at least 1 message discussing squad/bench subs (calling for a real available bench player listed above to come on), the manager's record/trophies (showing love for a winning boss or impatience if struggling/new), or the team's season top scorers/assists.";
-        } else if (topic == 1) {
-            prompt += "\n- BANTER TOPIC: Include at least 1 message dropping casual 1996/97 global football season banter (talking about the best players or top clubs of 96/97 like Ronaldo at Barcelona, Shearer at Newcastle, Cantona at Man Utd, Juventus/Del Piero/Zidane, Dortmund in Europe, Bergkamp, Weah, or Roberto Carlos) tied naturally into watching this match.";
-        } else if (topic == 2) {
-            prompt += "\n- BANTER TOPIC: Include at least 1 message chatting about upcoming fixtures (e.g. an upcoming cup tie, European night, or big league fixture from the schedule above, or worrying about resting players for the next big cup game).";
-        } else {
-            prompt += "\n- BANTER TOPIC: Mix live reactions to possession, shots, and territory with lively terrace banter and rivalry between fans.";
+                          isKickoff);
+    const std::string sponsorNote = getLiveSponsorChallengeStreamNote();
+    const std::string stadiumFormNote = getLiveStadiumAndFormStreamNote();
+
+    if (isKickoff && (!stadiumFormNote.empty() || !sponsorNote.empty())) {
+        prompt += "\n- KICKOFF ATMOSPHERE: Capture the opening buzz — fans may naturally mention ";
+        if (!stadiumFormNote.empty())
+            prompt += "the stadium/form context (" + stadiumFormNote + ")";
+        if (!stadiumFormNote.empty() && !sponsorNote.empty())
+            prompt += " or ";
+        if (!sponsorNote.empty())
+            prompt += "the matchday sponsor stakes (" + sponsorNote + ")";
+        prompt += " alongside classic terrace hype.";
+    } else if (isAmbientFlow) {
+        std::vector<std::string> topicPool;
+        topicPool.push_back("Include at least 1 message discussing squad/bench subs (calling for a real available bench player listed above to come on), the manager's record/trophies (showing love for a winning boss or impatience if struggling/new), or the team's season top scorers/assists.");
+        topicPool.push_back("Include at least 1 message dropping casual 1996/97 global football season banter (talking about the best players or top clubs of 96/97 like Ronaldo at Barcelona, Shearer at Newcastle, Cantona at Man Utd, Juventus/Del Piero/Zidane, Dortmund in Europe, Bergkamp, Weah, or Roberto Carlos) tied naturally into watching this match.");
+        topicPool.push_back("Include at least 1 message chatting about upcoming fixtures (e.g. an upcoming cup tie, European night, or big league fixture from the schedule above, or worrying about resting players for the next big cup game).");
+        topicPool.push_back("Mix live reactions to possession, shots, and territory with lively terrace banter and rivalry between fans.");
+        if (!sponsorNote.empty()) {
+            topicPool.push_back("Include 1 message reacting naturally to the live Sponsor Challenge stakes (" + sponsorNote + ") — e.g. cheering 'One more goal and the sponsor bonus is locked in!', hyping a Clean Sweep jackpot, or groaning if a bonus was just blown.");
         }
+        if (!stadiumFormNote.empty()) {
+            topicPool.push_back("Include 1 message organically mentioning the club's current last-5 form streak, today's packed home sellout/atmosphere, or ongoing stadium construction (" + stadiumFormNote + "), strictly matching the facts above.");
+        }
+        size_t topicIdx = (s_banterTopicCursor++) % topicPool.size();
+        prompt += "\n- BANTER TOPIC: " + topicPool[topicIdx];
     } else {
         prompt += "\n- React directly to the live Trigger event above (exact goalkeeper, scorer, finish type, minute), and fans may also debate subs, the manager, or banter with earlier chatters.";
+        if (!sponsorNote.empty()) {
+            prompt += "\n- OPTIONAL SPONSOR HOOK: If this moment affects the live Sponsor Challenge (" + sponsorNote + "), 1 fan may naturally react to the bonus stakes (e.g. 'One more goal and the sponsor bonus is locked in!').";
+        }
+        if (!stadiumFormNote.empty() &&
+            (std::strstr(triggerContext, "GOAL") != nullptr || std::strstr(triggerContext, "HALF TIME") != nullptr || std::strstr(triggerContext, "FULL TIME") != nullptr)) {
+            prompt += "\n- OPTIONAL STADIUM/FORM HOOK: If fitting, 1 fan may nod to " + stadiumFormNote + ".";
+        }
     }
 
     if (!personas.empty()) {

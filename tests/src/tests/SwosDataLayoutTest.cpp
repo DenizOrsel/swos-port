@@ -1148,6 +1148,61 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
         assertEqual(loaded.seasonTotalAttendance, uint32_t{ 42000 });
         assertEqual(loaded.seasonGateRevenue, int64_t{ 315000 });
         assertEqual(loaded.seasonHomeMatches, uint16_t{ 4 });
+
+        // Live Stream enrichment helpers: Last-5 form streaks & mid-match Sponsor Challenge callouts
+        assertTrue(describeRecentFormStreak("").empty());
+        assertTrue(describeRecentFormStreak("WWWWW").find("5 wins in a row") != std::string::npos);
+        assertTrue(describeRecentFormStreak("DWWWW").find("4 wins in a row") != std::string::npos);
+        assertTrue(describeRecentFormStreak("WDDWW").find("5 matches unbeaten") != std::string::npos);
+        assertTrue(describeRecentFormStreak("WWLLL").find("3 defeats in a row") != std::string::npos);
+        assertTrue(describeRecentFormStreak("WLLDL").find("4 matches without a win") != std::string::npos);
+
+        {
+            SponsorChallenge teamG;
+            teamG.type = SponsorChallengeType::kTeamGoals;
+            teamG.title = "GOAL FEST";
+            teamG.description = "Score 3+ goals";
+            teamG.thresholdValue = 3;
+            teamG.rewardAmount = 18000;
+
+            SponsorChallenge cs;
+            cs.type = SponsorChallengeType::kCleanSheetWin;
+            cs.title = "IRON WALL";
+            cs.description = "Win with a clean sheet";
+            cs.rewardAmount = 12000;
+
+            SponsorChallenge lr;
+            lr.type = SponsorChallengeType::kLongRangeGoal;
+            lr.title = "SCREAMER";
+            lr.description = "Score from outside the box";
+            lr.thresholdValue = 1;
+            lr.rewardAmount = 20000;
+
+            MultiMatchContract mc = generateOfflineMultiMatchContract(2, 2); // M3: 10 goals in 3 matches
+            mc.type = MultiMatchContractType::kGoalsInMatches;
+            mc.title = "GOAL MACHINE";
+            mc.targetValue = 10;
+            mc.currentProgress = 7;
+            mc.matchesTotal = 3;
+            mc.matchesPlayed = 2;
+            mc.rewardAmount = 40000;
+
+            SponsorMatchResult liveR;
+            liveR.clubGoals = 2;
+            liveR.opponentGoals = 0;
+            liveR.clubLongRangeGoals = 1;
+
+            std::string callout = formatLiveSponsorChallengeStreamCallouts(
+                { teamG, cs, lr }, 3, mc, liveR, 70, 2);
+            assertTrue(callout.find("ALMOST THERE: 1 more goal locks in") != std::string::npos);
+            assertTrue(callout.find("JACKPOT WATCH") != std::string::npos || callout.find("IRON WALL ON TRACK") != std::string::npos);
+
+            // Conceding breaks Clean Sheet & blows Clean Sweep jackpot
+            liveR.opponentGoals = 1;
+            std::string broken = formatLiveSponsorChallengeStreamCallouts(
+                { teamG, cs, lr }, 3, mc, liveR, 75, 2);
+            assertTrue(broken.find("IRON WALL BROKEN") != std::string::npos);
+        }
         std::remove(tmpStd);
         resetStadiumFacilitiesState();
     }

@@ -190,6 +190,14 @@ void showPostMatchSponsorPayoutIfNeeded();
 // Live telemetry, supporter stream & post-match newspaper integration
 bool hasActiveSponsorChallenge();
 std::string formatActiveSponsorChallengeForTelemetry();
+std::string formatLiveSponsorChallengeStreamCallouts(
+    const std::vector<SponsorChallenge>& activeChallenges,
+    int totalOfferedCount,
+    const MultiMatchContract& activeContract,
+    const SponsorMatchResult& liveRes,
+    int matchMinute,
+    int halfNumber);
+std::string getLiveSponsorChallengeStreamNote();
 std::vector<std::pair<std::string, int>> formatActiveSponsorChallengeHudLines();
 std::string formatLastSponsorChallengeOutcomeForNewspaper();
 

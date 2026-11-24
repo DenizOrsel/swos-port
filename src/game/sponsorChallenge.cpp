@@ -1995,6 +1995,451 @@ static std::string describeSingleChallengeProgress(const SponsorChallenge& c, in
     }
 }
 
+static SponsorMatchResult buildLiveSponsorMatchResult()
+{
+    SponsorMatchResult res;
+    const auto stats = getStats();
+    const auto& humanStats = s_humanIsTeam1 ? stats.team1 : stats.team2;
+    const auto& oppStats = s_humanIsTeam1 ? stats.team2 : stats.team1;
+
+    res.clubGoals = s_humanIsTeam1 ? swos.statsTeam1Goals : swos.statsTeam2Goals;
+    res.opponentGoals = s_humanIsTeam1 ? swos.statsTeam2Goals : swos.statsTeam1Goals;
+
+    auto [ht1, ht2] = getHalfTimeTelemetryGoals();
+    res.clubHtGoals = (swos.halfNumber <= 1) ? res.clubGoals : (s_humanIsTeam1 ? ht1 : ht2);
+    res.opponentHtGoals = (swos.halfNumber <= 1) ? res.opponentGoals : (s_humanIsTeam1 ? ht2 : ht1);
+
+    int totalPoss = stats.team1.ballPossession + stats.team2.ballPossession;
+    int poss1Pct = totalPoss > 0 ? (100 * stats.team1.ballPossession) / totalPoss : 50;
+    res.clubPossessionPct = s_humanIsTeam1 ? poss1Pct : (100 - poss1Pct);
+
+    res.clubShotsOnTarget = humanStats.onTarget;
+    res.opponentShotsOnTarget = oppStats.onTarget;
+    res.clubYellowCards = humanStats.bookings;
+    res.clubRedCards = humanStats.sendingsOff;
+
+    auto [lr1, lr2] = getLongRangeTelemetryGoals();
+    res.clubLongRangeGoals = s_humanIsTeam1 ? lr1 : lr2;
+    auto [hd1, hd2] = getHeaderTelemetryGoals();
+    res.clubHeaderGoals = s_humanIsTeam1 ? hd1 : hd2;
+    auto [e1, e2] = getEarlyTelemetryGoals();
+    res.clubEarlyGoals = s_humanIsTeam1 ? e1 : e2;
+    auto [l1, l2] = getLateTelemetryGoals();
+    res.clubLateGoals = s_humanIsTeam1 ? l1 : l2;
+    auto [sp1, sp2] = getSetPieceTelemetryGoals();
+    res.clubSetPieceGoals = s_humanIsTeam1 ? sp1 : sp2;
+
+    const TeamGame& tg = s_humanIsTeam1 ? swos.topTeamInGame : swos.bottomTeamInGame;
+    for (int i = 0; i < kNumPlayersInTeam; ++i) {
+        int g = tg.players[i].goalsScored;
+        if (g <= 0)
+            continue;
+        if (tg.players[i].position != PlayerPosition::kAttacker)
+            res.clubNonAttackerGoals += g;
+        std::string nm = tg.players[i].shortName;
+        int shirt = static_cast<int>(tg.players[i].shirtNumber);
+        for (int k = 0; k < g; ++k)
+            res.scorerEntries.emplace_back(shirt, nm);
+    }
+    res.assistEntries = getMatchAssistEntries(s_humanIsTeam1 ? 1 : 2);
+    return res;
+}
+
+std::string formatLiveSponsorChallengeStreamCallouts(
+    const std::vector<SponsorChallenge>& activeChallenges,
+    int totalOfferedCount,
+    const MultiMatchContract& activeContract,
+    const SponsorMatchResult& r,
+    int matchMinute,
+    int halfNumber)
+{
+    if (activeChallenges.empty() && !activeContract.isActive)
+        return {};
+
+    std::vector<std::string> urgentHooks;
+    std::vector<std::string> lockedHooks;
+    std::vector<std::string> brokenHooks;
+
+    int greenCount = 0;
+    bool anyBroken = false;
+    int shGoals = (halfNumber <= 1) ? 0 : std::max(0, r.clubGoals - r.clubHtGoals);
+
+    for (const auto& c : activeChallenges) {
+        const std::string stake = formatSponsorPounds(c.rewardAmount);
+        switch (c.type) {
+        case SponsorChallengeType::kCleanSheetWin:
+            if (r.opponentGoals > 0) {
+                anyBroken = true;
+                brokenHooks.push_back(c.title + " BROKEN (conceded; -" + stake + " stake lost)");
+            } else if (r.clubGoals > 0) {
+                ++greenCount;
+                if (matchMinute >= 60)
+                    urgentHooks.push_back(c.title + " ON TRACK: hold this clean sheet to FT to bank " + stake);
+                else
+                    lockedHooks.push_back(c.title + " ON TRACK (leading with clean sheet for " + stake + ")");
+            } else {
+                urgentHooks.push_back(c.title + ": 1 goal + clean sheet puts " + stake + " on track");
+            }
+            break;
+
+        case SponsorChallengeType::kPlayerGoals: {
+            int scored = 0;
+            std::string targetUp = toUpperAscii(c.targetPlayerName);
+            for (const auto& e : r.scorerEntries) {
+                if ((c.targetShirtNumber > 0 && e.first == c.targetShirtNumber) ||
+                    (!targetUp.empty() && toUpperAscii(e.second) == targetUp))
+                    ++scored;
+            }
+            int need = std::max<int>(2, c.thresholdValue);
+            if (scored >= need) {
+                ++greenCount;
+                lockedHooks.push_back(c.title + " LOCKED IN (" + c.targetPlayerName + " hit " + std::to_string(scored) + " goals for " + stake + "!)");
+            } else if (scored == need - 1) {
+                urgentHooks.push_back("ALMOST THERE: 1 more goal from " + c.targetPlayerName + " locks in the " + stake + " " + c.title + " bonus!");
+            }
+            break;
+        }
+
+        case SponsorChallengeType::kFirstHalfGoals: {
+            int need = std::max<int>(1, c.thresholdValue);
+            if (halfNumber <= 1) {
+                if (r.clubGoals >= need) {
+                    ++greenCount;
+                    lockedHooks.push_back(c.title + " LOCKED IN (" + stake + " secured before halftime!)");
+                } else if (r.clubGoals == need - 1) {
+                    urgentHooks.push_back("ALMOST THERE: 1 more 1st-half goal locks in the " + stake + " " + c.title + " bonus!");
+                }
+            } else {
+                if (r.clubHtGoals >= need) {
+                    ++greenCount;
+                    lockedHooks.push_back(c.title + " LOCKED IN (" + stake + " banked in 1st half)");
+                } else {
+                    anyBroken = true;
+                    brokenHooks.push_back(c.title + " MISSED at halftime (-" + stake + ")");
+                }
+            }
+            break;
+        }
+
+        case SponsorChallengeType::kPossessionWin: {
+            int need = std::max<int>(60, c.thresholdValue);
+            if (r.clubGoals > r.opponentGoals && r.clubPossessionPct >= need) {
+                ++greenCount;
+                lockedHooks.push_back(c.title + " ON TRACK (" + std::to_string(r.clubPossessionPct) + "% poss & leading for " + stake + ")");
+            } else if (r.clubGoals > r.opponentGoals && r.clubPossessionPct >= need - 5) {
+                urgentHooks.push_back("ALMOST THERE: possession at " + std::to_string(r.clubPossessionPct) + "% (need " + std::to_string(need) + "%+ to bank " + stake + ")");
+            }
+            break;
+        }
+
+        case SponsorChallengeType::kShotsOnTarget: {
+            int need = std::max<int>(1, c.thresholdValue);
+            if (r.clubShotsOnTarget >= need) {
+                ++greenCount;
+                lockedHooks.push_back(c.title + " LOCKED IN (" + std::to_string(r.clubShotsOnTarget) + " shots on target for " + stake + "!)");
+            } else if (r.clubShotsOnTarget == need - 1) {
+                urgentHooks.push_back("ALMOST THERE: just 1 more shot on target locks in the " + stake + " " + c.title + " bonus!");
+            }
+            break;
+        }
+
+        case SponsorChallengeType::kWinByMargin: {
+            int need = std::max<int>(2, c.thresholdValue);
+            int diff = r.clubGoals - r.opponentGoals;
+            if (diff >= need) {
+                ++greenCount;
+                lockedHooks.push_back(c.title + " ON TRACK (+" + std::to_string(diff) + " margin for " + stake + ")");
+            } else if (diff == need - 1) {
+                urgentHooks.push_back("ALMOST THERE: 1 more goal opens a +" + std::to_string(need) + " margin for the " + stake + " " + c.title + " bonus!");
+            }
+            break;
+        }
+
+        case SponsorChallengeType::kTeamGoals: {
+            int need = std::max<int>(2, c.thresholdValue);
+            if (r.clubGoals >= need) {
+                ++greenCount;
+                lockedHooks.push_back(c.title + " LOCKED IN (" + std::to_string(r.clubGoals) + " goals scored for " + stake + "!)");
+            } else if (r.clubGoals == need - 1) {
+                urgentHooks.push_back("ALMOST THERE: 1 more goal locks in the " + stake + " " + c.title + " bonus!");
+            }
+            break;
+        }
+
+        case SponsorChallengeType::kLongRangeGoal: {
+            int need = std::max<int>(1, c.thresholdValue);
+            if (r.clubLongRangeGoals >= need) {
+                ++greenCount;
+                lockedHooks.push_back(c.title + " LOCKED IN (screamer from outside the box banks " + stake + "!)");
+            } else if (need > 1 && r.clubLongRangeGoals == need - 1) {
+                urgentHooks.push_back("ALMOST THERE: 1 more long-range goal locks in " + stake + "!");
+            }
+            break;
+        }
+
+        case SponsorChallengeType::kHeaderGoal: {
+            int need = std::max<int>(1, c.thresholdValue);
+            if (r.clubHeaderGoals >= need) {
+                ++greenCount;
+                lockedHooks.push_back(c.title + " LOCKED IN (headed goal banks " + stake + "!)");
+            }
+            break;
+        }
+
+        case SponsorChallengeType::kNoCardsWin:
+            if (r.clubYellowCards > 0 || r.clubRedCards > 0) {
+                anyBroken = true;
+                brokenHooks.push_back(c.title + " BROKEN (booking cost -" + stake + "!)");
+            } else if (r.clubGoals > r.opponentGoals) {
+                ++greenCount;
+                if (matchMinute >= 65)
+                    urgentHooks.push_back(c.title + " ON TRACK: stay disciplined and hold the lead for " + stake);
+            }
+            break;
+
+        case SponsorChallengeType::kEarlyGoal:
+            if (r.clubEarlyGoals >= 1) {
+                ++greenCount;
+                lockedHooks.push_back(c.title + " LOCKED IN (early blitz banks " + stake + "!)");
+            } else if (matchMinute > 15) {
+                anyBroken = true;
+                brokenHooks.push_back(c.title + " MISSED (no goal in first 15'; -" + stake + ")");
+            } else if (matchMinute >= 10) {
+                urgentHooks.push_back("CLOCK TICKING: need a goal before 15' for the " + stake + " " + c.title + " bonus!");
+            }
+            break;
+
+        case SponsorChallengeType::kBothHalvesGoal:
+            if (halfNumber <= 1) {
+                if (r.clubGoals >= 1)
+                    lockedHooks.push_back(c.title + ": 1st-half goal done — just need 1 in the 2nd half for " + stake);
+            } else {
+                if (r.clubHtGoals == 0) {
+                    anyBroken = true;
+                    brokenHooks.push_back(c.title + " MISSED (blanked in 1st half; -" + stake + ")");
+                } else if (shGoals >= 1) {
+                    ++greenCount;
+                    lockedHooks.push_back(c.title + " LOCKED IN (scored in both halves for " + stake + "!)");
+                } else {
+                    urgentHooks.push_back("ALMOST THERE: 1 second-half goal locks in the " + stake + " " + c.title + " bonus!");
+                }
+            }
+            break;
+
+        case SponsorChallengeType::kSecondHalfGoals: {
+            int need = std::max<int>(2, c.thresholdValue);
+            if (halfNumber >= 2) {
+                if (shGoals >= need) {
+                    ++greenCount;
+                    lockedHooks.push_back(c.title + " LOCKED IN (" + stake + " secured!)");
+                } else if (shGoals == need - 1) {
+                    urgentHooks.push_back("ALMOST THERE: 1 more 2nd-half goal locks in the " + stake + " " + c.title + " bonus!");
+                }
+            }
+            break;
+        }
+
+        case SponsorChallengeType::kLateGoal:
+            if (r.clubLateGoals >= 1) {
+                ++greenCount;
+                lockedHooks.push_back(c.title + " LOCKED IN (late strike banks " + stake + "!)");
+            } else if (matchMinute >= 72) {
+                urgentHooks.push_back("LATE BONUS LIVE: 1 goal in the 75'+ window locks in " + stake + "!");
+            }
+            break;
+
+        case SponsorChallengeType::kLimitOppShots:
+            if (r.opponentShotsOnTarget > c.thresholdValue) {
+                anyBroken = true;
+                brokenHooks.push_back(c.title + " BROKEN (allowed " + std::to_string(r.opponentShotsOnTarget) + " SOT; -" + stake + ")");
+            } else if (r.clubGoals > r.opponentGoals) {
+                ++greenCount;
+                if (r.opponentShotsOnTarget == c.thresholdValue)
+                    urgentHooks.push_back("RAZOR EDGE: 1 more opponent shot on target breaks the " + stake + " " + c.title + " bonus!");
+            }
+            break;
+
+        case SponsorChallengeType::kClinicalFinishing: {
+            int pct = (r.clubShotsOnTarget > 0) ? (r.clubGoals * 100) / r.clubShotsOnTarget : 0;
+            if (r.clubGoals >= 2 && pct >= c.thresholdValue) {
+                ++greenCount;
+                lockedHooks.push_back(c.title + " ON TRACK (" + std::to_string(pct) + "% conversion for " + stake + ")");
+            }
+            break;
+        }
+
+        case SponsorChallengeType::kPlayerAssist: {
+            int cnt = 0;
+            std::string targetUp = toUpperAscii(c.targetPlayerName);
+            for (const auto& a : r.assistEntries) {
+                if ((c.targetShirtNumber > 0 && a.first == c.targetShirtNumber) ||
+                    (!targetUp.empty() && toUpperAscii(a.second) == targetUp))
+                    ++cnt;
+            }
+            if (cnt >= 1) {
+                ++greenCount;
+                lockedHooks.push_back(c.title + " LOCKED IN (" + c.targetPlayerName + " assist banks " + stake + "!)");
+            }
+            break;
+        }
+
+        case SponsorChallengeType::kNonAttackerGoal:
+            if (r.clubNonAttackerGoals >= 1) {
+                ++greenCount;
+                lockedHooks.push_back(c.title + " LOCKED IN (midfielder/defender goal banks " + stake + "!)");
+            }
+            break;
+
+        case SponsorChallengeType::kDifferentScorers: {
+            std::vector<std::string> uniq;
+            for (const auto& e : r.scorerEntries) {
+                std::string key = e.second.empty() ? ("#" + std::to_string(e.first)) : toUpperAscii(e.second);
+                if (std::find(uniq.begin(), uniq.end(), key) == uniq.end())
+                    uniq.push_back(key);
+            }
+            int need = std::max<int>(3, c.thresholdValue);
+            if (static_cast<int>(uniq.size()) >= need) {
+                ++greenCount;
+                lockedHooks.push_back(c.title + " LOCKED IN (" + std::to_string(uniq.size()) + " different scorers bank " + stake + "!)");
+            } else if (static_cast<int>(uniq.size()) == need - 1) {
+                urgentHooks.push_back("ALMOST THERE: 1 more different scorer locks in the " + stake + " " + c.title + " bonus!");
+            }
+            break;
+        }
+
+        case SponsorChallengeType::kHatTrickHero: {
+            int maxG = 0;
+            std::string topName;
+            for (const auto& e : r.scorerEntries) {
+                int cnt = 0;
+                for (const auto& e2 : r.scorerEntries) {
+                    if (e2.first == e.first && toUpperAscii(e2.second) == toUpperAscii(e.second))
+                        ++cnt;
+                }
+                if (cnt > maxG) {
+                    maxG = cnt;
+                    topName = e.second;
+                }
+            }
+            if (maxG >= 3) {
+                ++greenCount;
+                lockedHooks.push_back(c.title + " LOCKED IN (" + (topName.empty() ? "Hat-trick" : (topName + " hat-trick")) + " banks " + stake + "!)");
+            } else if (maxG == 2) {
+                urgentHooks.push_back("ALMOST THERE: 1 more goal from " + (topName.empty() ? "the brace hero" : topName) + " completes the hat-trick for " + stake + "!");
+            }
+            break;
+        }
+
+        case SponsorChallengeType::kSetPieceGoal:
+            if (r.clubSetPieceGoals >= 1) {
+                ++greenCount;
+                lockedHooks.push_back(c.title + " LOCKED IN (set-piece goal banks " + stake + "!)");
+            }
+            break;
+
+        default:
+            break;
+        }
+    }
+
+    // Combo / Clean Sweep jackpot awareness
+    int jpPct = computeJackpotPct(static_cast<int>(activeChallenges.size()), totalOfferedCount);
+    if (jpPct > 0) {
+        int totalAct = static_cast<int>(activeChallenges.size());
+        if (anyBroken) {
+            brokenHooks.push_back("+" + std::to_string(jpPct) + "% Clean Sweep jackpot blown");
+        } else if (greenCount == totalAct) {
+            urgentHooks.push_back("JACKPOT LIVE: ALL " + std::to_string(totalAct) + " challenges on track for the +" + std::to_string(jpPct) + "% Clean Sweep bonus!");
+        } else if (greenCount == totalAct - 1) {
+            urgentHooks.push_back("JACKPOT WATCH: 1 more challenge locks in the +" + std::to_string(jpPct) + "% Clean Sweep bonus!");
+        }
+    }
+
+    // Multi-Match Contract live progress awareness
+    if (activeContract.isActive) {
+        const std::string cReward = formatSponsorPounds(activeContract.rewardAmount);
+        switch (activeContract.type) {
+        case MultiMatchContractType::kGoalsInMatches: {
+            int proj = static_cast<int>(activeContract.currentProgress) + r.clubGoals;
+            int rem = static_cast<int>(activeContract.targetValue) - proj;
+            if (rem <= 0)
+                lockedHooks.push_back("Contract '" + activeContract.title + "' TARGET REACHED (" + std::to_string(proj) + "/" + std::to_string(activeContract.targetValue) + " goals for " + cReward + "!)");
+            else if (rem <= 2)
+                urgentHooks.push_back("Contract '" + activeContract.title + "': just " + std::to_string(rem) + " more goal" + (rem == 1 ? "" : "s") + " to bank " + cReward + "!");
+            break;
+        }
+        case MultiMatchContractType::kMinGoalsEachMatch: {
+            int needToday = std::max<int>(2, static_cast<int>(activeContract.perMatchMin));
+            if (r.clubGoals == needToday - 1)
+                urgentHooks.push_back("Contract '" + activeContract.title + "': 1 more goal today keeps the " + cReward + " streak alive!");
+            else if (r.clubGoals >= needToday)
+                lockedHooks.push_back("Contract '" + activeContract.title + "' safe today (" + std::to_string(r.clubGoals) + "+ goals scored)");
+            break;
+        }
+        case MultiMatchContractType::kWinStreak:
+            if (r.clubGoals <= r.opponentGoals && matchMinute >= 55)
+                urgentHooks.push_back("Contract '" + activeContract.title + "' (" + std::to_string(activeContract.currentProgress) + "/" + std::to_string(activeContract.targetValue) + " wins) in danger — MUST win today!");
+            else if (r.clubGoals > r.opponentGoals && activeContract.currentProgress + 1 >= activeContract.targetValue)
+                urgentHooks.push_back("Contract '" + activeContract.title + "': hold this win to complete the " + cReward + " streak!");
+            break;
+        case MultiMatchContractType::kUnbeatenRun:
+            if (r.clubGoals < r.opponentGoals && matchMinute >= 55)
+                urgentHooks.push_back("Contract '" + activeContract.title + "' at risk — trailing puts the " + cReward + " unbeaten run in danger!");
+            break;
+        case MultiMatchContractType::kCleanSheetsInMatches:
+            if (r.opponentGoals == 0 && activeContract.currentProgress + 1 >= activeContract.targetValue && matchMinute >= 60)
+                urgentHooks.push_back("Contract '" + activeContract.title + "': keep this clean sheet to bank " + cReward + "!");
+            break;
+        default:
+            break;
+        }
+    }
+
+    // Prioritize urgent ("1 more goal!", jackpot watch) -> broken -> locked -> concise summary (cap at 3 items so prompt stays crisp)
+    std::vector<std::string> selected;
+    auto takeFrom = [&](const std::vector<std::string>& src) {
+        for (const auto& s : src) {
+            if (selected.size() >= 3) break;
+            selected.push_back(s);
+        }
+    };
+    takeFrom(urgentHooks);
+    takeFrom(brokenHooks);
+    takeFrom(lockedHooks);
+
+    if (selected.empty()) {
+        // Still give a compact reminder of the highest-stake live challenge so ambient stream can reference it
+        if (!activeChallenges.empty()) {
+            const SponsorChallenge *best = &activeChallenges.front();
+            for (const auto& c : activeChallenges) {
+                if (c.rewardAmount > best->rewardAmount) best = &c;
+            }
+            selected.push_back(best->title + " (" + best->description + ", " + formatSponsorPounds(best->rewardAmount) + " at stake)");
+        } else if (activeContract.isActive) {
+            selected.push_back("Contract '" + activeContract.title + "' (" + formatContractProgressShort(activeContract) + ", " +
+                               formatSponsorPounds(activeContract.rewardAmount) + " reward)");
+        }
+    }
+
+    std::string out;
+    for (size_t i = 0; i < selected.size(); ++i) {
+        if (i > 0) out += " | ";
+        out += selected[i];
+    }
+    return out;
+}
+
+std::string getLiveSponsorChallengeStreamNote()
+{
+    if (!hasActiveSponsorChallenge())
+        return {};
+    SponsorMatchResult liveRes = buildLiveSponsorMatchResult();
+    int curMin = static_cast<int>(gameTimeInMinutes());
+    int half = swos.halfNumber ? static_cast<int>(swos.halfNumber) : 1;
+    return formatLiveSponsorChallengeStreamCallouts(
+        s_state.activeChallenges, s_state.offeredSingleMatchCount, s_state.activeContract, liveRes, curMin, half);
+}
+
 std::string formatActiveSponsorChallengeForTelemetry()
 {
     if (!hasActiveSponsorChallenge())
@@ -2017,6 +2462,9 @@ std::string formatActiveSponsorChallengeForTelemetry()
                formatContractProgressShort(s_state.activeContract) + ") Reward +" +
                formatSponsorPounds(s_state.activeContract.rewardAmount) + "]";
     }
+    std::string callouts = getLiveSponsorChallengeStreamNote();
+    if (!callouts.empty())
+        out += "\nSponsor Live Stakes: " + callouts;
     return out;
 }
 
