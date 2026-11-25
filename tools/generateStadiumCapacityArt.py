@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Generate 5 stateful chained 2D isometric stadium seating sprites via PixelLab API.
+"""Generate 10 consistent 2D isometric stadium seating sprites via PixelLab API.
 
 Reads PIXELLAB_API_KEY from .env.local (gitignored) or environment.
-Saves transparent 128x128 PNGs into assets/facilities/capacity_1.png .. capacity_5.png
-(chroma-keying the solid #FF00FF magenta background cleanly to alpha=0).
+Saves clean transparent 128x128 RGBA PNGs into assets/facilities/capacity_1.png .. capacity_10.png.
+
+Usage:
+    python tools/generateStadiumCapacityArt.py                                          # regenerate all 10
+    python tools/generateStadiumCapacityArt.py capacity_6 capacity_7 capacity_8 capacity_9 capacity_10
 """
 
 import base64
-import io
 import json
 import os
 import sys
@@ -16,54 +18,96 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from PIL import Image
-
 ROOT = Path(__file__).resolve().parent.parent
 OUT_DIR = ROOT / "assets" / "facilities"
 IMG_SIZE = 128
 
 GLOBAL_RULES = (
-    "Strict 2:1 isometric projection, fixed three-quarter top-down angle, centered 4x4 isometric tile footprint. "
-    "16-bit tactical RPG pixel art, crisp pixel clusters, clean 1px dark outlines, flat cel-shading lit from upper-left, "
-    "zero anti-aliasing, zero gradients, zero blur. "
-    "Solid flat pure magenta (#FF00FF) background, no floor shadow, no ground grid, no UI, no text, no spectators. "
+    "Isometric 2:1 sports management game sprite of a modern football stadium grandstand seating section, "
+    "fixed three-quarter top-down view facing front-left, centered on a compact square grey concrete base. "
+    "Crisp 16-bit pixel art, clean 1px black outlines, flat cel-shading lit from upper-left, "
+    "no anti-aliasing, no blur, no floor shadow, no ground grid, no text, no spectators. "
 )
 
-LEVELS: list[tuple[str, str, int]] = [
+NEGATIVE_DESC = (
+    "stone ruins, dungeon, moss, vines, grass, green field, football pitch, soccer field, turf, medieval, fantasy, rpg, crates, rocks, boulders, "
+    "dirt, plants, trees, floor grid, tile grid, magenta background, blur, gradient, anti-aliasing, "
+    "text, letters, spectators, people, crowd, shadow, drop shadow, UI, border"
+)
+
+LEVELS: list[tuple[str, str]] = [
     (
         "capacity_1",
-        "Basic Wooden Bleachers: A rudimentary stadium seating section on a weathered grey concrete slab base. "
-        "Three low rows of worn splintered wooden plank benches supported by rusty iron brackets. "
-        "Simple galvanized metal pipe side railings. Sparse, weathered, entry-level municipal park aesthetic.",
-        0,
+        "Basic wooden football bleachers on a grey concrete slab base: "
+        "three stepped rows of brown wooden plank benches on dark iron brackets, "
+        "with simple silver metal pipe railings along the left and right sides.",
     ),
     (
         "capacity_2",
-        "Standard Aluminum Bleachers: Upgrade the previous stadium seating section keeping the exact same concrete base footprint and isometric angle. "
-        "Replace wooden planks with four rows of clean brushed aluminum bench seating with integrated footboards and safety risers. "
-        "Sturdier steel handrails on the sides and a small painted section plate on the front concrete wall.",
-        320,
+        "Aluminum football stadium bleachers on a grey concrete base: "
+        "four stepped rows of bright silver brushed aluminum metal bench seats with metal footboards and risers, "
+        "sturdy steel handrails on both sides, clean municipal stadium stand.",
     ),
     (
         "capacity_3",
-        "Molded Plastic Bucket Seats: Upgrade the previous stadium seating section keeping the exact same concrete base footprint and isometric angle. "
-        "Expand to five tiered rows of individual royal-blue molded plastic folding stadium seats with backrests and armrests. "
-        "Add concrete center aisle steps with yellow safety trim, stainless steel railings, and a low reinforced concrete barrier wall at the front.",
-        300,
+        "Football stadium grandstand with molded plastic bucket seats on a concrete base: "
+        "five tiered rows of bright royal-blue individual plastic stadium seats with backrests, "
+        "a grey concrete center aisle staircase with bright yellow step edges, steel side railings, "
+        "and a low concrete front barrier wall.",
     ),
     (
         "capacity_4",
-        "Covered Club-Level Seating: Upgrade the previous stadium seating section keeping the exact same base footprint and isometric angle. "
-        "Upgrade the seats to six tiered rows of plush padded navy-and-gold ergonomic chairs with cup holders. "
-        "Add a cantilevered steel-truss stadium canopy roof overhead with compact LED floodlight bars mounted under the eaves, plus glass windbreak panels along the sides.",
-        260,
+        "Covered club-level football stadium grandstand on a concrete base: "
+        "six tiered rows of dark navy-blue and gold padded stadium seats, "
+        "covered overhead by a modern white-and-steel cantilevered stadium roof canopy with glowing white LED floodlight bars underneath, "
+        "plus clear light-blue glass windbreak panels on the sides.",
     ),
     (
         "capacity_5",
-        "Luxury VIP Skybox & Tiered Suite: Upgrade the previous stadium seating section keeping the exact same base footprint and isometric angle. "
-        "Transform the upper tier into an enclosed glass-fronted VIP luxury skybox lounge with warm interior gold lighting, sleek metallic trim, and a digital LED ribbon board along the fascia. "
-        "Below the skybox, keep four rows of wide leather VIP seats with a curved architectural stadium roof canopy and twin broadcast-grade LED light arrays on top.",
-        250,
+        "Luxury VIP football stadium grandstand with skybox on a concrete base: "
+        "four lower tiered rows of wide dark-red and gold leather VIP stadium seats, "
+        "topped by an enclosed glass-fronted VIP luxury skybox lounge glowing with warm golden interior light, "
+        "a bright blue-and-gold glowing LED ribbon banner across the middle front fascia, "
+        "and a sleek curved white stadium roof canopy with twin bright broadcast floodlight arrays on top.",
+    ),
+    (
+        "capacity_6",
+        "Massive double-decker megastructure football stadium grandstand on a grey concrete base: "
+        "lower tier with six rows of red-and-gold executive cushioned stadium seats, "
+        "middle tier with a wide panoramic glass VIP skybox concourse glowing with warm gold interior light, "
+        "upper cantilevered seating deck with four more stadium seat rows beneath a reinforced steel-truss roof canopy, "
+        "with dual broadcast camera pods and four bright white stadium floodlight banks mounted along the roof.",
+    ),
+    (
+        "capacity_7",
+        "Retractable-dome football stadium arena grandstand with Jumbotron on a grey concrete base: "
+        "double-decker red-and-gold stadium seating tiers framed by shiny chrome structural columns, "
+        "a curved wrap-around pixel-art Jumbotron video scoreboard on the upper fascia displaying glowing green and cyan pitch telemetry graphics, "
+        "flanked by bright LED light arrays, topped by a heavy mechanized retractable dome roof segment with articulated steel hydraulic struts and sliding polycarbonate roof panels.",
+    ),
+    (
+        "capacity_8",
+        "Sleek near-future smart-glass cyber football stadium grandstand on a concrete base: "
+        "tiered rows of dark carbon-fiber ergonomic pod seats with glowing cyan accent trim, "
+        "a seamless curved dark-tinted smart-glass VIP pavilion with neon cyan and gold edge lighting, "
+        "glowing cyan holographic stat-projector emitters along the railing, "
+        "and sleek brushed silver-titanium armor paneling across the exterior frame.",
+    ),
+    (
+        "capacity_9",
+        "Sci-fi anti-gravity hover-box stadium seating grandstand section on a solid grey concrete base (seats only, no pitch): "
+        "six stepped lower rows of dark carbon-fiber stadium seats with glowing cyan accent trim filling the front of the base, "
+        "a detached floating anti-gravity luxury glass VIP skybox pod hovering clearly in mid-air above the upper tier via glowing blue plasma thruster nodes underneath, "
+        "a translucent hexagonal cyan energy barrier shield framing the upper viewing deck, "
+        "small docked robotic camera drones on the roof pylons, and twin vertical glowing cyan plasma light spires on the rear corners.",
+    ),
+    (
+        "capacity_10",
+        "Apex galactic coliseum citadel football stadium monument on a gilded square base: "
+        "ornate white-and-gold cybernetic grandstand architecture fused with glowing royal-purple and cyan energy conduits, "
+        "multi-tiered floating golden VIP throne seats, "
+        "a monumental crowned white-and-gold roof spire housing a miniature hovering glowing holographic golden trophy orb in the center, "
+        "radiant cyan-and-gold energy-beam floodlights, and gilded harmonic stabilizers framing the base.",
     ),
 ]
 
@@ -97,102 +141,32 @@ def extract_png_bytes(resp_json: dict) -> bytes:
     raise ValueError(f"Unrecognized PixelLab response keys: {list(resp_json.keys())}")
 
 
-def chroma_key_magenta_to_transparent(raw_png: bytes) -> bytes:
-    """Extract solid #FF00FF magenta background cleanly to alpha=0 via flood-fill from image corners."""
-    im = Image.open(io.BytesIO(raw_png)).convert("RGBA")
-    w, h = im.size
-    px = im.load()
-
-    def is_magenta(r: int, g: int, b: int, a: int) -> bool:
-        if a == 0:
-            return True
-        # Match pure magenta #FF00FF and near-magenta pixel-art border bleed
-        return (r >= 195 and b >= 195 and g <= 85 and abs(r - b) <= 45)
-
-    visited = [[False] * w for _ in range(h)]
-    stack: list[tuple[int, int]] = []
-    for x in range(w):
-        stack.append((x, 0))
-        stack.append((x, h - 1))
-    for y in range(h):
-        stack.append((0, y))
-        stack.append((w - 1, y))
-
-    while stack:
-        cx, cy = stack.pop()
-        if cx < 0 or cy < 0 or cx >= w or cy >= h or visited[cy][cx]:
-            continue
-        visited[cy][cx] = True
-        r, g, b, a = px[cx, cy]
-        if is_magenta(r, g, b, a):
-            px[cx, cy] = (0, 0, 0, 0)
-            stack.append((cx + 1, cy))
-            stack.append((cx - 1, cy))
-            stack.append((cx, cy + 1))
-            stack.append((cx, cy - 1))
-
-    out = io.BytesIO()
-    im.save(out, format="PNG")
-    return out.getvalue()
-
-
-def generate_level(api_key: str, prompt: str, prev_raw_png: bytes | None, init_strength: int) -> bytes:
+def generate_level(api_key: str, prompt: str, use_pixen: bool = False) -> bytes:
     full_desc = GLOBAL_RULES + prompt
-    candidates: list[tuple[str, dict]] = []
+    pixflux_req = (
+        "https://api.pixellab.ai/v1/generate-image-pixflux",
+        {
+            "description": full_desc,
+            "negative_description": NEGATIVE_DESC,
+            "image_size": {"width": IMG_SIZE, "height": IMG_SIZE},
+            "view": "high top-down",
+            "direction": "south-east",
+            "outline": "single color black outline",
+            "shading": "basic shading",
+            "detail": "high detail",
+            "no_background": True,
+        },
+    )
+    pixen_req = (
+        "https://api.pixellab.ai/v2/create-image-pixen",
+        {
+            "description": full_desc,
+            "image_size": {"width": IMG_SIZE, "height": IMG_SIZE},
+            "no_background": True,
+        },
+    )
 
-    if prev_raw_png is not None and init_strength > 0:
-        b64_prev = base64.b64encode(prev_raw_png).decode("ascii")
-        # Prefer Pixflux / Bitforge with init_image + init_image_strength for stateful step-by-step upgrades
-        candidates.append((
-            "https://api.pixellab.ai/v1/generate-image-pixflux",
-            {
-                "description": full_desc,
-                "negative_description": "blur, gradient, anti-aliasing, text, spectators, people, crowd, shadow, ground grid, UI",
-                "image_size": {"width": IMG_SIZE, "height": IMG_SIZE},
-                "init_image": {"type": "base64", "base64": b64_prev},
-                "init_image_strength": init_strength,
-                "view": "high top-down",
-                "direction": "south-east",
-                "outline": "single color black outline",
-                "shading": "basic shading",
-                "detail": "high detail",
-                "no_background": False,
-            },
-        ))
-        candidates.append((
-            "https://api.pixellab.ai/v1/generate-image-bitforge",
-            {
-                "description": full_desc,
-                "negative_description": "blur, gradient, anti-aliasing, text, spectators, people, crowd, shadow, ground grid, UI",
-                "image_size": {"width": IMG_SIZE, "height": IMG_SIZE},
-                "init_image": {"type": "base64", "base64": b64_prev},
-                "init_image_strength": init_strength,
-                "no_background": False,
-            },
-        ))
-    else:
-        candidates.append((
-            "https://api.pixellab.ai/v1/generate-image-pixflux",
-            {
-                "description": full_desc,
-                "negative_description": "blur, gradient, anti-aliasing, text, spectators, people, crowd, shadow, ground grid, UI",
-                "image_size": {"width": IMG_SIZE, "height": IMG_SIZE},
-                "view": "high top-down",
-                "direction": "south-east",
-                "outline": "single color black outline",
-                "shading": "basic shading",
-                "detail": "high detail",
-                "no_background": False,
-            },
-        ))
-        candidates.append((
-            "https://api.pixellab.ai/v2/create-image-pixen",
-            {
-                "description": full_desc,
-                "image_size": {"width": IMG_SIZE, "height": IMG_SIZE},
-                "no_background": False,
-            },
-        ))
+    candidates = [pixen_req, pixflux_req] if use_pixen else [pixflux_req, pixen_req]
 
     last_err = None
     for url, payload in candidates:
@@ -202,7 +176,7 @@ def generate_level(api_key: str, prompt: str, prev_raw_png: bytes | None, init_s
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
-                "User-Agent": "swos-port-stadium-gen/1.0",
+                "User-Agent": "swos-port-stadium-gen/2.0",
             },
             method="POST",
         )
@@ -223,16 +197,20 @@ def generate_level(api_key: str, prompt: str, prev_raw_png: bytes | None, init_s
 def main() -> int:
     api_key = load_api_key()
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    prev_raw: bytes | None = None
 
-    for name, prompt, strength in LEVELS:
-        print(f"[GEN ] {name}.png (chained={prev_raw is not None}, strength={strength}) ...", flush=True)
-        raw_png = generate_level(api_key, prompt, prev_raw, strength)
-        prev_raw = raw_png
-        clean_png = chroma_key_magenta_to_transparent(raw_png)
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    use_pixen = "--pixen" in sys.argv[1:]
+    wanted = set(args) if args else None
+
+    for name, prompt in LEVELS:
+        if wanted is not None and name not in wanted:
+            continue
+        engine = "pixen-v2" if use_pixen else "pixflux-v1"
+        print(f"[GEN ] {name}.png ({engine}, no_background=True) ...", flush=True)
+        png_bytes = generate_level(api_key, prompt, use_pixen=use_pixen)
         out_path = OUT_DIR / f"{name}.png"
-        out_path.write_bytes(clean_png)
-        print(f"[ OK ] {name}.png ({len(clean_png)} bytes, transparent RGBA)", flush=True)
+        out_path.write_bytes(png_bytes)
+        print(f"[ OK ] {name}.png ({len(png_bytes)} bytes)", flush=True)
         time.sleep(0.4)
 
     return 0

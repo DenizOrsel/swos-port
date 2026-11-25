@@ -1626,10 +1626,11 @@ static void closeStadiumFacilitiesMenu()
 #ifndef SWOS_TEST
 static SDL_Texture *getFacilityArtTexture(SDL_Renderer *r, StadiumModuleType mod, uint8_t tier)
 {
-    static SDL_Texture *s_cache[5][5] = {};
-    static bool s_attempted[5][5] = {};
+    static SDL_Texture *s_cache[5][10] = {};
+    static bool s_attempted[5][10] = {};
     int mi = static_cast<int>(mod);
-    int ti = std::clamp<int>(tier, 1, 5) - 1;
+    int maxTier = (mod == StadiumModuleType::kCapacity) ? 10 : 5;
+    int ti = std::clamp<int>(tier, 1, maxTier) - 1;
     if (mi < 0 || mi >= 5)
         return nullptr;
     if (s_attempted[mi][ti])
@@ -1678,9 +1679,13 @@ static void drawFacilityPixelArt(
     uint8_t tier = (mod == StadiumModuleType::kCapacity)
         ? static_cast<uint8_t>(std::clamp<int>((level + 1) / 2, 1, 5))
         : static_cast<uint8_t>(std::clamp<int>(level, 1, 5));
+    uint8_t artLevel = (mod == StadiumModuleType::kCapacity)
+        ? static_cast<uint8_t>(std::clamp<int>(level, 1, 10))
+        : tier;
+    uint8_t maxArtLevel = (mod == StadiumModuleType::kCapacity) ? 10 : 5;
 
 #ifndef SWOS_TEST
-    if (SDL_Texture *artTex = getFacilityArtTexture(r, mod, tier)) {
+    if (SDL_Texture *artTex = getFacilityArtTexture(r, mod, artLevel)) {
         // Dark slate backdrop inside thumbnail frame so transparent isometric sprites pop crisply
         SDL_SetRenderDrawColor(r, 18, 26, 38, 235);
         SDL_FRect bgRc{ x, y, w, h };
@@ -1716,7 +1721,7 @@ static void drawFacilityPixelArt(
 
         SDL_Color borderCol = isBuilding
             ? SDL_Color{ 118, 238, 248, 235 }
-            : (tier >= 5 ? SDL_Color{ 255, 224, 86, 235 } : SDL_Color{ 156, 170, 188, 210 });
+            : (artLevel >= maxArtLevel ? SDL_Color{ 255, 224, 86, 235 } : SDL_Color{ 156, 170, 188, 210 });
         SDL_SetRenderDrawColor(r, borderCol.r, borderCol.g, borderCol.b, borderCol.a);
         SDL_FRect frame{ x, y, w, h };
         SDL_RenderDrawRectF(r, &frame);
