@@ -38,10 +38,10 @@ NEGATIVE_DESC = (
 LEVELS: list[tuple[str, str]] = [
     (
         "pitch_1",
-        "Patchy dirt and mud sandlot football pitch slab: "
+        "Compact centered patchy dirt and mud sandlot football pitch slab with generous empty transparent margin around all four corners (entire rectangular slab and both goals fully visible inside frame, never cropped): "
         "rough brown packed earth with sparse patchy tufts of dry yellowish-green weeds, "
         "faint uneven white chalk boundary lines, brown muddy puddle ruts near the center, "
-        "and two crooked rusty metal pipe goalposts with tattered sagging nets at both ends.",
+        "and two small crooked rusty metal pipe goalposts with tattered sagging nets at the bottom-left and top-right ends.",
     ),
     (
         "pitch_2",
