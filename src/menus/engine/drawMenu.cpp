@@ -10,6 +10,7 @@
 #include "timer.h"
 #include "hotseatCareer.h"
 #include "stadiumFacilities.h"
+#include "hotseat/hotseatInternal.h"
 
 constexpr int kTooSmallHeightForFrame = 8;
 
@@ -466,6 +467,19 @@ static void drawStringMenuItem(MenuEntry *entry, const char *string)
                 snprintf(customTeamBuf, sizeof(customTeamBuf), "%s (P%d)", tName.c_str(), slot + 1);
                 string = customTeamBuf;
             }
+        }
+    }
+
+    static char stadiumBtnBuf[32];
+    if (offset == 482233 && entry->ordinal == 48 &&
+        swos.g_gameType == kGameTypeCareer && !HotseatInternal::isVmNationalSelector()) {
+        const auto& stad = getCurrentCareerStadium();
+        if (stad.initialized && stad.activeProject.isActive) {
+            snprintf(stadiumBtnBuf, sizeof(stadiumBtnBuf), "STADIUM (%uM)",
+                     static_cast<unsigned>(stad.activeProject.matchesRemaining));
+            string = stadiumBtnBuf;
+        } else {
+            string = "STADIUM";
         }
     }
 

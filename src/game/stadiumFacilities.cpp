@@ -1493,58 +1493,11 @@ bool isCareerHubStadiumAccessible()
     return SwosVM::ptrToOffset(packed) == 482233;
 }
 
-SDL_FRect getCareerHubStadiumButtonScreenRect()
-{
-    float gameScale = getGameScale();
-    float offX = getGameScreenOffsetX();
-    float offY = getGameScreenOffsetY();
-    // Placed in the clean top-right open margin of contestMenu (VGA x=232..316, y=1..14)
-    return { offX + 232.0f * gameScale, offY + 1.0f * gameScale, 84.0f * gameScale, 13.0f * gameScale };
-}
-
 } // namespace
 
 void drawCareerHubStadiumButton()
 {
-#ifdef SWOS_TEST
-    return;
-#else
-    if (!isCareerHubStadiumAccessible())
-        return;
-
-    ensureCurrentCareerStadiumInitialized();
-    SDL_Renderer *r = getRenderer();
-    SDL_Texture *atlas = getCompactFontAtlas(r);
-    if (!r || !atlas)
-        return;
-
-    SDL_FRect rc = getCareerHubStadiumButtonScreenRect();
-    float gameScale = getGameScale();
-    float px = computeCompactPixelScaleForVga(gameScale, 0.36f);
-
-    float origSX = 1.0f, origSY = 1.0f;
-    SDL_RenderGetScale(r, &origSX, &origSY);
-    SDL_RenderSetScale(r, 1.0f, 1.0f);
-    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-
-    bool building = s_stadium.activeProject.isActive;
-    SDL_SetRenderDrawColor(r, building ? 24 : 18, building ? 42 : 34, building ? 58 : 26, 220);
-    SDL_RenderFillRectF(r, &rc);
-    SDL_SetRenderDrawColor(r, building ? 112 : 255, building ? 228 : 214, building ? 248 : 74, 225);
-    SDL_RenderDrawRectF(r, &rc);
-
-    std::string label = building
-        ? ("[F6] STADIUM (" + std::to_string(s_stadium.activeProject.matchesRemaining) + "M)")
-        : "[F6] STADIUM";
-    float needed = static_cast<float>(measureCompactTextUnits(label)) * px;
-    float fitPx = (needed > rc.w - 6.0f) ? std::max(0.75f, px * ((rc.w - 6.0f) / needed)) : px;
-    SDL_Color col = building ? SDL_Color{ 118, 238, 250, 255 } : SDL_Color{ 255, 226, 86, 255 };
-    drawCompactTextCentered(r, atlas, rc.x + rc.w * 0.5f, rc.y + (rc.h - 8.0f * fitPx) * 0.5f,
-        fitPx, label, col, 255, true);
-
-    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
-    SDL_RenderSetScale(r, origSX, origSY);
-#endif
+    // STADIUM is now injected directly into contestMenu (offset 482233) as native MenuEntry 48.
 }
 
 bool handleCareerHubStadiumInput()
@@ -1558,20 +1511,11 @@ bool handleCareerHubStadiumInput()
         return false;
     }
 
+    // Keep F6 as a convenient keyboard shortcut alongside the native STADIUM Career Hub button
     const Uint8 *keys = SDL_GetKeyboardState(nullptr);
     bool f6Now = keys && keys[SDL_SCANCODE_F6] != 0;
     bool triggered = (f6Now && !s_prevHubF6Down);
     s_prevHubF6Down = f6Now;
-
-    int mx = 0, my = 0;
-    Uint32 buttons = SDL_GetMouseState(&mx, &my);
-    bool lmbNow = (buttons & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
-    if (lmbNow && !s_prevHubMouseDown) {
-        SDL_FRect rc = getCareerHubStadiumButtonScreenRect();
-        if (mx >= rc.x && mx <= rc.x + rc.w && my >= rc.y && my <= rc.y + rc.h)
-            triggered = true;
-    }
-    s_prevHubMouseDown = lmbNow;
 
     if (triggered) {
         showStadiumFacilitiesMenu();
