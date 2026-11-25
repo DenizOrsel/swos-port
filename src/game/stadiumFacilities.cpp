@@ -38,6 +38,7 @@ namespace {
 
 constexpr uint8_t kMaxCapacityLevel = 10;
 constexpr uint8_t kMaxCommercialLevel = 10;
+constexpr uint8_t kMaxMedicalLevel = 10;
 constexpr uint8_t kMaxFacilityLevel = 5;
 
 constexpr std::array<uint32_t, 10> kCapacityByLevel = {
@@ -85,12 +86,15 @@ constexpr std::array<int, 10> kCommercialSponsorBonusPct = {
     0, 8, 15, 22, 30, 38, 46, 54, 62, 70
 };
 
-// Medical Center injury prevention % (new knocks turned into 0-match minor knocks) & weekly rehab boost % (L1..L5)
-constexpr std::array<int, 5> kMedicalPreventionPct = {
-    0, 15, 28, 42, 55
+// Medical Center injury prevention %, weekly rehab boost %, and injury-time reduction % (L1..L10)
+constexpr std::array<int, 10> kMedicalPreventionPct = {
+    0, 15, 28, 42, 55, 64, 72, 80, 87, 92
 };
-constexpr std::array<int, 5> kMedicalRecoveryBoostPct = {
-    0, 0, 20, 35, 50
+constexpr std::array<int, 10> kMedicalRecoveryBoostPct = {
+    0, 0, 20, 35, 50, 60, 70, 78, 85, 92
+};
+constexpr std::array<int, 10> kMedicalInjuryTimeReductionPct = {
+    10, 20, 30, 40, 50, 56, 62, 68, 74, 80
 };
 
 // 1996/97 SWOS-balanced division ticket prices (GBP): [divisionTier 0..3][TicketPolicy 0..2]
@@ -285,7 +289,7 @@ void setModuleLevel(StadiumData& s, StadiumModuleType mod, uint8_t lvl)
         s.trainingLevel = std::clamp<uint8_t>(lvl, 1, kMaxFacilityLevel);
         break;
     case StadiumModuleType::kMedical:
-        s.medicalLevel = std::clamp<uint8_t>(lvl, 1, kMaxFacilityLevel);
+        s.medicalLevel = std::clamp<uint8_t>(lvl, 1, kMaxMedicalLevel);
         break;
     case StadiumModuleType::kCommercial:
         s.commercialLevel = std::clamp<uint8_t>(lvl, 1, kMaxCommercialLevel);
@@ -553,14 +557,20 @@ int getCurrentCareerCommercialSponsorBonusPct()
 
 int getMedicalInjuryPreventionPct(uint8_t medicalLevel)
 {
-    int idx = std::clamp<int>(static_cast<int>(medicalLevel) - 1, 0, 4);
+    int idx = std::clamp<int>(static_cast<int>(medicalLevel) - 1, 0, 9);
     return kMedicalPreventionPct[static_cast<size_t>(idx)];
 }
 
 int getMedicalRecoveryBoostPct(uint8_t medicalLevel)
 {
-    int idx = std::clamp<int>(static_cast<int>(medicalLevel) - 1, 0, 4);
+    int idx = std::clamp<int>(static_cast<int>(medicalLevel) - 1, 0, 9);
     return kMedicalRecoveryBoostPct[static_cast<size_t>(idx)];
+}
+
+int getMedicalInjuryTimeReductionPct(uint8_t medicalLevel)
+{
+    int idx = std::clamp<int>(static_cast<int>(medicalLevel) - 1, 0, 9);
+    return kMedicalInjuryTimeReductionPct[static_cast<size_t>(idx)];
 }
 
 int32_t getStadiumMatchdayUpkeep(const StadiumData& stadium)
@@ -663,6 +673,7 @@ StadiumUpgradeQuote stadiumGetUpgradeQuote(const StadiumData& stadium, StadiumMo
     q.currentLevel = getModuleLevel(stadium, module);
     uint8_t maxLvl = (module == StadiumModuleType::kCapacity) ? kMaxCapacityLevel
                    : (module == StadiumModuleType::kCommercial) ? kMaxCommercialLevel
+                   : (module == StadiumModuleType::kMedical) ? kMaxMedicalLevel
                    : kMaxFacilityLevel;
 
     if (q.currentLevel >= maxLvl) {
@@ -686,6 +697,14 @@ StadiumUpgradeQuote stadiumGetUpgradeQuote(const StadiumData& stadium, StadiumMo
         int sponPct = getStadiumCommercialSponsorBonusPct(q.targetLevel);
         q.previewText = formatPoundsShort(vip) + " VIP boxes + " + std::to_string(q.targetLevel * 10) +
                         "% merch + +" + std::to_string(sponPct) + "% Sponsors";
+    } else if (module == StadiumModuleType::kMedical) {
+        q.cost = kCommercialUpgradeCosts[static_cast<size_t>(std::clamp(costIdx, 0, 8))];
+        q.buildMatches = kCommercialBuildMatchesByTarget[static_cast<size_t>(std::clamp(costIdx, 0, 8))];
+        int prevPct = getMedicalInjuryPreventionPct(q.targetLevel);
+        int rehabPct = getMedicalRecoveryBoostPct(q.targetLevel);
+        int redPct = getMedicalInjuryTimeReductionPct(q.targetLevel);
+        q.previewText = std::to_string(prevPct) + "% prevent, -" + std::to_string(redPct) + "% time" +
+                        (rehabPct > 0 ? (", " + std::to_string(rehabPct) + "% rehab") : "");
     } else {
         q.cost = kFacilityUpgradeCosts[static_cast<size_t>(std::clamp(costIdx, 0, 3))];
         q.buildMatches = kFacilityBuildMatchesByTarget[static_cast<size_t>(std::clamp(costIdx, 0, 3))];
@@ -697,13 +716,6 @@ StadiumUpgradeQuote stadiumGetUpgradeQuote(const StadiumData& stadium, StadiumMo
         case StadiumModuleType::kTraining:
             q.previewText = "+" + std::to_string(q.targetLevel * 5) + "% annual skill growth";
             break;
-        case StadiumModuleType::kMedical: {
-            int prevPct = getMedicalInjuryPreventionPct(q.targetLevel);
-            int rehabPct = getMedicalRecoveryBoostPct(q.targetLevel);
-            q.previewText = std::to_string(prevPct) + "% prevent, -" + std::to_string(q.targetLevel * 10) + "% time" +
-                            (rehabPct > 0 ? (", " + std::to_string(rehabPct) + "% rehab") : "");
-            break;
-        }
         default:
             break;
         }
@@ -845,8 +857,8 @@ uint8_t computeMedicalReducedInjuryDays(uint8_t rawInjuryDays, uint8_t medicalLe
 {
     if (rawInjuryDays <= 1)
         return rawInjuryDays;
-    int lvl = std::clamp<int>(medicalLevel, 1, 5);
-    double factor = 1.0 - (static_cast<double>(lvl) * 0.10);
+    int redPct = getMedicalInjuryTimeReductionPct(medicalLevel);
+    double factor = 1.0 - (static_cast<double>(redPct) / 100.0);
     int reduced = static_cast<int>(std::floor(static_cast<double>(rawInjuryDays) * factor + 0.0001));
     return static_cast<uint8_t>(std::clamp(reduced, 1, static_cast<int>(rawInjuryDays)));
 }
@@ -1418,7 +1430,7 @@ bool loadStadiumSidecar(const std::string& path)
     d.maxCapacity = getStadiumCapacityForLevel(d.capacityLevel);
     d.pitchLevel = static_cast<uint8_t>(std::clamp(ini.GetLongValue("stadium", "pitchLevel", 1), 1L, 5L));
     d.trainingLevel = static_cast<uint8_t>(std::clamp(ini.GetLongValue("stadium", "trainingLevel", 1), 1L, 5L));
-    d.medicalLevel = static_cast<uint8_t>(std::clamp(ini.GetLongValue("stadium", "medicalLevel", 1), 1L, 5L));
+    d.medicalLevel = static_cast<uint8_t>(std::clamp(ini.GetLongValue("stadium", "medicalLevel", 1), 1L, 10L));
     d.commercialLevel = static_cast<uint8_t>(std::clamp(ini.GetLongValue("stadium", "commercialLevel", 1), 1L, 10L));
     d.ticketPolicy = static_cast<TicketPolicy>(std::clamp(ini.GetLongValue("stadium", "ticketPolicy", 1), 0L, 2L));
     d.ticketPrice = static_cast<int32_t>(std::clamp(ini.GetLongValue("stadium", "ticketPrice", 10), 1L, 100L));
@@ -1640,7 +1652,7 @@ static SDL_Texture *getFacilityArtTexture(SDL_Renderer *r, StadiumModuleType mod
     static SDL_Texture *s_cache[5][10] = {};
     static bool s_attempted[5][10] = {};
     int mi = static_cast<int>(mod);
-    int maxTier = (mod == StadiumModuleType::kCapacity || mod == StadiumModuleType::kCommercial) ? 10 : 5;
+    int maxTier = (mod == StadiumModuleType::kCapacity || mod == StadiumModuleType::kCommercial || mod == StadiumModuleType::kMedical) ? 10 : 5;
     int ti = std::clamp<int>(tier, 1, maxTier) - 1;
     if (mi < 0 || mi >= 5)
         return nullptr;
@@ -1687,7 +1699,7 @@ static void drawFacilityPixelArt(
 
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
 
-    bool isTenLevel = (mod == StadiumModuleType::kCapacity || mod == StadiumModuleType::kCommercial);
+    bool isTenLevel = (mod == StadiumModuleType::kCapacity || mod == StadiumModuleType::kCommercial || mod == StadiumModuleType::kMedical);
     uint8_t tier = isTenLevel
         ? static_cast<uint8_t>(std::clamp<int>((level + 1) / 2, 1, 5))
         : static_cast<uint8_t>(std::clamp<int>(level, 1, 5));
@@ -2169,6 +2181,7 @@ static void drawStadiumFacilitiesMenu()
             uint8_t curLvl = getModuleLevel(s_stadium, mod);
             uint8_t maxLvl = (mod == StadiumModuleType::kCapacity) ? kMaxCapacityLevel
                            : (mod == StadiumModuleType::kCommercial) ? kMaxCommercialLevel
+                           : (mod == StadiumModuleType::kMedical) ? kMaxMedicalLevel
                            : kMaxFacilityLevel;
             StadiumUpgradeQuote q = stadiumGetUpgradeQuote(s_stadium, mod, cash);
             bool isBuildingThis = (s_stadium.activeProject.isActive && s_stadium.activeProject.module == mod);
@@ -2195,9 +2208,9 @@ static void drawStadiumFacilitiesMenu()
                 curStat = "LVL " + std::to_string(curLvl) + "/5 (+" + std::to_string(curLvl * 5) + "% GROWTH)";
                 break;
             case StadiumModuleType::kMedical:
-                curStat = "LVL " + std::to_string(curLvl) + "/5 (" +
+                curStat = "LVL " + std::to_string(curLvl) + "/10 (" +
                           std::to_string(getMedicalInjuryPreventionPct(curLvl)) + "% PREV, -" +
-                          std::to_string(curLvl * 10) + "% INJ)";
+                          std::to_string(getMedicalInjuryTimeReductionPct(curLvl)) + "% INJ)";
                 break;
             case StadiumModuleType::kCommercial:
                 curStat = "LVL " + std::to_string(curLvl) + "/10 (" +
@@ -2436,7 +2449,7 @@ std::string formatStadiumContextForTelemetry()
                       formatNumberCommas(s_stadium.maxCapacity) + " seats; Pitch Lvl " +
                       std::to_string(s_stadium.pitchLevel) + "/5 [" + getPitchQualityLabel(s_stadium.pitchLevel) + "]; " +
                       "Training Lvl " + std::to_string(s_stadium.trainingLevel) + "/5, Medical Lvl " +
-                      std::to_string(s_stadium.medicalLevel) + "/5, Commercial VIP Lvl " +
+                      std::to_string(s_stadium.medicalLevel) + "/10, Commercial VIP Lvl " +
                       std::to_string(s_stadium.commercialLevel) + "/10). ";
 
     out += "Ticket Policy: " + std::string(getTicketPolicyName(s_stadium.ticketPolicy)) +

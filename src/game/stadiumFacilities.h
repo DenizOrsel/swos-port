@@ -44,7 +44,7 @@ struct StadiumData {
     uint32_t maxCapacity = 5000;     // 5,000..85,000
     uint8_t pitchLevel = 1;          // 1..5
     uint8_t trainingLevel = 1;       // 1..5
-    uint8_t medicalLevel = 1;        // 1..5
+    uint8_t medicalLevel = 1;        // 1..10
     uint8_t commercialLevel = 1;     // 1..10
     TicketPolicy ticketPolicy = TicketPolicy::kStandard;
     int32_t ticketPrice = 10;
