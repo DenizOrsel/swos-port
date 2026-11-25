@@ -103,11 +103,11 @@ LEVELS: list[tuple[str, str]] = [
     ),
     (
         "capacity_10",
-        "Apex galactic coliseum citadel football stadium monument on a gilded square base: "
-        "ornate white-and-gold cybernetic grandstand architecture fused with glowing royal-purple and cyan energy conduits, "
-        "multi-tiered floating golden VIP throne seats, "
-        "a monumental crowned white-and-gold roof spire housing a miniature hovering glowing holographic golden trophy orb in the center, "
-        "radiant cyan-and-gold energy-beam floodlights, and gilded harmonic stabilizers framing the base.",
+        "Single-sided cutaway three-story apex galactic coliseum citadel stadium grandstand section facing front-left on a gilded square base (one-sided seating stand only, sloped side profile visible on the right, NOT a full oval stadium, NOT circular, NO pitch): "
+        "three towering vertically stacked steeply sloped seating decks of ornate white-and-gold cybernetic architecture fused with glowing royal-purple and cyan energy conduits, "
+        "filled with tiered rows of floating golden VIP throne seats rising sharply from front-left to back-right, "
+        "topped by a monumental crowned white-and-gold cantilevered roof spire housing a miniature hovering glowing golden holographic trophy orb in the center, "
+        "radiant cyan-and-gold energy-beam floodlights along the roof edge, and gilded harmonic stabilizers framing the square base.",
     ),
 ]
 
