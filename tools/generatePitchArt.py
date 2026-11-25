@@ -34,7 +34,7 @@ GLOBAL_RULES = (
 LEVELS: list[tuple[str, str]] = [
     (
         "pitch_1",
-        "Compact centered patchy dirt and mud sandlot football pitch slab: "
+        "Patchy dirt and mud sandlot elongated 3:2 rectangular football pitch slab (NOT square, compact with generous empty margin on all four sides): "
         "rough brown packed earth with sparse patchy tufts of dry yellowish-green weeds, "
         "faint uneven white chalk boundary lines, brown muddy puddle ruts near the center, "
         "and two small crooked rusty metal pipe goalposts with tattered sagging nets at the bottom-left and top-right ends.",
@@ -69,10 +69,10 @@ LEVELS: list[tuple[str, str]] = [
     ),
     (
         "pitch_6",
-        "All-weather reinforced arena turf elongated 3:2 rectangular football pitch slab (NOT square): "
-        "immaculate vivid green striped arena turf with laser-straight glowing white pitch lines, "
-        "surrounded by a sleek multi-tiered dark metallic and glass perimeter curb with continuous glowing cyan and gold LED ribbon boards, "
-        "aerodynamic tensioned white goal nets with camera pods at the bottom-left and top-right ends, and recessed climate-control vents along the border.",
+        "All-weather reinforced arena turf elongated 3:2 rectangular football pitch slab (NOT square, compact with generous empty margin on all four sides, completely empty clean turf with zero objects on the grass): "
+        "immaculate vivid green striped arena turf with laser-straight crisp white pitch lines, "
+        "framed by a sleek low dark metallic and glass perimeter curb with continuous glowing cyan and gold LED ribbon boards, "
+        "aerodynamic tensioned white goal nets at the bottom-left and top-right ends, and recessed climate-control vents along the outer curb.",
     ),
     (
         "pitch_7",
