@@ -583,7 +583,7 @@ std::string buildFreeTextJudgePrompt(const PressMatchContext& ctx, const std::st
          "- STANCE: strictly one of HUMBLE, CONFIDENT, TACTICAL, HOSTILE\n"
          "- CHARISMA_DELTA: integer from -12 to +10\n"
          "- VERDICT_TAG: 1-2 uppercase words (e.g. CLASSY, WITTY, TACTICAL, BOLD, GENERIC, DELUSIONAL, FIERY)\n"
-         "- MEDIA_REACTION: lively 1-2 sentence press room reaction (max 135 chars) reacting specifically to what the manager actually typed.";
+         "- MEDIA_REACTION: lively 1-2 sentence press room reaction (max 220 chars) reacting specifically to what the manager actually typed.";
     return p;
 }
 
@@ -756,13 +756,23 @@ void drawPressConferenceFrame(bool hoverSubmit, bool hoverMic, bool hoverNoComme
     SDL_RenderDrawRectF(r, &barBg);
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
 
-    // Question text (up to 4 wrapped lines)
-    int qMaxUnits = std::max(80, static_cast<int>((288.0f * gameScale) / px));
+    // Question text (auto-fit inside y=34..73 card so the full question is never clipped)
+    float qPx = px;
+    int qMaxUnits = std::max(80, static_cast<int>((288.0f * gameScale) / qPx));
     auto qLines = wrapCompactTextUnits(s_activePrompt.question, qMaxUnits);
-    float qY = offY + 35.5f * gameScale;
-    for (size_t li = 0; li < qLines.size() && li < 4; ++li) {
-        drawCompactText(r, atlas, offX + 16.0f * gameScale, qY, px, qLines[li], yellowCol, 255, li == 0);
-        qY += 9.5f * px;
+    float qAvailH = 38.0f * gameScale;
+    while (qLines.size() > 1 && static_cast<float>(qLines.size()) * (9.2f * qPx) > qAvailH && qPx > px * 0.72f) {
+        qPx *= 0.90f;
+        qMaxUnits = std::max(80, static_cast<int>((288.0f * gameScale) / qPx));
+        qLines = wrapCompactTextUnits(s_activePrompt.question, qMaxUnits);
+    }
+    float qY = offY + 34.5f * gameScale;
+    float qBottom = offY + 73.5f * gameScale;
+    for (size_t li = 0; li < qLines.size(); ++li) {
+        if (qY + 7.5f * qPx > qBottom)
+            break;
+        drawCompactText(r, atlas, offX + 16.0f * gameScale, qY, qPx, qLines[li], yellowCol, 255, li == 0);
+        qY += 9.2f * qPx;
     }
 
     auto drawBtn = [&](float x, float y, float w, float h, const std::string& text,
@@ -805,14 +815,17 @@ void drawPressConferenceFrame(bool hoverSubmit, bool hoverMic, bool hoverNoComme
             drawCompactText(r, atlas, offX + 20.0f * gameScale, offY + 98.0f * gameScale, px,
                 "Type your quote for the press... (or press ESC for No Comment)", mutedCol, 185, false);
         }
-        int inMaxUnits = std::max(80, static_cast<int>((278.0f * gameScale) / px));
+        float inPx = px * 0.94f;
+        int inMaxUnits = std::max(80, static_cast<int>((278.0f * gameScale) / inPx));
         auto inLines = wrapCompactTextUnits(displayInput, inMaxUnits);
-        constexpr size_t kVisibleInputLines = 5;
-        size_t startLine = (inLines.size() > kVisibleInputLines) ? (inLines.size() - kVisibleInputLines) : 0;
-        float inY = offY + (s_userTypedAnswer.empty() ? 110.0f : 98.0f) * gameScale;
+        float inLineStep = 9.0f * inPx;
+        float inAvailH = (s_userTypedAnswer.empty() ? 36.0f : 48.0f) * gameScale;
+        size_t visibleInputLines = std::max<size_t>(4, static_cast<size_t>(inAvailH / std::max(1.0f, inLineStep)));
+        size_t startLine = (inLines.size() > visibleInputLines) ? (inLines.size() - visibleInputLines) : 0;
+        float inY = offY + (s_userTypedAnswer.empty() ? 110.0f : 96.5f) * gameScale;
         for (size_t li = startLine; li < inLines.size(); ++li) {
-            drawCompactText(r, atlas, offX + 20.0f * gameScale, inY, px, inLines[li], whiteCol, 255, false);
-            inY += 9.5f * px;
+            drawCompactText(r, atlas, offX + 20.0f * gameScale, inY, inPx, inLines[li], whiteCol, 255, false);
+            inY += inLineStep;
         }
 
         // Info footer inside card (or live mic status / level meter when recording/transcribing!)
@@ -868,49 +881,71 @@ void drawPressConferenceFrame(bool hoverSubmit, bool hoverMic, bool hoverNoComme
         }
         drawBtn(214.0f, 174.0f, 90.0f, 18.0f, "[ESC] NO CMT", 142, 36, 36, hoverNoComment);
     } else {
-        int panelUnits = std::max(80, static_cast<int>((286.0f * gameScale) / px));
         float rx = offX + 16.0f * gameScale;
-        float ry = offY + 82.0f * gameScale;
+        float topY = offY + 81.0f * gameScale;
+        float footerTopY = offY + 148.5f * gameScale;
+        float bodyAvailH = std::max(24.0f, footerTopY - topY - 2.0f * gameScale);
 
         std::string quoteHdr = s_userTypedAnswer.empty()
             ? "YOU: \"No comment.\""
-            : ("YOU: \"" + sanitizePressField(s_userTypedAnswer, 105) + "\"");
-        auto qOut = wrapCompactTextUnits(quoteHdr, panelUnits);
-        for (size_t li = 0; li < qOut.size() && li < 2; ++li) {
-            drawCompactText(r, atlas, rx, ry, px * 0.94f, qOut[li], whiteCol, 240, false);
-            ry += 9.2f * px;
-        }
-        ry += 3.0f * px;
-
+            : ("YOU: \"" + sanitizePressField(s_userTypedAnswer, 320) + "\"");
         std::string reactHdr = "PRESS VERDICT [" + s_lastEval.verdictTag + "]:";
         SDL_Color verdictCol = (s_lastAppliedDelta > 0) ? greenCol : ((s_lastAppliedDelta < 0) ? redCol : yellowCol);
-        drawCompactText(r, atlas, rx, ry, px, reactHdr, verdictCol, 255, true);
-        ry += 9.8f * px;
 
+        // Auto-fit bodyPx so BOTH your full quote AND the journalist's full reaction fit cleanly above the footer!
+        float bodyPx = px * 0.94f;
+        int panelUnits = std::max(80, static_cast<int>((288.0f * gameScale) / bodyPx));
+        auto qOut = wrapCompactTextUnits(quoteHdr, panelUnits);
         auto rLines = wrapCompactTextUnits(s_lastEval.mediaReaction, panelUnits);
-        for (size_t li = 0; li < rLines.size() && li < 3; ++li) {
-            drawCompactText(r, atlas, rx, ry, px * 0.95f, rLines[li], whiteCol, 255, false);
-            ry += 9.3f * px;
+        auto calcTotalH = [&](float sPx, size_t qCnt, size_t rCnt) {
+            return static_cast<float>(qCnt) * (8.9f * sPx) + 3.0f * sPx +
+                   (9.5f * sPx) + static_cast<float>(rCnt) * (9.0f * sPx);
+        };
+        while (calcTotalH(bodyPx, qOut.size(), rLines.size()) > bodyAvailH && bodyPx > px * 0.68f) {
+            bodyPx *= 0.90f;
+            panelUnits = std::max(80, static_cast<int>((288.0f * gameScale) / bodyPx));
+            qOut = wrapCompactTextUnits(quoteHdr, panelUnits);
+            rLines = wrapCompactTextUnits(s_lastEval.mediaReaction, panelUnits);
         }
-        ry += 4.0f * px;
 
+        float ry = topY;
+        for (size_t li = 0; li < qOut.size(); ++li) {
+            if (ry + 7.5f * bodyPx > footerTopY - 20.0f * gameScale)
+                break;
+            drawCompactText(r, atlas, rx, ry, bodyPx, qOut[li], whiteCol, 240, false);
+            ry += 8.9f * bodyPx;
+        }
+        ry += 2.8f * bodyPx;
+
+        drawCompactText(r, atlas, rx, ry, std::min(px, bodyPx * 1.05f), reactHdr, verdictCol, 255, true);
+        ry += 9.4f * bodyPx;
+
+        for (size_t li = 0; li < rLines.size(); ++li) {
+            if (ry + 7.5f * bodyPx > footerTopY)
+                break;
+            drawCompactText(r, atlas, rx, ry, bodyPx, rLines[li], whiteCol, 255, false);
+            ry += 9.0f * bodyPx;
+        }
+
+        // Footer anchored cleanly at bottom of card (y=149..166)
+        float fy = footerTopY;
         char deltaBuf[112];
         std::snprintf(deltaBuf, sizeof(deltaBuf), "CHARISMA: %+d CP  ->  LVL %d %s (%d/100)",
             static_cast<int>(s_lastAppliedDelta), curLvl, getCharismaLevelTitle(curLvl), curProg);
-        drawCompactText(r, atlas, rx, ry, fitPx(deltaBuf, px, 288.0f * gameScale), deltaBuf, verdictCol, 255, true);
-        ry += 10.0f * px;
+        drawCompactText(r, atlas, rx, fy, fitPx(deltaBuf, px * 0.95f, 288.0f * gameScale), deltaBuf, verdictCol, 255, true);
+        fy += 9.0f * gameScale;
 
         if (s_levelAfterChoice > s_levelBeforeChoice) {
             std::string upMsg = "LEVEL UP! PROMOTED TO LVL " + std::to_string(s_levelAfterChoice) +
                                 ": " + getCharismaLevelTitle(s_levelAfterChoice) + "!";
-            drawCompactText(r, atlas, rx, ry, fitPx(upMsg, px, 288.0f * gameScale), upMsg, yellowCol, 255, true);
+            drawCompactText(r, atlas, rx, fy, fitPx(upMsg, px * 0.92f, 288.0f * gameScale), upMsg, yellowCol, 255, true);
         } else {
             char perkBuf[112];
             std::snprintf(perkBuf, sizeof(perkBuf), "Gate Receipts: %.2fx | Sponsor Bonus: +%d%% | TV Mult: %.2fx",
                 getPressAttendanceMultiplier(s_state.charismaPoints),
                 getCharismaSponsorBonusPct(s_state.charismaPoints),
                 getCharismaTvMultiplier(s_state.charismaPoints));
-            drawCompactText(r, atlas, rx, ry, fitPx(perkBuf, px * 0.88f, 288.0f * gameScale), perkBuf, cyanCol, 240, false);
+            drawCompactText(r, atlas, rx, fy, fitPx(perkBuf, px * 0.86f, 288.0f * gameScale), perkBuf, cyanCol, 240, false);
         }
 
         drawBtn(88.0f, 174.0f, 144.0f, 18.0f, "[ENTER] CONTINUE", 26, 118, 56, hoverSubmit);
@@ -1526,7 +1561,7 @@ PressConferencePrompt parseLlmPressPrompt(const std::string& rawReply, const Pre
         if (sep == std::string::npos)
             continue;
         std::string j = sanitizePressField(line.substr(0, sep), 48);
-        std::string q = sanitizePressField(line.substr(sep + 1), 175);
+        std::string q = sanitizePressField(line.substr(sep + 1), 280);
         if (!q.empty() && parseStanceString(j) == ManagerialStance::kNone) {
             PressConferencePrompt out = fallback;
             out.journalistName = j.empty() ? fallback.journalistName : j;
@@ -1686,7 +1721,7 @@ PressFreeTextEvaluation parseLlmFreeTextEvaluation(const std::string& rawLlmRepl
         }
 
         out.charismaDelta = static_cast<int8_t>(std::clamp(rawDelta, -12, 10));
-        out.mediaReaction = sanitizePressField(parts[3], 140);
+        out.mediaReaction = sanitizePressField(parts[3], 320);
         if (out.mediaReaction.empty())
             out.mediaReaction = fallback.mediaReaction;
         return out;
