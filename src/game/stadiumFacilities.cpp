@@ -1619,6 +1619,406 @@ static void closeStadiumFacilitiesMenu()
     SetExitMenuFlag();
 }
 
+static void drawFacilityPixelArt(
+    SDL_Renderer *r,
+    float x,
+    float y,
+    float w,
+    float h,
+    StadiumModuleType mod,
+    uint8_t level,
+    bool isBuilding)
+{
+    // 26x15 logical pixel-art canvas scaled crisply into the selection box's left thumbnail frame
+    constexpr float kGridW = 26.0f;
+    constexpr float kGridH = 15.0f;
+    const float ux = w / kGridW;
+    const float uy = h / kGridH;
+
+    auto pxRect = [&](float gx, float gy, float gw, float gh, Uint8 cr, Uint8 cg, Uint8 cb, Uint8 ca = 255) {
+        SDL_SetRenderDrawColor(r, cr, cg, cb, ca);
+        SDL_FRect rc{ x + gx * ux, y + gy * uy, std::max(1.0f, gw * ux), std::max(1.0f, gh * uy) };
+        SDL_RenderFillRectF(r, &rc);
+    };
+
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+
+    // Sky backdrop (richer/brighter twilight sky as facilities upgrade)
+    uint8_t tier = (mod == StadiumModuleType::kCapacity)
+        ? static_cast<uint8_t>(std::clamp<int>((level + 1) / 2, 1, 5))
+        : static_cast<uint8_t>(std::clamp<int>(level, 1, 5));
+
+    if (mod != StadiumModuleType::kPitch) {
+        pxRect(0, 0, 26, 10,
+            static_cast<Uint8>(26 + tier * 6),
+            static_cast<Uint8>(44 + tier * 10),
+            static_cast<Uint8>(76 + tier * 14));
+        pxRect(0, 6, 26, 4,
+            static_cast<Uint8>(38 + tier * 8),
+            static_cast<Uint8>(64 + tier * 12),
+            static_cast<Uint8>(102 + tier * 14));
+        // Ground strip
+        pxRect(0, 10, 26, 5, 38, 114, 48);
+        pxRect(0, 12, 26, 3, 30, 96, 40);
+    }
+
+    switch (mod) {
+    case StadiumModuleType::kCapacity: {
+        // Evolving stadium stands from L1 (wooden bank) -> L10 (50k European mega-bowl!)
+        int capTier = std::clamp<int>(level, 1, 10);
+        // Pitch foreground strip with touchline
+        pxRect(0, 12, 26, 3, 36, 132, 50);
+        pxRect(1, 13, 24, 1, 226, 232, 224);
+
+        if (capTier == 1) {
+            // L1: Tiny grassy bank + small wooden bleacher
+            pxRect(5, 9, 16, 3, 124, 86, 52);
+            pxRect(6, 10, 14, 1, 156, 112, 68);
+            pxRect(5, 8, 16, 1, 92, 64, 38);
+            pxRect(7, 9, 2, 1, 220, 62, 62); // couple of fans
+            pxRect(14, 9, 2, 1, 70, 140, 230);
+        } else if (capTier <= 3) {
+            // L2-L3: Covered single-tier concrete terrace + floodlight pole
+            pxRect(4, 7, 18, 5, 138, 142, 148);
+            pxRect(5, 8, 16, 3, 72, 78, 88);
+            pxRect(3, 6, 20, 1.5f, 178, 44, 48); // tin roof
+            for (int f = 6; f <= 19; f += 3)
+                pxRect(static_cast<float>(f), 9, 1.5f, 1.5f, (f & 1) ? 240 : 84, (f & 1) ? 204 : 172, 74);
+            // Floodlight pole(s)
+            pxRect(2, 3, 1, 9, 170, 176, 184);
+            pxRect(1.5f, 2, 2, 1.5f, 255, 244, 180);
+            if (capTier >= 3) {
+                pxRect(23, 3, 1, 9, 170, 176, 184);
+                pxRect(22.5f, 2, 2, 1.5f, 255, 244, 180);
+            }
+        } else if (capTier <= 5) {
+            // L4-L5: Two-tier modern stand + canopy + ad boards + twin floodlights
+            pxRect(3, 5, 20, 7, 148, 154, 162);
+            pxRect(4, 6, 18, 2.5f, 52, 60, 74);
+            pxRect(4, 9, 18, 2.5f, 64, 72, 86);
+            pxRect(2, 4, 22, 1.5f, 44, 98, 188); // blue stadium roof
+            pxRect(4, 11.2f, 18, 1, 240, 212, 64); // perimeter ad boards
+            for (int f = 5; f <= 20; f += 2) {
+                pxRect(static_cast<float>(f), 7, 1, 1, 232, 76, 72);
+                pxRect(static_cast<float>(f), 10, 1, 1, 242, 214, 86);
+            }
+            pxRect(1.5f, 2, 1, 10, 188, 194, 202);
+            pxRect(1, 1, 2.5f, 1.5f, 255, 250, 196);
+            pxRect(23.5f, 2, 1, 10, 188, 194, 202);
+            pxRect(22.5f, 1, 2.5f, 1.5f, 255, 250, 196);
+        } else if (capTier <= 8) {
+            // L6-L8: Towering double-decker bowl + roof trusses + scoreboard
+            pxRect(2, 4, 22, 8, 166, 172, 182);
+            pxRect(3, 5, 20, 2.5f, 42, 50, 64);
+            pxRect(3, 8, 20, 3, 54, 62, 78);
+            pxRect(1, 3, 24, 1.5f, 212, 218, 226); // cantilevered steel roof
+            pxRect(10, 1.5f, 6, 2, 24, 28, 34);    // scoreboard
+            pxRect(11, 2, 4, 1, 96, 242, 134);
+            for (int f = 4; f <= 21; f += 2) {
+                pxRect(static_cast<float>(f), 6, 1.2f, 1, (f % 4 == 0) ? 240 : 96, 190, 242);
+                pxRect(static_cast<float>(f), 9.5f, 1.2f, 1, 244, 96, 84);
+            }
+            pxRect(0.8f, 1.5f, 1, 10.5f, 204, 210, 218);
+            pxRect(0.2f, 0.6f, 2.6f, 1.5f, 255, 252, 208);
+            pxRect(24.2f, 1.5f, 1, 10.5f, 204, 210, 218);
+            pxRect(23.2f, 0.6f, 2.6f, 1.5f, 255, 252, 208);
+        } else {
+            // L9-L10: Iconic European Fortress Mega-Stadium (4 floodlights, golden arch, packed bowl!)
+            pxRect(1, 3.5f, 24, 8.5f, 186, 192, 202);
+            pxRect(2, 4.5f, 22, 2.2f, 36, 44, 58);
+            pxRect(2, 7.2f, 22, 2.2f, 44, 52, 68);
+            pxRect(2, 9.8f, 22, 1.8f, 52, 60, 76);
+            pxRect(0.5f, 2.4f, 25, 1.3f, 246, 210, 74); // golden roof crown
+            pxRect(9, 1.0f, 8, 2.0f, 18, 22, 30);       // giant LED scoreboard
+            pxRect(10, 1.5f, 6, 1.0f, 255, 224, 78);
+            for (int f = 3; f <= 22; f += 2) {
+                pxRect(static_cast<float>(f), 5.2f, 1.2f, 1, 244, 88, 84);
+                pxRect(static_cast<float>(f), 7.8f, 1.2f, 1, 250, 222, 82);
+                pxRect(static_cast<float>(f), 10.2f, 1.2f, 1, 96, 208, 250);
+            }
+            // 4 glowing floodlight towers
+            pxRect(0.5f, 0.5f, 2.2f, 1.6f, 255, 254, 220);
+            pxRect(5.0f, 0.6f, 2.0f, 1.4f, 255, 254, 220);
+            pxRect(19.0f, 0.6f, 2.0f, 1.4f, 255, 254, 220);
+            pxRect(23.3f, 0.5f, 2.2f, 1.6f, 255, 254, 220);
+        }
+        break;
+    }
+
+    case StadiumModuleType::kPitch: {
+        // Overhead retro SWOS pitch view evolving from L1 mudbath -> L5 Championship velvet!
+        if (tier == 1) {
+            // L1: Muddy brown patchy grass + puddles
+            pxRect(0, 0, 26, 15, 108, 82, 46);
+            pxRect(2, 2, 9, 5, 76, 104, 48);
+            pxRect(15, 7, 8, 5, 72, 98, 44);
+            pxRect(6, 9, 5, 3, 66, 110, 152); // mud puddle
+            pxRect(16, 3, 4, 2, 66, 110, 152);
+            pxRect(1, 1, 24, 13, 186, 178, 156, 70);
+        } else if (tier == 2) {
+            // L2: Basic green grass with faint chalk lines
+            pxRect(0, 0, 26, 15, 52, 128, 52);
+            pxRect(10, 5, 6, 5, 96, 98, 52); // slight center wear
+            pxRect(1, 1, 24, 1, 210, 220, 208);
+            pxRect(1, 13, 24, 1, 210, 220, 208);
+            pxRect(1, 1, 1, 13, 210, 220, 208);
+            pxRect(24, 1, 1, 13, 210, 220, 208);
+            pxRect(12.5f, 1, 1, 13, 210, 220, 208);
+        } else if (tier == 3) {
+            // L3: Mowed vertical stripes + crisp white markings
+            for (int sx = 0; sx < 26; sx += 4)
+                pxRect(static_cast<float>(sx), 0, 2, 15, 42, 146, 54);
+            for (int sx = 2; sx < 26; sx += 4)
+                pxRect(static_cast<float>(sx), 0, 2, 15, 56, 166, 66);
+            pxRect(1, 1, 24, 1, 242, 246, 242);
+            pxRect(1, 13, 24, 1, 242, 246, 242);
+            pxRect(1, 1, 1, 13, 242, 246, 242);
+            pxRect(24, 1, 1, 13, 242, 246, 242);
+            pxRect(12.5f, 1, 1, 13, 242, 246, 242);
+            pxRect(10.5f, 5.5f, 5, 4, 242, 246, 242, 120);
+        } else if (tier == 4) {
+            // L4: Lush checkered emerald pitch + sharp penalty boxes + sprinkler sheen
+            for (int sy = 0; sy < 15; sy += 3) {
+                for (int sx = 0; sx < 26; sx += 4) {
+                    bool alt = ((sx / 4 + sy / 3) & 1) != 0;
+                    pxRect(static_cast<float>(sx), static_cast<float>(sy), 4, 3,
+                        alt ? 34 : 52, alt ? 156 : 182, alt ? 58 : 74);
+                }
+            }
+            pxRect(1, 1, 24, 1, 250, 252, 250);
+            pxRect(1, 13, 24, 1, 250, 252, 250);
+            pxRect(1, 1, 1, 13, 250, 252, 250);
+            pxRect(24, 1, 1, 13, 250, 252, 250);
+            pxRect(12.5f, 1, 1, 13, 250, 252, 250);
+            pxRect(1, 4, 4, 7, 250, 252, 250, 120);
+            pxRect(21, 4, 4, 7, 250, 252, 250, 120);
+            pxRect(11, 5.5f, 4, 4, 250, 252, 250, 140);
+        } else {
+            // L5: Championship Wembley-grade velvet carpet + golden sparkle!
+            for (int sy = 0; sy < 15; sy += 3) {
+                for (int sx = 0; sx < 26; sx += 3) {
+                    bool alt = ((sx / 3 + sy / 3) & 1) != 0;
+                    pxRect(static_cast<float>(sx), static_cast<float>(sy), 3, 3,
+                        alt ? 26 : 46, alt ? 172 : 204, alt ? 68 : 88);
+                }
+            }
+            pxRect(1, 1, 24, 1, 255, 255, 255);
+            pxRect(1, 13, 24, 1, 255, 255, 255);
+            pxRect(1, 1, 1, 13, 255, 255, 255);
+            pxRect(24, 1, 1, 13, 255, 255, 255);
+            pxRect(12.5f, 1, 1, 13, 255, 255, 255);
+            pxRect(1, 4, 4, 7, 255, 255, 255, 140);
+            pxRect(21, 4, 4, 7, 255, 255, 255, 140);
+            pxRect(11, 5.5f, 4, 4, 255, 255, 255, 175);
+            // Golden championship glints
+            pxRect(6, 3, 1.5f, 1.5f, 255, 234, 96);
+            pxRect(18, 10, 1.5f, 1.5f, 255, 234, 96);
+        }
+        break;
+    }
+
+    case StadiumModuleType::kTraining: {
+        // L1: Dirt patch & cones -> L5: World-class indoor dome & glass academy campus!
+        if (tier == 1) {
+            pxRect(0, 10, 26, 5, 118, 92, 56); // dirt patch
+            // Tiny wooden goal + 2 orange cones
+            pxRect(4, 6, 1, 5, 220, 214, 200);
+            pxRect(11, 6, 1, 5, 220, 214, 200);
+            pxRect(4, 6, 8, 1, 220, 214, 200);
+            pxRect(16, 10, 2, 2, 244, 126, 34);
+            pxRect(21, 10, 2, 2, 244, 126, 34);
+        } else if (tier == 2) {
+            // Practice pitch + small wooden portakabin + cones
+            pxRect(3, 6, 9, 5, 146, 104, 64); // shed
+            pxRect(2, 5, 11, 1.5f, 96, 68, 44);
+            pxRect(5, 8, 2, 3, 68, 48, 32);
+            pxRect(8, 7.5f, 2.5f, 1.8f, 152, 212, 240);
+            pxRect(15, 10, 2, 2, 246, 134, 38);
+            pxRect(20, 10, 2, 2, 246, 134, 38);
+        } else if (tier == 3) {
+            // Brick clubhouse + pitched roof + practice goal
+            pxRect(2, 5, 12, 6, 174, 78, 62);
+            pxRect(1, 4, 14, 1.5f, 84, 52, 46);
+            pxRect(4, 6.5f, 2.5f, 2, 168, 224, 248);
+            pxRect(9, 6.5f, 2.5f, 2, 168, 224, 248);
+            pxRect(6.8f, 8.5f, 2, 2.5f, 66, 42, 34);
+            // Goal & football
+            pxRect(17, 7, 6, 1, 240, 244, 246);
+            pxRect(17, 7, 1, 4, 240, 244, 246);
+            pxRect(22, 7, 1, 4, 240, 244, 246);
+            pxRect(19, 11, 1.8f, 1.8f, 250, 250, 250);
+        } else if (tier == 4) {
+            // Modern academy complex + gym wing + floodlit pitch
+            pxRect(2, 4, 14, 7, 206, 214, 224);
+            pxRect(2, 3, 14, 1.2f, 44, 108, 196);
+            for (int wx = 3; wx <= 12; wx += 3) {
+                pxRect(static_cast<float>(wx), 5.2f, 2, 1.8f, 96, 210, 248);
+                pxRect(static_cast<float>(wx), 8.0f, 2, 1.8f, 96, 210, 248);
+            }
+            pxRect(19, 3, 1, 8, 196, 202, 210);
+            pxRect(18, 2, 3, 1.4f, 255, 248, 190);
+            pxRect(18, 11, 6, 1, 242, 246, 242);
+        } else {
+            // L5: World-class sports-science campus with indoor dome + glass academy tower!
+            // White indoor dome on left
+            pxRect(1, 6, 11, 5, 228, 234, 242);
+            pxRect(2.5f, 4.5f, 8, 2, 238, 242, 248);
+            pxRect(4.5f, 3.5f, 4, 1.5f, 246, 250, 255);
+            pxRect(3, 8, 7, 1, 62, 142, 226);
+            // Glass academy tower on right
+            pxRect(13, 3, 10, 8, 188, 202, 218);
+            pxRect(13, 2, 10, 1.2f, 246, 210, 74); // gold trim
+            for (int wx = 14; wx <= 20; wx += 3) {
+                pxRect(static_cast<float>(wx), 4.2f, 2, 2, 112, 232, 252);
+                pxRect(static_cast<float>(wx), 7.2f, 2, 2, 112, 232, 252);
+            }
+            pxRect(24, 2, 1, 9, 216, 222, 230);
+            pxRect(23, 1, 2.5f, 1.4f, 255, 252, 204);
+        }
+        break;
+    }
+
+    case StadiumModuleType::kMedical: {
+        // L1: First-aid canvas tent -> L5: Full state-of-the-art sports hospital!
+        if (tier == 1) {
+            // L1: Triangular white/beige first-aid tent with red cross
+            pxRect(6, 8, 14, 3, 228, 222, 202);
+            pxRect(8, 6.2f, 10, 2.2f, 236, 230, 210);
+            pxRect(10.5f, 4.5f, 5, 2, 242, 236, 218);
+            pxRect(12.2f, 6.5f, 1.6f, 4.0f, 214, 36, 40); // red cross
+            pxRect(11.0f, 7.7f, 4.0f, 1.6f, 214, 36, 40);
+        } else if (tier == 2) {
+            // L2: Brick physio cabin + red cross + small van
+            pxRect(3, 5.5f, 12, 5.5f, 208, 202, 192);
+            pxRect(2, 4.5f, 14, 1.4f, 166, 52, 52);
+            pxRect(8.2f, 6.5f, 1.6f, 3.6f, 218, 38, 42);
+            pxRect(7.0f, 7.5f, 4.0f, 1.6f, 218, 38, 42);
+            // Small white physio van
+            pxRect(17, 8, 6, 3, 242, 244, 248);
+            pxRect(21, 8.5f, 2, 1.4f, 120, 200, 240);
+            pxRect(18, 10.6f, 1.5f, 1.2f, 34, 36, 40);
+            pxRect(21, 10.6f, 1.5f, 1.2f, 34, 36, 40);
+        } else if (tier == 3) {
+            // L3: Two-story medical clinic with blue windows + red cross roof sign
+            pxRect(5, 4.5f, 16, 6.5f, 228, 234, 240);
+            pxRect(4, 3.5f, 18, 1.2f, 196, 44, 48);
+            for (int wx = 6; wx <= 18; wx += 4)
+                pxRect(static_cast<float>(wx), 6.0f, 2.2f, 2.0f, 106, 196, 238);
+            pxRect(11.8f, 1.2f, 2.4f, 2.4f, 246, 248, 250);
+            pxRect(12.5f, 1.5f, 1.0f, 1.8f, 220, 36, 40);
+            pxRect(12.0f, 2.0f, 2.0f, 0.9f, 220, 36, 40);
+            pxRect(11.5f, 8.8f, 3, 2.2f, 66, 134, 188);
+        } else if (tier == 4) {
+            // L4: Multi-story sports rehab center + glass hydro wing + ambulance
+            pxRect(2, 3.5f, 15, 7.5f, 232, 238, 244);
+            pxRect(17, 5.5f, 7, 5.5f, 134, 212, 242); // glass hydro wing
+            pxRect(2, 2.6f, 15, 1.1f, 214, 42, 46);
+            for (int wx = 3.5f; wx <= 13; wx += 3) {
+                pxRect(static_cast<float>(wx), 4.8f, 2, 1.6f, 104, 196, 238);
+                pxRect(static_cast<float>(wx), 7.5f, 2, 1.6f, 104, 196, 238);
+            }
+            pxRect(8.8f, 4.5f, 1.4f, 3.8f, 224, 36, 42);
+            pxRect(7.6f, 5.7f, 3.8f, 1.4f, 224, 36, 42);
+        } else {
+            // L5: State-of-the-art Sports Hospital (towers, glowing red cross, helipad, ambulance!)
+            pxRect(2, 2.5f, 14, 8.5f, 240, 244, 248);
+            pxRect(16, 4.5f, 8, 6.5f, 218, 228, 238);
+            pxRect(1, 1.8f, 16, 1.0f, 224, 38, 44);
+            // Glowing red cross beacon on main tower
+            pxRect(8.2f, 3.4f, 1.6f, 4.2f, 232, 34, 40);
+            pxRect(6.9f, 4.7f, 4.2f, 1.6f, 232, 34, 40);
+            // Glass atrium windows
+            for (int wx = 3; wx <= 12; wx += 3)
+                pxRect(static_cast<float>(wx), 8.2f, 2, 1.8f, 96, 216, 250);
+            for (int wx = 17; wx <= 21; wx += 2.5f)
+                pxRect(static_cast<float>(wx), 5.8f, 1.6f, 1.8f, 96, 216, 250);
+            // Rooftop H helipad
+            pxRect(17.5f, 3.5f, 5, 1.0f, 246, 214, 74);
+            // Emergency ambulance parked out front
+            pxRect(17, 9.2f, 6, 2.4f, 250, 250, 252);
+            pxRect(19, 8.6f, 1.5f, 0.8f, 64, 168, 255); // blue siren
+            pxRect(17.5f, 10.0f, 4.5f, 0.7f, 224, 42, 46);
+        }
+        break;
+    }
+
+    case StadiumModuleType::kCommercial: {
+        // L1: Scarf/burger stall -> L5: Grand commercial plaza with golden VIP suites & mega-screen!
+        if (tier == 1) {
+            // L1: Wooden kiosk with red/white striped awning
+            pxRect(7, 7, 12, 4, 142, 98, 58);
+            for (int sx = 6; sx < 20; sx += 2) {
+                bool red = ((sx / 2) & 1) == 0;
+                pxRect(static_cast<float>(sx), 5.5f, 2, 1.8f, red ? 214 : 244, red ? 44 : 242, red ? 46 : 236);
+            }
+            pxRect(10, 8, 6, 2, 44, 38, 34);
+        } else if (tier == 2) {
+            // L2: Brick club shop with jersey display window
+            pxRect(5, 5, 16, 6, 178, 86, 66);
+            pxRect(4, 4, 18, 1.4f, 42, 92, 176);
+            pxRect(7, 6.8f, 5, 3, 146, 214, 244); // display window
+            pxRect(8.5f, 7.4f, 2, 1.8f, 244, 210, 62); // club shirt in window
+            pxRect(14, 7.2f, 3, 3.8f, 58, 42, 34);
+        } else if (tier == 3) {
+            // L3: Club superstore + sponsor billboard
+            pxRect(3, 5, 14, 6, 206, 212, 220);
+            pxRect(2, 4, 16, 1.4f, 214, 48, 52);
+            pxRect(5, 6.8f, 5, 2.8f, 104, 208, 244);
+            pxRect(12, 7.2f, 3, 3.8f, 44, 62, 88);
+            // Sponsor billboard on right
+            pxRect(18, 4.5f, 6, 4, 244, 208, 62);
+            pxRect(19, 5.5f, 4, 2, 34, 48, 86);
+            pxRect(20.5f, 8.5f, 1, 2.5f, 140, 146, 154);
+        } else if (tier == 4) {
+            // L4: Glass corporate VIP wing + glowing signage
+            pxRect(2, 4, 22, 7, 176, 192, 212);
+            pxRect(2, 3, 22, 1.2f, 244, 208, 66); // gold cornice
+            for (int wx = 3.5f; wx <= 19; wx += 4)
+                pxRect(static_cast<float>(wx), 5.2f, 3, 3.5f, 92, 206, 246);
+            pxRect(8, 1.5f, 10, 1.6f, 220, 44, 52); // neon sponsor banner
+            pxRect(9.5f, 1.9f, 7, 0.8f, 255, 236, 120);
+        } else {
+            // L5: Grand Commercial Plaza with luxury golden VIP suites & giant LED screen!
+            pxRect(1, 3, 24, 8, 198, 208, 222);
+            pxRect(1, 2, 24, 1.2f, 250, 214, 74); // golden crown
+            // Giant glowing LED screen center
+            pxRect(8, 4, 10, 4.5f, 22, 28, 42);
+            pxRect(9, 4.8f, 8, 2.8f, 96, 238, 148);
+            pxRect(10.5f, 5.5f, 5, 1.4f, 255, 226, 78);
+            // VIP glass boxes flanking
+            pxRect(2.5f, 4.5f, 4, 4, 104, 218, 252);
+            pxRect(19.5f, 4.5f, 4, 4, 104, 218, 252);
+            // Illuminated grand entrance
+            pxRect(9.5f, 9.0f, 7, 2.0f, 255, 224, 96);
+        }
+        break;
+    }
+
+    default:
+        break;
+    }
+
+    // If this facility is actively under construction, overlay a yellow/black crane & blinking beacon!
+    if (isBuilding) {
+        pxRect(19, 1.5f, 1.2f, 10.5f, 244, 196, 36); // crane mast
+        pxRect(12, 1.5f, 12, 1.2f, 244, 196, 36);    // crane boom
+        pxRect(14, 2.7f, 0.8f, 3.5f, 42, 44, 48);    // cable
+        pxRect(13, 6.0f, 2.8f, 1.6f, 234, 144, 34);  // suspended load
+        bool blink = ((SDL_GetTicks() / 350) & 1) == 0;
+        if (blink)
+            pxRect(18.8f, 0.5f, 1.8f, 1.4f, 255, 76, 56);
+    }
+
+    // Crisp bezel frame around the pixel-art thumbnail
+    SDL_Color borderCol = isBuilding
+        ? SDL_Color{ 118, 238, 248, 235 }
+        : (tier >= 5 ? SDL_Color{ 255, 224, 86, 235 } : SDL_Color{ 156, 170, 188, 210 });
+    SDL_SetRenderDrawColor(r, borderCol.r, borderCol.g, borderCol.b, borderCol.a);
+    SDL_FRect frame{ x, y, w, h };
+    SDL_RenderDrawRectF(r, &frame);
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+}
+
 static void drawStadiumFacilitiesMenu()
 {
     // Wide dark transparent panels (x=4..316, width=312)
@@ -1676,7 +2076,13 @@ static void drawStadiumFacilitiesMenu()
             bool isBuildingThis = (s_stadium.activeProject.isActive && s_stadium.activeProject.module == mod);
 
             float rowY = offY + (kModYs[i] + 2.5f) * gameScale;
-            float leftX = offX + 10.0f * gameScale;
+            float thumbX = offX + 7.0f * gameScale;
+            float thumbY = offY + (kModYs[i] + 2.0f) * gameScale;
+            float thumbW = 26.0f * gameScale;
+            float thumbH = 15.0f * gameScale;
+            drawFacilityPixelArt(r, thumbX, thumbY, thumbW, thumbH, mod, curLvl, isBuildingThis);
+
+            float leftX = offX + 37.0f * gameScale;
 
             std::string leftHead = "[" + std::to_string(i + 1) + "] " + getStadiumModuleName(mod);
             std::string curStat;
@@ -1704,9 +2110,9 @@ static void drawStadiumFacilitiesMenu()
                 break;
             }
 
-            drawCompactText(r, atlas, leftX, rowY, px, leftHead, yellowCol, 255, true);
-            drawCompactText(r, atlas, offX + 105.0f * gameScale, rowY,
-                fitPx(curStat, px, 110.0f * gameScale), curStat, whiteCol, 240, false);
+            drawCompactText(r, atlas, leftX, rowY, fitPx(leftHead, px, 84.0f * gameScale), leftHead, yellowCol, 255, true);
+            drawCompactText(r, atlas, offX + 124.0f * gameScale, rowY,
+                fitPx(curStat, px, 96.0f * gameScale), curStat, whiteCol, 240, false);
 
             std::string rightTag;
             SDL_Color rightCol = greenCol;
@@ -1728,7 +2134,7 @@ static void drawStadiumFacilitiesMenu()
                 rightCol = greenCol;
             }
             drawCompactTextRightAligned(r, atlas, offX + 310.0f * gameScale, rowY,
-                fitPx(rightTag, px, 96.0f * gameScale), rightTag, rightCol, 255, true);
+                fitPx(rightTag, px, 86.0f * gameScale), rightTag, rightCol, 255, true);
 
             // Second sub-line showing next-level effect or upkeep
             std::string subLine;
@@ -1738,8 +2144,8 @@ static void drawStadiumFacilitiesMenu()
                 subLine = "Next Lvl " + std::to_string(q.targetLevel) + ": " + q.previewText +
                           "  |  Upkeep: " + formatPoundsExact(q.newMatchdayUpkeep) + "/match";
             }
-            drawCompactText(r, atlas, leftX + 6.0f * gameScale, rowY + 9.2f * gameScale,
-                fitPx(subLine, px * 0.88f, 294.0f * gameScale), subLine, mutedCol, 220, false);
+            drawCompactText(r, atlas, leftX, rowY + 9.2f * gameScale,
+                fitPx(subLine, px * 0.88f, 272.0f * gameScale), subLine, mutedCol, 220, false);
         }
 
         // Ticket pricing + Last-5 Form + Live Home Matchday P&L Breakdown bar (y=141..158)

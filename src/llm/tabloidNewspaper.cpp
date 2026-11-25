@@ -33,33 +33,21 @@ namespace {
 
 constexpr int kPhotoWidth = 224;
 constexpr int kPhotoHeight = 140;
-constexpr size_t kClipPreFrames = 14;   // ~1.6s of build-up & strike at ~8.5 FPS
-constexpr int kClipPostFrames = 10;     // ~1.2s of ball-in-net & celebration
-constexpr int kClipSampleStride = 7;    // sample 1 frame every 7 game ticks (~8.5 FPS)
 
 struct CapturedMatchPhoto {
     bool valid = false;
     int priority = 0;
     int width = 0;
     int height = 0;
-    std::vector<uint8_t> rgba; // Climax still frame (ABGR8888)
-    std::vector<std::vector<uint8_t>> clipFrames; // Living newspaper looping highlight reel
+    std::vector<uint8_t> rgba; // Static 1996/97 action photo (ABGR8888)
     std::string caption;
 };
 
 CapturedMatchPhoto s_photo;
-std::vector<std::vector<uint8_t>> s_ringFrames;
-size_t s_ringHead = 0;
-int s_ringTickCounter = 0;
-
 bool s_capturePending = false;
 int s_pendingPriority = 0;
 int s_pendingDelayFrames = 0;
 std::string s_pendingCaption;
-bool s_clipRecordingPost = false;
-int s_clipPostRemaining = 0;
-int s_clipPostStrideCounter = 0;
-std::vector<std::vector<uint8_t>> s_clipWorkFrames;
 
 std::string trimCopy(const std::string& s)
 {
@@ -495,17 +483,10 @@ bool saveNewspaperRectToPng(SDL_Renderer *r, const SDL_Rect& captureRect, std::s
 void resetTabloidMatchPhoto()
 {
     s_photo = CapturedMatchPhoto{};
-    s_ringFrames.clear();
-    s_ringHead = 0;
-    s_ringTickCounter = 0;
     s_capturePending = false;
     s_pendingPriority = 0;
     s_pendingDelayFrames = 0;
     s_pendingCaption.clear();
-    s_clipRecordingPost = false;
-    s_clipPostRemaining = 0;
-    s_clipPostStrideCounter = 0;
-    s_clipWorkFrames.clear();
 }
 
 void requestTabloidMatchPhoto(int priority, const std::string& caption, int delayFrames)
@@ -516,16 +497,13 @@ void requestTabloidMatchPhoto(int priority, const std::string& caption, int dela
     // Upgrade if higher priority OR equal priority (later dramatic goal replaces earlier routine goal)
     if (s_photo.valid && priority < s_photo.priority)
         return;
-    if ((s_capturePending || s_clipRecordingPost) && priority < s_pendingPriority)
+    if (s_capturePending && priority < s_pendingPriority)
         return;
 
     s_capturePending = true;
     s_pendingPriority = priority;
-    s_pendingDelayFrames = std::clamp(delayFrames, 0, 12);
+    s_pendingDelayFrames = std::clamp(delayFrames, 0, 30);
     s_pendingCaption = cleanTabloidText(caption);
-    s_clipRecordingPost = false;
-    s_clipPostRemaining = 0;
-    s_clipWorkFrames.clear();
 }
 
 bool hasTabloidMatchPhoto()
@@ -538,12 +516,26 @@ std::string getTabloidMatchPhotoCaption()
     return s_photo.valid ? s_photo.caption : std::string();
 }
 
-#ifndef SWOS_TEST
-static bool grabScaledPitchFrame(float cameraXOffset, float cameraYOffset, std::vector<uint8_t>& outScaled)
+void captureTabloidMatchPhotoIfPending(float cameraXOffset, float cameraYOffset)
 {
+#ifdef SWOS_TEST
+    (void)cameraXOffset;
+    (void)cameraYOffset;
+    return;
+#else
+    if (!s_capturePending || swos.g_trainingGame)
+        return;
+
+    if (s_pendingDelayFrames > 0) {
+        --s_pendingDelayFrames;
+        return;
+    }
+
     SDL_Renderer *r = getRenderer();
-    if (!r)
-        return false;
+    if (!r) {
+        s_capturePending = false;
+        return;
+    }
 
     float origSX = 1.0f, origSY = 1.0f;
     SDL_RenderGetScale(r, &origSX, &origSY);
@@ -552,9 +544,11 @@ static bool grabScaledPitchFrame(float cameraXOffset, float cameraYOffset, std::
     int outW = 0, outH = 0;
     if (SDL_GetRendererOutputSize(r, &outW, &outH) != 0 || outW < 160 || outH < 100) {
         SDL_RenderSetScale(r, origSX, origSY);
-        return false;
+        s_capturePending = false;
+        return;
     }
 
+    // Center the 16:10 photo crop around the ball/action on screen (clamped cleanly inside viewport)
     float gameScale = getGameScale();
     float offX = getGameScreenOffsetX();
     float offY = getGameScreenOffsetY();
@@ -591,102 +585,49 @@ static bool grabScaledPitchFrame(float cameraXOffset, float cameraYOffset, std::
     std::vector<uint8_t> raw(static_cast<size_t>(cropW) * static_cast<size_t>(cropH) * 4u);
     int rc = SDL_RenderReadPixels(r, &cropRect, SDL_PIXELFORMAT_ABGR8888, raw.data(), cropW * 4);
     SDL_RenderSetScale(r, origSX, origSY);
-    if (rc < 0)
-        return false;
+    s_capturePending = false;
 
-    outScaled.resize(static_cast<size_t>(kPhotoWidth) * static_cast<size_t>(kPhotoHeight) * 4u);
+    if (rc < 0) {
+        logWarn("Tabloid photo capture failed: %s", SDL_GetError());
+        return;
+    }
+
+    // Crisp area downsample into kPhotoWidth x kPhotoHeight
+    std::vector<uint8_t> scaled(static_cast<size_t>(kPhotoWidth) * static_cast<size_t>(kPhotoHeight) * 4u);
     for (int dy = 0; dy < kPhotoHeight; ++dy) {
-        int sy = (dy * cropH) / kPhotoHeight;
-        const uint8_t *srcRow = raw.data() + static_cast<size_t>(sy) * static_cast<size_t>(cropW) * 4u;
-        uint8_t *dstRow = outScaled.data() + static_cast<size_t>(dy) * static_cast<size_t>(kPhotoWidth) * 4u;
+        int sy0 = (dy * cropH) / kPhotoHeight;
+        int sy1 = std::min(cropH - 1, ((dy + 1) * cropH) / kPhotoHeight);
         for (int dx = 0; dx < kPhotoWidth; ++dx) {
-            int sx = (dx * cropW) / kPhotoWidth;
-            const uint8_t *p = srcRow + static_cast<size_t>(sx) * 4u;
-            uint8_t *d = dstRow + static_cast<size_t>(dx) * 4u;
-            d[0] = p[0];
-            d[1] = p[1];
-            d[2] = p[2];
-            d[3] = 255;
+            int sx0 = (dx * cropW) / kPhotoWidth;
+            int sx1 = std::min(cropW - 1, ((dx + 1) * cropW) / kPhotoWidth);
+            uint32_t sumR = 0, sumG = 0, sumB = 0, cnt = 0;
+            for (int sy = sy0; sy <= sy1; ++sy) {
+                const uint8_t *row = raw.data() + (static_cast<size_t>(sy) * static_cast<size_t>(cropW)) * 4u;
+                for (int sx = sx0; sx <= sx1; ++sx) {
+                    const uint8_t *p = row + static_cast<size_t>(sx) * 4u;
+                    sumR += p[0];
+                    sumG += p[1];
+                    sumB += p[2];
+                    ++cnt;
+                }
+            }
+            if (cnt == 0) cnt = 1;
+            uint8_t *dst = scaled.data() + (static_cast<size_t>(dy) * static_cast<size_t>(kPhotoWidth) + static_cast<size_t>(dx)) * 4u;
+            dst[0] = static_cast<uint8_t>(sumR / cnt);
+            dst[1] = static_cast<uint8_t>(sumG / cnt);
+            dst[2] = static_cast<uint8_t>(sumB / cnt);
+            dst[3] = 255;
         }
     }
-    return true;
-}
 
-static void finalizeCapturedHighlightClip()
-{
-    if (s_clipWorkFrames.empty())
-        return;
-
-    for (auto& fr : s_clipWorkFrames)
-        apply90sTabloidColorPrintFilter(fr, kPhotoWidth, kPhotoHeight);
+    apply90sTabloidColorPrintFilter(scaled, kPhotoWidth, kPhotoHeight);
 
     s_photo.valid = true;
     s_photo.priority = s_pendingPriority;
     s_photo.width = kPhotoWidth;
     s_photo.height = kPhotoHeight;
+    s_photo.rgba = std::move(scaled);
     s_photo.caption = s_pendingCaption;
-    size_t climaxIdx = std::min(s_clipWorkFrames.size() - 1, s_clipWorkFrames.size() * 2 / 3);
-    s_photo.rgba = s_clipWorkFrames[climaxIdx];
-    s_photo.clipFrames = std::move(s_clipWorkFrames);
-    s_clipWorkFrames.clear();
-    s_clipRecordingPost = false;
-    s_clipPostRemaining = 0;
-}
-#endif
-
-void captureTabloidMatchPhotoIfPending(float cameraXOffset, float cameraYOffset)
-{
-#ifdef SWOS_TEST
-    (void)cameraXOffset;
-    (void)cameraYOffset;
-    return;
-#else
-    if (swos.g_trainingGame)
-        return;
-
-    // 1. If actively capturing post-goal highlight frames, grab 1 frame every kClipSampleStride ticks
-    if (s_clipRecordingPost) {
-        if (++s_clipPostStrideCounter >= kClipSampleStride) {
-            s_clipPostStrideCounter = 0;
-            std::vector<uint8_t> fr;
-            if (grabScaledPitchFrame(cameraXOffset, cameraYOffset, fr))
-                s_clipWorkFrames.push_back(std::move(fr));
-            if (--s_clipPostRemaining <= 0)
-                finalizeCapturedHighlightClip();
-        }
-        return;
-    }
-
-    // 2. If a highlight event (e.g. GOAL) was requested, begin capturing post-event celebration/replay frames
-    //    (ZERO SDL_RenderReadPixels during active kInProgress gameplay so framerate stays locked at 60 FPS!)
-    if (s_capturePending) {
-        if (s_pendingDelayFrames > 0) {
-            --s_pendingDelayFrames;
-            return;
-        }
-        s_capturePending = false;
-        s_clipWorkFrames.clear();
-        std::vector<uint8_t> nowFrame;
-        if (grabScaledPitchFrame(cameraXOffset, cameraYOffset, nowFrame))
-            s_clipWorkFrames.push_back(std::move(nowFrame));
-
-        // Immediately publish valid still photo in case match ends before post-frames finish
-        if (!s_clipWorkFrames.empty()) {
-            std::vector<uint8_t> preview = s_clipWorkFrames.back();
-            apply90sTabloidColorPrintFilter(preview, kPhotoWidth, kPhotoHeight);
-            s_photo.valid = true;
-            s_photo.priority = s_pendingPriority;
-            s_photo.width = kPhotoWidth;
-            s_photo.height = kPhotoHeight;
-            s_photo.rgba = std::move(preview);
-            s_photo.caption = s_pendingCaption;
-        }
-
-        s_clipRecordingPost = true;
-        s_clipPostRemaining = kClipPostFrames;
-        s_clipPostStrideCounter = 0;
-        return;
-    }
 #endif
 }
 
@@ -928,25 +869,13 @@ void showTabloidNewspaperModal(const TabloidNewspaperEdition& edition)
     if (!r || !atlas)
         return;
 
-    // Upload captured live match photo / looping highlight clip (already processed with 90s color tabloid filter)
-    if (s_clipRecordingPost && !s_clipWorkFrames.empty())
-        finalizeCapturedHighlightClip();
-
-    bool hasAnimatedClip = (edition.isPlayedMatch && s_photo.valid && s_photo.width > 0 && s_photo.height > 0 &&
-                            s_photo.clipFrames.size() > 1);
-    size_t clipFrameIdx = 0;
-    Uint32 clipLastStepTick = SDL_GetTicks();
-    bool replayPaused = false;
-    bool prevPauseKey = false;
-
+    // Upload captured live match photo (already processed with 90s color tabloid filter)
     SDL_Texture *photoTex = nullptr;
     if (edition.isPlayedMatch && s_photo.valid && s_photo.width > 0 && s_photo.height > 0 && !s_photo.rgba.empty()) {
-        photoTex = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888,
-            hasAnimatedClip ? SDL_TEXTUREACCESS_STREAMING : SDL_TEXTUREACCESS_STATIC,
+        photoTex = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC,
             s_photo.width, s_photo.height);
         if (photoTex) {
-            const auto& initFrame = hasAnimatedClip ? s_photo.clipFrames[0] : s_photo.rgba;
-            SDL_UpdateTexture(photoTex, nullptr, initFrame.data(), s_photo.width * 4);
+            SDL_UpdateTexture(photoTex, nullptr, s_photo.rgba.data(), s_photo.width * 4);
             SDL_SetTextureBlendMode(photoTex, SDL_BLENDMODE_NONE);
         }
     }
@@ -1214,38 +1143,13 @@ void showTabloidNewspaperModal(const TabloidNewspaperEdition& edition)
         drawRectF(r, photoX, photoY, photoW, photoH, inkBlack);
         SDL_FRect imgRect{ photoX + 3.0f, photoY + 3.0f, photoW - 6.0f, photoH - 6.0f };
         if (photoTex) {
-            // Advance looping living-newspaper highlight clip at ~8.7 FPS (brief hold on climax/final frame)
-            if (hasAnimatedClip && !replayPaused) {
-                Uint32 nowTick = SDL_GetTicks();
-                Uint32 holdMs = (clipFrameIdx + 1 == s_photo.clipFrames.size()) ? 520u : 115u;
-                if (nowTick - clipLastStepTick >= holdMs) {
-                    clipLastStepTick = nowTick;
-                    clipFrameIdx = (clipFrameIdx + 1) % s_photo.clipFrames.size();
-                    SDL_UpdateTexture(photoTex, nullptr, s_photo.clipFrames[clipFrameIdx].data(), s_photo.width * 4);
-                }
-            }
-
             SDL_RenderCopyF(r, photoTex, nullptr, &imgRect);
-
-            // Red press tag in top-left corner: pulsing "* LIVE REPLAY" when animated, or "MATCH PHOTO" for stills
-            bool pulseDot = ((SDL_GetTicks() / 360) & 1) == 0;
-            std::string badgeTxt = hasAnimatedClip
-                ? (replayPaused ? "II PAUSED [P]" : (pulseDot ? "* LIVE REPLAY" : "  LIVE REPLAY"))
-                : "MATCH PHOTO";
-            float tagW = (hasAnimatedClip ? 60.0f : 48.0f) * px * 0.72f;
+            // Tiny "MATCH PHOTO" red press tag in top-left corner of the photo
+            float tagW = 48.0f * px * 0.72f;
             float tagH = 8.5f * px * 0.72f;
-            fillRectF(r, imgRect.x + 3.0f, imgRect.y + 3.0f, tagW, tagH,
-                (hasAnimatedClip && replayPaused) ? SDL_Color{ 54, 52, 48, 225 } : SDL_Color{ 182, 28, 34, 225 });
+            fillRectF(r, imgRect.x + 3.0f, imgRect.y + 3.0f, tagW, tagH, { 182, 28, 34, 220 });
             drawCompactTextCentered(r, atlas, imgRect.x + 3.0f + tagW * 0.5f, imgRect.y + 4.0f,
-                px * 0.60f, badgeTxt, whiteInk, 255, true);
-
-            // Subtle interactive playback progress strip along bottom of the living photo
-            if (hasAnimatedClip) {
-                float barH = std::max(2.0f, 2.2f * px * 0.6f);
-                float frac = static_cast<float>(clipFrameIdx + 1) / static_cast<float>(s_photo.clipFrames.size());
-                fillRectF(r, imgRect.x, imgRect.y + imgRect.h - barH, imgRect.w, barH, { 18, 18, 16, 170 });
-                fillRectF(r, imgRect.x, imgRect.y + imgRect.h - barH, imgRect.w * frac, barH, tabloidRed);
-            }
+                px * 0.62f, "MATCH PHOTO", whiteInk, 255, true);
         } else {
             drawFallbackMatchupPhoto(r, atlas, imgRect, edition, px);
         }
@@ -1496,7 +1400,6 @@ void showTabloidNewspaperModal(const TabloidNewspaperEdition& edition)
         bool inputReady = (SDL_GetTicks() - openTick) >= 220;
         const Uint8 *keys = SDL_GetKeyboardState(nullptr);
         bool saveKeyNow = keys && (keys[SDL_SCANCODE_S] != 0);
-        bool pauseKeyNow = keys && (keys[SDL_SCANCODE_P] != 0);
         bool closeKeyNow = keys && (keys[SDL_SCANCODE_RETURN] || keys[SDL_SCANCODE_KP_ENTER] ||
                                     keys[SDL_SCANCODE_SPACE] || keys[SDL_SCANCODE_ESCAPE]);
 
@@ -1509,10 +1412,6 @@ void showTabloidNewspaperModal(const TabloidNewspaperEdition& edition)
             if (saveKeyNow && !prevSaveKey) {
                 wantSaveNow = true;
             }
-            if (hasAnimatedClip && pauseKeyNow && !prevPauseKey) {
-                replayPaused = !replayPaused;
-                clipLastStepTick = SDL_GetTicks();
-            }
             if (closeKeyNow && !prevCloseKey) {
                 exitPaper = true;
             }
@@ -1520,11 +1419,6 @@ void showTabloidNewspaperModal(const TabloidNewspaperEdition& edition)
                 if (mx >= saveBtn.x && mx <= saveBtn.x + saveBtn.w &&
                     my >= saveBtn.y && my <= saveBtn.y + saveBtn.h) {
                     wantSaveNow = true;
-                } else if (hasAnimatedClip &&
-                           mx >= imgRect.x && mx <= imgRect.x + imgRect.w &&
-                           my >= imgRect.y && my <= imgRect.y + imgRect.h) {
-                    replayPaused = !replayPaused;
-                    clipLastStepTick = SDL_GetTicks();
                 } else {
                     exitPaper = true;
                 }
@@ -1534,7 +1428,6 @@ void showTabloidNewspaperModal(const TabloidNewspaperEdition& edition)
             }
         }
         prevSaveKey = saveKeyNow;
-        prevPauseKey = pauseKeyNow;
         prevCloseKey = closeKeyNow;
         prevMouseDown = mouseDown;
 
