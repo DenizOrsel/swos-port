@@ -18,6 +18,7 @@
 #include "stats.h"
 #include "swos.h"
 #include "tabloidNewspaper.h"
+#include "goalToaster.h"
 #include "updatePlayers.h"
 
 #include <algorithm>
@@ -1100,6 +1101,7 @@ std::string computeTimePressureTag(int minute, int goals1, int goals2, bool play
 
 void resetMatchTelemetry()
 {
+    resetGoalToaster();
     s_frameCounter = 0;
     s_lastCornerFrame = 0;
     s_lastFreeKickFrame = 0;
@@ -1380,6 +1382,29 @@ void recordTelemetryMatchEvent(const char *eventType, bool isGoalEvent /* = fals
             else
                 cap += teamName + " find the back of the net!";
             requestTabloidMatchPhoto(photoPrio, cap, 6);
+
+            // Trigger stylish animated lower-third Goal Toaster with spinning ball, minute, scorer & scorer's comment!
+            {
+                GoalToasterEvent gte;
+                gte.minute = achGoal.matchMinute;
+                gte.scorerName = playerName;
+                gte.teamName = teamName;
+                gte.assisterName = assister;
+                gte.team1Goals = g1;
+                gte.team2Goals = g2;
+                gte.scorerMatchGoals = achGoal.scorerMatchGoals;
+                const TeamGame& scoreTg = (scoringTeamNum == 1) ? swos.topTeamInGame : swos.bottomTeamInGame;
+                gte.teamShirtColorIdx = static_cast<uint8_t>(scoreTg.prShirtCol);
+                gte.isHumanTeam = scoringSideHuman;
+                gte.isHeader = achGoal.isHeader;
+                gte.isOutsideBox = achGoal.isOutsideBox;
+                gte.isVolley = achGoal.isVolley;
+                gte.isPenalty = achGoal.isPenalty;
+                gte.isFreeKick = achGoal.isFreeKick;
+                gte.isOwnGoal = achGoal.isOwnGoal;
+                gte.isGoAheadGoal = achGoal.isGoAheadGoal;
+                triggerGoalToaster(gte);
+            }
         }
     } else if (isKeeperSave) {
         // Defending team's goalkeeper made the save against the attacking team's shot!

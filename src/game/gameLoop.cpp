@@ -42,6 +42,7 @@
 #include "preMatchAssistant.h"
 #include "transferImpact.h"
 #include "tabloidNewspaper.h"
+#include "goalToaster.h"
 #include "replayExitMenu.h"
 #include "llmFeatures.h"
 #include "matchTelemetry.h"
@@ -381,6 +382,7 @@ static void drawFrame(bool recordingEnabled)
     drawGameTime();
     drawLivePunditTicker();
     drawSupporterStreamOverlay(xOffset, yOffset);
+    updateAndDrawGoalToaster(xOffset, yOffset);
     drawStatsIfNeeded();
     drawResult();
     drawSpinningLogo();

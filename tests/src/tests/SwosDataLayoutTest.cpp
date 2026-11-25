@@ -14,6 +14,7 @@
 #include "transferImpact.h"
 #include "supporterStream.h"
 #include "tabloidNewspaper.h"
+#include "goalToaster.h"
 #include "voiceInput.h"
 #include "achievements.h"
 #include "stadiumFacilities.h"
@@ -1678,6 +1679,29 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
 
             std::remove(tmpKb);
             reloadLlmKnowledgeBase();
+        }
+
+        // Animated Goal Toaster scorer comment & trigger tests
+        {
+            resetGoalToaster();
+            assertFalse(isGoalToasterActive());
+            GoalToasterEvent gte;
+            gte.minute = 43;
+            gte.scorerName = "T. MOONEY";
+            gte.teamName = "BRIGHTON";
+            gte.scorerMatchGoals = 3;
+            gte.isOutsideBox = true;
+            std::string hatQuote = buildOfflineScorerComment(gte, 0u);
+            assertTrue(!hatQuote.empty());
+
+            gte.scorerMatchGoals = 1;
+            std::string longQuote = buildOfflineScorerComment(gte, 1u);
+            assertTrue(!longQuote.empty() && longQuote != hatQuote);
+
+            triggerGoalToaster(gte);
+            assertTrue(isGoalToasterActive());
+            resetGoalToaster();
+            assertFalse(isGoalToasterActive());
         }
     }
 
