@@ -29,4 +29,5 @@ std::string buildOfflineScorerComment(const GoalToasterEvent& ev, uint32_t seed)
 void resetGoalToaster();
 void triggerGoalToaster(const GoalToasterEvent& ev);
 void updateAndDrawGoalToaster(float cameraXOffset, float cameraYOffset);
+void drawMatchScorebugToaster(float cameraXOffset, float cameraYOffset);
 bool isGoalToasterActive();

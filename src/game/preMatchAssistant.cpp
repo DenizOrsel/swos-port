@@ -869,7 +869,7 @@ void showPreMatchAssistantMenuIfReady()
         SDL_RenderFillRectF(r, &markRect);
         SDL_SetRenderDrawColor(r, markOn ? 250 : 112, markOn ? 176 : 124, markOn ? 82 : 134, 220);
         SDL_RenderDrawRectF(r, &markRect);
-        std::string markHdr = "[M] MAN-MARK: " + std::string(markOn ? "ON" : "OFF");
+        std::string markHdr = "[M] MAN-MARK [DEBUFF]: " + std::string(markOn ? "ON" : "OFF");
         drawCompactText(r, atlas, markRect.x + 4.0f, markRect.y + 3.0f,
             fitPx(markHdr, px * 0.82f, markRect.w - 8.0f), markHdr, markOn ? orangeCol : whiteCol, 255, true);
         std::string markSub = "Target " + toUpperAscii(s_session.intel.dangerManName) + " (-1 FIN/SHT/CTL)";
@@ -879,7 +879,7 @@ void showPreMatchAssistantMenuIfReady()
         drawCompactText(r, atlas, markRect.x + 4.0f, markRect.y + 3.0f + 17.5f * px * 0.78f,
             fitPx(markCost, px * 0.70f, markRect.w - 8.0f), markCost, mutedCol, 230, false);
 
-        // Box 2: Shop Window / Scout Spotlight (y=106..136)
+        // Box 2: Scout Spotlight [BUFF] (y=106..136)
         SDL_FRect spotRect = toRect(183.0f, 106.0f, 125.0f, 30.0f);
         bool spotOn = (s_session.plan.spotlightCandidateIndex >= 0 &&
                        s_session.plan.spotlightCandidateIndex < static_cast<int>(s_session.spotlightCandidates.size()));
@@ -888,13 +888,12 @@ void showPreMatchAssistantMenuIfReady()
         SDL_SetRenderDrawColor(r, spotOn ? 118 : 112, spotOn ? 232 : 124, spotOn ? 246 : 134, 220);
         SDL_RenderDrawRectF(r, &spotRect);
         if (s_session.isCareer && !s_session.spotlightCandidates.empty()) {
-            std::string spotHdr = "[W] SHOP WINDOW (CYCLE)";
+            std::string spotHdr = "[W] SCOUT SPOTLIGHT [BUFF]";
             drawCompactText(r, atlas, spotRect.x + 4.0f, spotRect.y + 3.0f,
                 fitPx(spotHdr, px * 0.80f, spotRect.w - 8.0f), spotHdr, spotOn ? cyanCol : whiteCol, 255, true);
             std::string spotWho = spotOn
                 ? (toUpperAscii(s_session.spotlightCandidates[s_session.plan.spotlightCandidateIndex].shortName) +
-                   " [" + s_session.spotlightCandidates[s_session.plan.spotlightCandidateIndex].pos + "] " +
-                   s_session.spotlightCandidates[s_session.plan.spotlightCandidateIndex].marketValueStr)
+                   " [" + s_session.spotlightCandidates[s_session.plan.spotlightCandidateIndex].pos + "]")
                 : "NONE (click or press W to pick starter)";
             drawCompactText(r, atlas, spotRect.x + 4.0f, spotRect.y + 3.0f + 9.0f * px * 0.80f,
                 fitPx(spotWho, px * 0.74f, spotRect.w - 8.0f), spotWho, spotOn ? yellowCol : mutedCol, 250, true);
@@ -902,7 +901,7 @@ void showPreMatchAssistantMenuIfReady()
             drawCompactText(r, atlas, spotRect.x + 4.0f, spotRect.y + 3.0f + 18.0f * px * 0.78f,
                 fitPx(spotRule, px * 0.68f, spotRect.w - 8.0f), spotRule, greenCol, 235, false);
         } else {
-            drawCompactText(r, atlas, spotRect.x + 4.0f, spotRect.y + 3.0f, px * 0.80f, "SHOP WINDOW", mutedCol, 210, true);
+            drawCompactText(r, atlas, spotRect.x + 4.0f, spotRect.y + 3.0f, px * 0.80f, "SCOUT SPOTLIGHT [BUFF]", mutedCol, 210, true);
             drawCompactText(r, atlas, spotRect.x + 4.0f, spotRect.y + 3.0f + 10.0f * px * 0.78f,
                 px * 0.72f, "Available in Career Mode", mutedCol, 190, false);
         }
@@ -1082,7 +1081,7 @@ void onMatchFinishedPreMatchAssistant()
                     auto *pf = reinterpret_cast<PlayerFile *>(&SwosVM::g_memByte[ofs]);
                     if (pf->price < 48)
                         ++pf->price;
-                    std::string line = "SHOP WINDOW SUCCESS: " + toUpperAscii(cand.shortName) +
+                    std::string line = "SCOUT SPOTLIGHT SUCCESS: " + toUpperAscii(cand.shortName) +
                                        " shone (" + std::to_string(perf.goals) + "G " + std::to_string(perf.assists) +
                                        "A, rating " + std::to_string(static_cast<int>(perf.rating)) + "." +
                                        std::to_string(static_cast<int>(std::round(perf.rating * 10.0)) % 10) +

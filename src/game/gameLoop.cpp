@@ -379,7 +379,7 @@ static void drawFrame(bool recordingEnabled)
     if (recordingEnabled && !swos.g_trainingGame)
         captureTabloidMatchPhotoIfPending(xOffset, yOffset);
     drawPlayerName();
-    drawGameTime();
+    drawMatchScorebugToaster(xOffset, yOffset);
     drawLivePunditTicker();
     drawSupporterStreamOverlay(xOffset, yOffset);
     drawStatsIfNeeded();

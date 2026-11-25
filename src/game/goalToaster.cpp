@@ -1,6 +1,7 @@
 #include "goalToaster.h"
 #include "compactFont.h"
 #include "gameFieldMapping.h"
+#include "gameTime.h"
 #include "llmClient.h"
 #include "log.h"
 #include "render.h"
@@ -431,6 +432,148 @@ void updateAndDrawGoalToaster(float cameraXOffset, float cameraYOffset)
         float barH = std::max(2.0f, px * 0.85f);
         fillRectF(r, cardX + 4.0f, cardY + cardH - barH, (cardW - 8.0f) * remFrac, barH, goldCol);
     }
+
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+    SDL_RenderSetScale(r, origSX, origSY);
+#endif
+}
+
+static std::string makeBroadcastTeamTag(const char *teamName)
+{
+    if (!teamName || !teamName[0])
+        return "CLB";
+    std::string raw = toUpperAscii(teamName);
+    std::string letters;
+    for (char c : raw) {
+        if (c >= 'A' && c <= 'Z')
+            letters.push_back(c);
+        if (letters.size() >= 3)
+            break;
+    }
+    return letters.empty() ? "CLB" : letters;
+}
+
+void drawMatchScorebugToaster(float cameraXOffset, float cameraYOffset)
+{
+#ifdef SWOS_TEST
+    (void)cameraXOffset;
+    (void)cameraYOffset;
+    return;
+#else
+    if (!gameTimeShowing() || swos.g_trainingGame)
+        return;
+
+    SDL_Renderer *r = getRenderer();
+    SDL_Texture *atlas = r ? getCompactFontAtlas(r) : nullptr;
+    if (!r || !atlas)
+        return;
+
+    SDL_Rect vp = getViewport();
+    if (vp.w < 160 || vp.h < 100)
+        return;
+
+    // Brief gold flash whenever the score changes
+    static int s_lastG1 = -1;
+    static int s_lastG2 = -1;
+    static Uint32 s_scoreFlashTick = 0;
+    int g1 = swos.statsTeam1Goals;
+    int g2 = swos.statsTeam2Goals;
+    if (s_lastG1 >= 0 && (g1 != s_lastG1 || g2 != s_lastG2))
+        s_scoreFlashTick = SDL_GetTicks();
+    s_lastG1 = g1;
+    s_lastG2 = g2;
+
+    float origSX = 1.0f, origSY = 1.0f;
+    SDL_RenderGetScale(r, &origSX, &origSY);
+    SDL_RenderSetScale(r, 1.0f, 1.0f);
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+
+    float px = 1.0f;
+    if (vp.h >= 900)
+        px = std::clamp(std::floor(static_cast<float>(vp.h) / 500.0f + 0.5f), 2.0f, 4.0f);
+    else if (vp.h >= 540)
+        px = 1.5f;
+
+    std::string tag1 = makeBroadcastTeamTag(swos.topTeamInGame.teamName);
+    std::string tag2 = makeBroadcastTeamTag(swos.bottomTeamInGame.teamName);
+    std::string scoreStr = std::to_string(g1) + " - " + std::to_string(g2);
+    int curMin = static_cast<int>(gameTimeInMinutes());
+    std::string timeStr = swos.playingPenalties ? "PEN" : (std::to_string(curMin) + "'");
+
+    float pillH = std::max(18.0f, 15.0f * px);
+    float padX = 4.0f * px;
+    float pipW = 3.0f * px;
+    float tagW = 22.0f * px;
+    float scoreBoxW = std::max(26.0f * px, static_cast<float>(measureCompactTextUnits(scoreStr)) * (px * 0.96f) + 8.0f * px);
+    float timeBoxW = std::max(24.0f * px, static_cast<float>(measureCompactTextUnits(timeStr)) * (px * 0.92f) + 8.0f * px);
+    float pillW = padX + pipW + 2.0f * px + tagW + 3.0f * px + scoreBoxW + 3.0f * px + tagW + 2.0f * px + pipW + 3.0f * px + timeBoxW;
+
+    float margin = 6.0f * px;
+    float cardX = margin;
+    float cardY = margin;
+
+    // Auto-ghost subtly if the live ball passes underneath the top-left scorebug
+    float ghostMult = 1.0f;
+    if (swos.gameStatePl == GameState::kInProgress) {
+        float gameScale = std::max(1.0f, getGameScale());
+        float offX = getGameScreenOffsetX();
+        float offY = getGameScreenOffsetY();
+        float bx = offX + (swos.ballSprite.x.asFloat() - cameraXOffset) * gameScale;
+        float by = offY + (swos.ballSprite.y.asFloat() - cameraYOffset) * gameScale;
+        if (bx >= cardX - 18.0f && bx <= cardX + pillW + 18.0f &&
+            by >= cardY - 18.0f && by <= cardY + pillH + 18.0f) {
+            ghostMult = 0.30f;
+        }
+    }
+
+    Uint32 flashAge = SDL_GetTicks() - s_scoreFlashTick;
+    bool flashing = (s_scoreFlashTick != 0 && flashAge < 650u);
+    Uint8 uiAlpha = static_cast<Uint8>(255.0f * ghostMult);
+    Uint8 bgAlpha = static_cast<Uint8>(226.0f * ghostMult);
+
+    SDL_Color bgCol = flashing ? SDL_Color{ 46, 38, 16, bgAlpha } : SDL_Color{ 14, 18, 26, bgAlpha };
+    SDL_Color borderCol = flashing ? SDL_Color{ 255, 226, 86, uiAlpha } : SDL_Color{ 234, 198, 72, static_cast<Uint8>(200.0f * ghostMult) };
+    SDL_Color whiteCol{ 248, 250, 252, uiAlpha };
+    SDL_Color goldCol{ 255, 222, 76, uiAlpha };
+    SDL_Color darkInk{ 16, 18, 24, uiAlpha };
+    SDL_Color col1 = kitAccentRgb(static_cast<uint8_t>(swos.topTeamInGame.prShirtCol));
+    SDL_Color col2 = kitAccentRgb(static_cast<uint8_t>(swos.bottomTeamInGame.prShirtCol));
+    col1.a = uiAlpha;
+    col2.a = uiAlpha;
+
+    // Drop shadow + dark slate broadcast pill + top sheen + border
+    fillRectF(r, cardX + 2.0f, cardY + 2.5f, pillW, pillH, { 0, 0, 0, static_cast<Uint8>(135.0f * ghostMult) });
+    fillRectF(r, cardX, cardY, pillW, pillH, bgCol);
+    fillRectF(r, cardX + 2.0f, cardY + 1.0f, pillW - 4.0f, 1.0f, { 255, 255, 255, static_cast<Uint8>(44.0f * ghostMult) });
+    drawRectF(r, cardX, cardY, pillW, pillH, borderCol);
+
+    float cx = cardX + padX * 0.5f;
+    float textY = cardY + (pillH - 8.0f * px * 0.92f) * 0.5f;
+
+    // Team 1 kit pip + 3-letter code
+    fillRectF(r, cx, cardY + 2.5f * px, pipW, pillH - 5.0f * px, col1);
+    cx += pipW + 2.0f * px;
+    drawCompactTextCentered(r, atlas, cx + tagW * 0.5f, textY, px * 0.92f, tag1, whiteCol, uiAlpha, true);
+    cx += tagW + 3.0f * px;
+
+    // Center score inset box
+    fillRectF(r, cx, cardY + 1.5f * px, scoreBoxW, pillH - 3.0f * px, { 26, 34, 48, static_cast<Uint8>(240.0f * ghostMult) });
+    drawRectF(r, cx, cardY + 1.5f * px, scoreBoxW, pillH - 3.0f * px, { 92, 110, 134, static_cast<Uint8>(170.0f * ghostMult) });
+    drawCompactTextCentered(r, atlas, cx + scoreBoxW * 0.5f, textY - 0.5f, px * 0.96f, scoreStr, goldCol, uiAlpha, true);
+    cx += scoreBoxW + 3.0f * px;
+
+    // Team 2 3-letter code + kit pip
+    drawCompactTextCentered(r, atlas, cx + tagW * 0.5f, textY, px * 0.92f, tag2, whiteCol, uiAlpha, true);
+    cx += tagW + 2.0f * px;
+    fillRectF(r, cx, cardY + 2.5f * px, pipW, pillH - 5.0f * px, col2);
+    cx += pipW + 3.0f * px;
+
+    // Right gold/crimson minute badge
+    float remW = std::max(10.0f, (cardX + pillW) - cx);
+    fillRectF(r, cx, cardY + 1.0f, remW - 1.0f, pillH - 2.0f,
+        swos.playingPenalties ? SDL_Color{ 182, 34, 40, uiAlpha } : SDL_Color{ 230, 178, 32, uiAlpha });
+    drawCompactTextCentered(r, atlas, cx + remW * 0.5f, textY, px * 0.92f, timeStr,
+        swos.playingPenalties ? whiteCol : darkInk, uiAlpha, true);
 
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
     SDL_RenderSetScale(r, origSX, origSY);
