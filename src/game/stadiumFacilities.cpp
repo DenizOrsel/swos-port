@@ -1681,7 +1681,28 @@ static void drawFacilityPixelArt(
 
 #ifndef SWOS_TEST
     if (SDL_Texture *artTex = getFacilityArtTexture(r, mod, tier)) {
+        // Dark slate backdrop inside thumbnail frame so transparent isometric sprites pop crisply
+        SDL_SetRenderDrawColor(r, 18, 26, 38, 235);
+        SDL_FRect bgRc{ x, y, w, h };
+        SDL_RenderFillRectF(r, &bgRc);
+
+        // Preserve natural aspect ratio (e.g. 1:1 isometric stadium sprites vs 160x92 landscape icons)
+        int texW = 0, texH = 0;
         SDL_FRect dst{ x, y, w, h };
+        if (SDL_QueryTexture(artTex, nullptr, nullptr, &texW, &texH) == 0 && texW > 0 && texH > 0) {
+            float texAspect = static_cast<float>(texW) / static_cast<float>(texH);
+            float boxAspect = w / std::max(1.0f, h);
+            if (std::abs(texAspect - boxAspect) > 0.12f) {
+                if (texAspect < boxAspect) {
+                    float drawW = h * texAspect;
+                    dst = { x + (w - drawW) * 0.5f, y, drawW, h };
+                } else {
+                    float drawH = w / texAspect;
+                    dst = { x, y + (h - drawH) * 0.5f, w, drawH };
+                }
+            }
+        }
+        SDL_SetTextureBlendMode(artTex, SDL_BLENDMODE_BLEND);
         SDL_RenderCopyF(r, artTex, nullptr, &dst);
 
         if (isBuilding) {
