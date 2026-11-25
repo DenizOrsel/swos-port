@@ -1068,13 +1068,15 @@ void onPostMatchStadiumUpdate(bool isPlayedMatch)
             if (ofs + HotseatInternal::kPlayerFileSize > CareerOffsets::kCareerTeam + kCareerTeamBufferSize)
                 continue;
             auto *pf = reinterpret_cast<PlayerFile *>(&SwosVM::g_memByte[ofs]);
-            uint8_t prevInj = (s_preMatchInjuryBytes[slot] >> 4) & 0x0Fu;
-            uint8_t curInj = (pf->cardsInjuries >> 4) & 0x0Fu;
+            uint8_t prevCode = (s_preMatchInjuryBytes[slot] >> 5) & 0x07u;
+            uint8_t curCode = (pf->cardsInjuries >> 5) & 0x07u;
+            uint8_t prevInj = (prevCode >= 2) ? static_cast<uint8_t>(prevCode - 1) : uint8_t{ 0 };
+            uint8_t curInj = (curCode >= 2) ? static_cast<uint8_t>(curCode - 1) : uint8_t{ 0 };
             uint32_t roll = (medSeed + static_cast<uint32_t>(slot + 3) * 2654435761u) % 100u;
 
             if (curInj > prevInj) {
                 if (preventPct > 0 && static_cast<int>(roll) < preventPct) {
-                    pf->cardsInjuries = static_cast<uint8_t>(pf->cardsInjuries & 0x0Fu);
+                    pf->cardsInjuries = static_cast<uint8_t>(pf->cardsInjuries & 0x1Fu);
                     std::string note = std::string("KNOCK CLEARED: ") + pf->playerName +
                                        " cleared fit by Medical Lab (0 matches missed!)";
                     medicalNotes.push_back(note);
@@ -1082,7 +1084,8 @@ void onPostMatchStadiumUpdate(bool isPlayedMatch)
                 } else if (curInj > 1) {
                     uint8_t reduced = computeMedicalReducedInjuryDays(curInj, s_stadium.medicalLevel);
                     if (reduced < curInj) {
-                        pf->cardsInjuries = static_cast<uint8_t>((pf->cardsInjuries & 0x0Fu) | ((reduced & 0x0Fu) << 4));
+                        uint8_t redCode = (reduced > 0) ? static_cast<uint8_t>(std::min<int>(7, reduced + 1)) : uint8_t{ 0 };
+                        pf->cardsInjuries = static_cast<uint8_t>((pf->cardsInjuries & 0x1Fu) | ((redCode & 0x07u) << 5));
                         std::string note = std::string("INJURY SHORTENED: ") + pf->playerName +
                                            " recovery cut from " + std::to_string(curInj) +
                                            " to " + std::to_string(reduced) + " matches";
@@ -1092,7 +1095,8 @@ void onPostMatchStadiumUpdate(bool isPlayedMatch)
                 }
             } else if (prevInj > 1 && curInj > 1 && rehabPct > 0 && static_cast<int>(roll) < rehabPct) {
                 uint8_t faster = static_cast<uint8_t>(curInj - 1);
-                pf->cardsInjuries = static_cast<uint8_t>((pf->cardsInjuries & 0x0Fu) | ((faster & 0x0Fu) << 4));
+                uint8_t fastCode = (faster > 0) ? static_cast<uint8_t>(std::min<int>(7, faster + 1)) : uint8_t{ 0 };
+                pf->cardsInjuries = static_cast<uint8_t>((pf->cardsInjuries & 0x1Fu) | ((fastCode & 0x07u) << 5));
                 std::string note = std::string("REHAB BOOST: ") + pf->playerName +
                                    " ahead of schedule (-1 match -> " + std::to_string(faster) + " left)";
                 medicalNotes.push_back(note);
@@ -1947,10 +1951,34 @@ std::string formatStadiumContextForTelemetry()
         out += "; immaculate playing surface draws praise";
 
     if (s_stadium.activeProject.isActive) {
-        out += ". ONGOING STADIUM CONSTRUCTION: upgrading " +
-               std::string(getStadiumModuleName(s_stadium.activeProject.module)) + " to Level " +
-               std::to_string(s_stadium.activeProject.targetLevel) + " (" +
-               std::to_string(s_stadium.activeProject.matchesRemaining) + " matches remaining; cranes/work visible around the ground)";
+        std::string modName = getStadiumModuleName(s_stadium.activeProject.module);
+        std::string lvlStr = "Level " + std::to_string(s_stadium.activeProject.targetLevel) + " (" +
+                             std::to_string(s_stadium.activeProject.matchesRemaining) + " matches remaining)";
+        switch (s_stadium.activeProject.module) {
+        case StadiumModuleType::kCapacity:
+            out += ". ONGOING STADIUM STAND EXPANSION: expanding " + modName + " to " + lvlStr +
+                   " (stand construction around the ground)";
+            break;
+        case StadiumModuleType::kMedical:
+            out += ". ONGOING CLUB FACILITY UPGRADE: building a new Medical Center to " + lvlStr +
+                   " (rehab & injury-recovery wing — NOT stadium stand construction affecting matchday crowds)";
+            break;
+        case StadiumModuleType::kTraining:
+            out += ". ONGOING CLUB FACILITY UPGRADE: upgrading the Training Ground to " + lvlStr +
+                   " (training complex — NOT stadium stand construction affecting matchday crowds)";
+            break;
+        case StadiumModuleType::kPitch:
+            out += ". ONGOING PITCH UPGRADE: upgrading Pitch Quality to " + lvlStr +
+                   " (turf & drainage work — NOT stadium stand construction)";
+            break;
+        case StadiumModuleType::kCommercial:
+            out += ". ONGOING CLUB FACILITY UPGRADE: expanding Commercial Wing to " + lvlStr +
+                   " (hospitality & club shop — NOT stadium stand construction)";
+            break;
+        default:
+            out += ". ONGOING CLUB FACILITY UPGRADE: upgrading " + modName + " to " + lvlStr;
+            break;
+        }
     }
 
     if (s_matchTrackingActive) {
@@ -2007,10 +2035,12 @@ std::string getLiveStadiumAndFormStreamNote()
         }
     }
 
-    // 2. Ongoing construction project
+    // 2. Ongoing facility upgrade project (specific facility name so pundits/fans don't call medical/training "stadium stands")
     if (s_stadium.activeProject.isActive) {
-        hooks.push_back("Ongoing construction at " + std::string(s_stadium.stadiumName) + ": " +
-                        std::string(getStadiumModuleName(s_stadium.activeProject.module)) + " -> Lvl " +
+        std::string kind = (s_stadium.activeProject.module == StadiumModuleType::kCapacity)
+            ? ("Ongoing stand expansion at " + std::string(s_stadium.stadiumName))
+            : ("Ongoing club facility upgrade (" + std::string(getStadiumModuleName(s_stadium.activeProject.module)) + ")");
+        hooks.push_back(kind + " -> Lvl " +
                         std::to_string(s_stadium.activeProject.targetLevel) + " (" +
                         std::to_string(s_stadium.activeProject.matchesRemaining) + " matches left)");
     }

@@ -419,20 +419,23 @@ static const OfflinePressQuestionTemplate kOfflineQuestions[] = {
     { "DERBY", "Martin Tyler (Daily Sport)", "Derby day against {OPP}! The city is electric. What is your message to the fans before kickoff?" },
     { "DERBY", "Murat Kaya (Spor Gazetesi)", "Huge rivalry clash with {OPP} today. Can {CLUB} handle the heat on derby night?" },
     { "DERBY", "Claire Bennett (World Soccer)", "History weighs heavily whenever {CLUB} faces {OPP}. Who holds the psychological edge today?" },
-    { "FAVORITE", "Brian Moore (Matchday Echo)", "Everyone expects {CLUB} to sweep {OPP} aside today. Could complacency be your biggest rival?" },
-    { "FAVORITE", "David Coleman (BBC Sport)", "Your recent form has fans expecting goals against {OPP}. Will {CLUB} go all-out attack?" },
-    { "UNDERDOG", "John Motson (Match of the Day)", "Pundits are writing {CLUB} off against {OPP}. How do you plan to spring an upset today?" },
-    { "UNDERDOG", "Barry Davies (Sportsnight)", "It has been a tough run lately and now {OPP} await. What gives you belief today?" },
-    { "GENERAL", "Des Lynam (Grandstand)", "Ahead of {CLUB} versus {OPP}, what will be the decisive factor out on the pitch today?" },
-    { "GENERAL", "Hans Muller (Kicker 97)", "How have {CLUB} prepared tactically for {OPP}'s strengths ahead of kickoff?" },
+    { "FAVORITE", "Brian Moore (Matchday Echo)", "Everyone expects {CLUB} to sweep {OPP} aside today. How do you plan to break down a deep defence?" },
+    { "FAVORITE", "David Coleman (BBC Sport)", "Your recent form has fans expecting goals against {OPP}. What is your tactical gameplan for today?" },
+    { "FAVORITE", "Des Lynam (Grandstand)", "Give us your general thoughts ahead of {CLUB} vs {OPP} — where will this match be won and lost?" },
+    { "UNDERDOG", "John Motson (Match of the Day)", "Pundits are writing {CLUB} off against {OPP}. Will you sit compact and counter, or press high today?" },
+    { "UNDERDOG", "Barry Davies (Sportsnight)", "Tough test against {OPP} today. What tactical adjustments have you worked on to spring an upset?" },
+    { "GENERAL", "Des Lynam (Grandstand)", "Ahead of {CLUB} versus {OPP}, give us your overall thoughts on the clash and your tactical approach." },
+    { "GENERAL", "Hans Muller (Kicker 97)", "How have {CLUB} prepared tactically for {OPP}'s midfield and attack ahead of kickoff?" },
+    { "GENERAL", "Martin Tyler (Daily Sport)", "What key battles on the pitch are you focusing on today against {OPP}?" },
     // Post-match
-    { "CONFIDENT_BACKFIRE", "Martin Tyler (Daily Sport)", "You talked big before kickoff, yet {CLUB} fell {SCORE} to {OPP}. Do you regret those bold words?" },
-    { "CONFIDENT_VINDICATED", "John Motson (Match of the Day)", "You backed your side before kickoff and delivered {SCORE} against {OPP}! How proud are you?" },
-    { "BIG_WIN", "Des Lynam (Grandstand)", "A ruthless {SCORE} victory over {OPP}! Was that the finest display of your reign at {CLUB}?" },
-    { "NARROW_WIN", "Brian Moore (Matchday Echo)", "A hard-fought {SCORE} win over {OPP}. What pleased you most about {CLUB}'s mentality today?" },
-    { "DRAW", "Claire Bennett (World Soccer)", "Honours even at {SCORE} against {OPP}. Does that feel like a point gained or two dropped?" },
-    { "NARROW_LOSS", "David Coleman (BBC Sport)", "Frustration as {OPP} edge {CLUB} {SCORE}. What went wrong for your side out there?" },
-    { "HEAVY_LOSS", "Murat Kaya (Spor Gazetesi)", "A chastening {SCORE} defeat to {OPP}. The supporters look stunned - what do you say to them?" },
+    { "CONFIDENT_BACKFIRE", "Martin Tyler (Daily Sport)", "You talked big before kickoff, yet {CLUB} fell {SCORE} to {OPP}. Tactically, where did it unravel?" },
+    { "CONFIDENT_VINDICATED", "John Motson (Match of the Day)", "You backed your side before kickoff and delivered {SCORE} against {OPP}! What worked best tactically?" },
+    { "BIG_WIN", "Des Lynam (Grandstand)", "A ruthless {SCORE} victory over {OPP}! Give us your overall assessment of that display and your gameplan." },
+    { "BIG_WIN", "Hans Muller (Kicker 97)", "Clinical {SCORE} win against {OPP}. Which tactical phase — pressing, wing play, or finishing — pleased you most?" },
+    { "NARROW_WIN", "Brian Moore (Matchday Echo)", "A hard-fought {SCORE} win over {OPP}. What are your general thoughts on the performance and tactical discipline?" },
+    { "DRAW", "Claire Bennett (World Soccer)", "Honours even at {SCORE} against {OPP}. Give us your thoughts on the match — did your tactics deserve more?" },
+    { "NARROW_LOSS", "David Coleman (BBC Sport)", "Frustration as {OPP} edge {CLUB} {SCORE}. Tactically, what needs to change before the next fixture?" },
+    { "HEAVY_LOSS", "Murat Kaya (Spor Gazetesi)", "A tough {SCORE} defeat to {OPP}. Give us your honest assessment — where did {CLUB} lose control of the match?" },
 };
 
 const char *pickOfflineCategory(const PressMatchContext& ctx)
@@ -503,8 +506,12 @@ std::string buildTelemetryDossierBlock(const PressMatchContext& ctx)
 std::string buildPressQuestionPrompt(const PressMatchContext& ctx)
 {
     std::string p = buildTelemetryDossierBlock(ctx);
-    p += "\nAsk ONE sharp, realistic, grounded 1997 football press conference question based directly on the real telemetry above "
-         "(e.g., last 5 form, top scorers, match scorers/assisters, long-range goals, possession, sponsor challenges, stadium, or quoting the manager's own pre-match words).\n"
+    p += "\nAsk ONE sharp, realistic, grounded 1997 football press conference question based directly on the real telemetry above.\n"
+         "FOCUS PREFERENCE (strongly prioritize these):\n"
+         "1. Tactical match-related questions (gameplan, pressing, midfield control, wing play, finishing/shots, defensive solidity, key scorers/assisters, or countering the opponent) OR\n"
+         "2. Open-ended general matchday comment requests inviting the manager's overall assessment of the upcoming clash / match performance.\n"
+         "FACILITY ACCURACY RULE: Only mention a club facility upgrade occasionally, and ONLY by its exact name (e.g. Medical Center -> injury recovery, Training Ground -> fitness/skills). "
+         "NEVER call a Medical Center, Training Ground, or Commercial upgrade 'stadium construction' affecting matchday crowds!\n"
          "Never invent players or goals that are not in the data above.\n"
          "Output STRICTLY 1 pipe-delimited line and NOTHING ELSE (no markdown, no numbering):\n"
          "JOURNALIST_NAME_AND_PAPER|QUESTION (max 165 chars)";

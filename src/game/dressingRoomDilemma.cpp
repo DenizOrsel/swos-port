@@ -257,7 +257,8 @@ std::vector<CareerSquadEntry> scanCareerSquad(const TeamGame *humanTeam)
         e.name = std::move(nm);
         e.pos = playerPosLabelFromByte(pf->positionAndFace);
         e.price = pf->price;
-        e.injMatches = (pf->cardsInjuries >> 4) & 0x0Fu;
+        uint8_t injCode = (pf->cardsInjuries >> 5) & 0x07u;
+        e.injMatches = (injCode >= 2) ? static_cast<uint8_t>(injCode - 1) : uint8_t{ 0 };
         e.isStarter = (i < 11);
         if (humanTeam) {
             for (int k = 0; k < kNumPlayersInTeam; ++k) {
@@ -758,8 +759,9 @@ static std::string resolveDilemmaChoice(
             for (const auto& e : squad) {
                 if (e.injMatches > 0) {
                     if (PlayerFile *pf = playerFileAtSlot(e.slot)) {
-                        uint8_t nextInj = static_cast<uint8_t>(e.injMatches - 1);
-                        pf->cardsInjuries = static_cast<uint8_t>((pf->cardsInjuries & 0x0Fu) | ((nextInj & 0x0Fu) << 4));
+                        uint8_t nextInj = (e.injMatches > 0) ? static_cast<uint8_t>(e.injMatches - 1) : uint8_t{ 0 };
+                        uint8_t nextCode = (nextInj > 0) ? static_cast<uint8_t>(std::min<int>(7, nextInj + 1)) : uint8_t{ 0 };
+                        pf->cardsInjuries = static_cast<uint8_t>((pf->cardsInjuries & 0x1Fu) | ((nextCode & 0x07u) << 5));
                         ++healed;
                     }
                 }
@@ -776,7 +778,7 @@ static std::string resolveDilemmaChoice(
                 for (const auto& e : squad) {
                     if (e.injMatches == 0 && e.pos != "GK") {
                         if (PlayerFile *pf = playerFileAtSlot(e.slot)) {
-                            pf->cardsInjuries = static_cast<uint8_t>((pf->cardsInjuries & 0x0Fu) | (1u << 4));
+                            pf->cardsInjuries = static_cast<uint8_t>((pf->cardsInjuries & 0x1Fu) | (2u << 5));
                             knockNote = " (Setback: " + toUpperAscii(e.name) + " tweaked a hamstring - 1 match).";
                             break;
                         }

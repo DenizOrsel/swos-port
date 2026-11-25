@@ -239,7 +239,11 @@ void scanCareerInjuriesAndSpotlight(const TeamGame *humanTeam)
         std::string nm = cleanName(pf->playerName, sizeof(pf->playerName));
         if (nm.empty() || nm.rfind("*ERR*", 0) == 0)
             continue;
-        uint8_t injMatches = (pf->cardsInjuries >> 4) & 0x0Fu;
+        // SWOS PlayerFile::cardsInjuries bit layout (swos.asm):
+        //   bits 7..5 (& 0xE0): injury code (0=healthy, 1=minor knock/playable, 2..7=sidelined 1..6 matches)
+        //   bits 4..2 (& 0x1C): league cards/suspensions; bits 1..0 (& 0x03): cup suspensions
+        uint8_t injCode = (pf->cardsInjuries >> 5) & 0x07u;
+        uint8_t injMatches = (injCode >= 2) ? static_cast<uint8_t>(injCode - 1) : uint8_t{ 0 };
         if (injMatches > 0) {
             if (!s_session.injured.valid || pf->price > s_session.injured.priceTier) {
                 s_session.injured.valid = true;
@@ -316,7 +320,8 @@ bool applyEmergencyPhysioTreatment(std::string& outFeedback)
         return false;
 
     auto *pf = reinterpret_cast<PlayerFile *>(&SwosVM::g_memByte[ofs]);
-    uint8_t curInj = (pf->cardsInjuries >> 4) & 0x0Fu;
+    uint8_t curCode = (pf->cardsInjuries >> 5) & 0x07u;
+    uint8_t curInj = (curCode >= 2) ? static_cast<uint8_t>(curCode - 1) : uint8_t{ 0 };
     if (curInj == 0)
         return false;
 
@@ -324,7 +329,7 @@ bool applyEmergencyPhysioTreatment(std::string& outFeedback)
     inj.applied = true;
 
     if (inj.isPainkiller) {
-        pf->cardsInjuries = static_cast<uint8_t>(pf->cardsInjuries & 0x0Fu);
+        pf->cardsInjuries = static_cast<uint8_t>(pf->cardsInjuries & 0x1Fu);
         // Also clear live TeamGame injury flag if the player is in the match squad
         TeamGame& myTg = s_session.humanIsTeam1 ? swos.topTeamInGame : swos.bottomTeamInGame;
         for (int i = 0; i < kNumPlayersInTeam; ++i) {
@@ -343,7 +348,8 @@ bool applyEmergencyPhysioTreatment(std::string& outFeedback)
             inj.playerName.c_str(), inj.treatmentCost, inj.aggravationRiskPct);
     } else {
         uint8_t nextInj = (curInj > 2) ? static_cast<uint8_t>(curInj - 2) : uint8_t{ 1 };
-        pf->cardsInjuries = static_cast<uint8_t>((pf->cardsInjuries & 0x0Fu) | ((nextInj & 0x0Fu) << 4));
+        uint8_t nextCode = static_cast<uint8_t>(std::min<int>(7, nextInj + 1));
+        pf->cardsInjuries = static_cast<uint8_t>((pf->cardsInjuries & 0x1Fu) | ((nextCode & 0x07u) << 5));
         outFeedback = "REHAB BOOST: " + inj.playerName + " CUT " + std::to_string(curInj) +
                       "M -> " + std::to_string(nextInj) + "M!";
         logInfo("Pre-Match Physio: Intensive Rehab shortened %s injury %u -> %u matches (-%d GBP)",
@@ -1113,9 +1119,11 @@ void onMatchFinishedPreMatchAssistant()
                          static_cast<size_t>(s_session.plan.painkillerCareerSlot) * HotseatInternal::kPlayerFileSize;
             if (ofs + HotseatInternal::kPlayerFileSize <= CareerOffsets::kCareerTeam + kCareerTeamBufferSize) {
                 auto *pf = reinterpret_cast<PlayerFile *>(&SwosVM::g_memByte[ofs]);
-                uint8_t curInj = (pf->cardsInjuries >> 4) & 0x0Fu;
-                uint8_t nextInj = std::min<uint8_t>(15, static_cast<uint8_t>(curInj + 2));
-                pf->cardsInjuries = static_cast<uint8_t>((pf->cardsInjuries & 0x0Fu) | ((nextInj & 0x0Fu) << 4));
+                uint8_t curCode = (pf->cardsInjuries >> 5) & 0x07u;
+                uint8_t curInj = (curCode >= 2) ? static_cast<uint8_t>(curCode - 1) : uint8_t{ 0 };
+                uint8_t nextInj = std::min<uint8_t>(6, static_cast<uint8_t>(curInj + 2));
+                uint8_t nextCode = static_cast<uint8_t>(std::min<int>(7, nextInj + 1));
+                pf->cardsInjuries = static_cast<uint8_t>((pf->cardsInjuries & 0x1Fu) | ((nextCode & 0x07u) << 5));
                 s_session.postMatchPayoffLines.push_back(
                     "PAINKILLER SETBACK: " + toUpperAscii(s_session.plan.painkillerPlayerName) +
                     " aggravated the knock post-match (out " + std::to_string(nextInj) + " matches).");

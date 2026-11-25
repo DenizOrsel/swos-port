@@ -296,7 +296,7 @@ void enqueueSupporterBatchRequest(const char *triggerContext)
                             "Use natural sentence case. Output strictly HANDLE|SIDE|MESSAGE lines only.";
 
     // Cap live chat token budget at 360 so large ai.ini maxTokens (e.g. 2500) never slows live stream startup
-    s_streamRequestId = enqueueLlmRequest(sys, prompt, 360);
+    s_streamRequestId = enqueueLlmRequest(sys, prompt, 720);
     s_requestAgeFrames = 0;
     s_cooldownFrames = 240; // ~4s minimum spacing between requests
     s_ambientTimerFrames = std::max(5, cfg.telemetry.streamUpdateSeconds) * 60;
