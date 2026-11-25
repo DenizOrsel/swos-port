@@ -211,6 +211,10 @@ def collectEngineFiles(args: argparse.Namespace, files: dict[str, PackageFile]) 
     if whisperDir.is_dir():
         addTree(files, whisperDir, "whisper")
 
+    kbFile = ROOT / "docs" / "features" / "swos_1996_97_european_football_knowledge_base.md"
+    if kbFile.is_file():
+        addFile(files, kbFile, "docs/features/swos_1996_97_european_football_knowledge_base.md")
+
     if args.includeSymbols:
         pdb = exe.with_suffix(".pdb")
         addFile(files, requireFile(pdb, "Release symbols"), pdb.name)
@@ -392,6 +396,8 @@ timeoutMs = 10000
 maxTokens = 1200
 temperature = 0.850000
 think = false
+useKnowledgeBase = true
+knowledgeBasePath = docs\\features\\swos_1996_97_european_football_knowledge_base.md
 
 [features]
 postMatchNewspaper = true

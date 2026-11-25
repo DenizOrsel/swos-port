@@ -1656,6 +1656,29 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
             assertEqual(extractWhisperTextFromJsonOrPlain("[00:00:00.000 --> 00:00:02.500]  Gautieri was unstoppable! [BLANK_AUDIO]"),
                 std::string("Gautieri was unstoppable!"));
         }
+
+        // 1996/97 European Football Knowledge Base loading & prompt prefix injection
+        {
+            const char *tmpKb = "tmp_test_kb_9697.md";
+            {
+                std::ofstream kout(tmpKb, std::ios::trunc);
+                kout << "# 1996/97 KB\nBorussia Dortmund won the 1997 Champions League.\n";
+            }
+            assertTrue(reloadLlmKnowledgeBase(tmpKb));
+            assertTrue(getLoadedLlmKnowledgeBase().find("Borussia Dortmund") != std::string::npos);
+
+            LlmConfig kbCfg = prevCfg;
+            kbCfg.useKnowledgeBase = true;
+            std::string withKb = buildLlmChatPayload(kbCfg, "Role prompt", "User prompt");
+            assertTrue(withKb.find("Borussia Dortmund won the 1997 Champions League") != std::string::npos);
+
+            kbCfg.useKnowledgeBase = false;
+            std::string withoutKb = buildLlmChatPayload(kbCfg, "Role prompt", "User prompt");
+            assertTrue(withoutKb.find("Borussia Dortmund won the 1997 Champions League") == std::string::npos);
+
+            std::remove(tmpKb);
+            reloadLlmKnowledgeBase();
+        }
     }
 
     setLlmTransportForTest(nullptr);

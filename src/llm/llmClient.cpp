@@ -107,6 +107,8 @@ void writeAiIni(const std::string& path, const LlmConfig& cfg)
     ini.SetLongValue("llm", "maxTokens", cfg.maxTokens);
     ini.SetDoubleValue("llm", "temperature", cfg.temperature);
     ini.SetBoolValue("llm", "think", cfg.think);
+    ini.SetBoolValue("llm", "useKnowledgeBase", cfg.useKnowledgeBase);
+    ini.SetValue("llm", "knowledgeBasePath", cfg.knowledgeBasePath.c_str());
 
     ini.SetBoolValue("features", "postMatchNewspaper", cfg.features.postMatchNewspaper);
     ini.SetBoolValue("features", "preMatchScouting", cfg.features.preMatchScouting);
@@ -431,10 +433,12 @@ bool loadLlmConfig(const char *iniPath /* = nullptr */)
 {
     std::string resolvedPath = iniPath ? std::string(iniPath) : pathInRootDir(kAiIniFilename);
 
-    std::lock_guard<std::mutex> lock(s_configMutex);
+    std::unique_lock<std::mutex> lock(s_configMutex);
     s_config = LlmConfig{};
 
     if (!fileExists(resolvedPath.c_str())) {
+        lock.unlock();
+        reloadLlmKnowledgeBase();
         return false;
     }
 
@@ -458,6 +462,10 @@ bool loadLlmConfig(const char *iniPath /* = nullptr */)
     s_config.maxTokens = std::clamp(static_cast<int>(ini.GetLongValue("llm", "maxTokens", s_config.maxTokens)), 16, 8192);
     s_config.temperature = static_cast<float>(std::clamp(ini.GetDoubleValue("llm", "temperature", s_config.temperature), 0.0, 2.0));
     s_config.think = ini.GetBoolValue("llm", "think", s_config.think);
+    s_config.useKnowledgeBase = ini.GetBoolValue("llm", "useKnowledgeBase", s_config.useKnowledgeBase);
+    s_config.knowledgeBasePath = trimCopy(ini.GetValue("llm", "knowledgeBasePath", s_config.knowledgeBasePath.c_str()));
+    if (s_config.knowledgeBasePath.empty())
+        s_config.knowledgeBasePath = "docs\\features\\swos_1996_97_european_football_knowledge_base.md";
 
     s_config.features.postMatchNewspaper = ini.GetBoolValue("features", "postMatchNewspaper", s_config.features.postMatchNewspaper);
     s_config.features.preMatchScouting = ini.GetBoolValue("features", "preMatchScouting", s_config.features.preMatchScouting);
@@ -512,7 +520,86 @@ bool loadLlmConfig(const char *iniPath /* = nullptr */)
     logInfo("Loaded LLM config (%s, provider=%s, model=%s, enabled=%s)",
         resolvedPath.c_str(), providerToString(s_config.provider), s_config.model.c_str(),
         s_config.enabled ? "true" : "false");
+    lock.unlock();
+    reloadLlmKnowledgeBase();
     return true;
+}
+
+namespace {
+std::string s_knowledgeBaseText;
+constexpr size_t kMaxKnowledgeBaseBytes = 32768;
+
+bool readFileToStringBounded(const std::string& path, std::string& out)
+{
+    FILE *fp = nullptr;
+    if (fopen_s(&fp, path.c_str(), "rb") != 0 || !fp)
+        return false;
+    std::fseek(fp, 0, SEEK_END);
+    long sz = std::ftell(fp);
+    std::fseek(fp, 0, SEEK_SET);
+    if (sz <= 0) {
+        std::fclose(fp);
+        return false;
+    }
+    size_t toRead = std::min<size_t>(static_cast<size_t>(sz), kMaxKnowledgeBaseBytes);
+    out.resize(toRead);
+    size_t rd = std::fread(out.data(), 1, toRead, fp);
+    std::fclose(fp);
+    out.resize(rd);
+    // Strip UTF-8 BOM if present
+    if (out.size() >= 3 &&
+        static_cast<unsigned char>(out[0]) == 0xEF &&
+        static_cast<unsigned char>(out[1]) == 0xBB &&
+        static_cast<unsigned char>(out[2]) == 0xBF) {
+        out.erase(0, 3);
+    }
+    return !out.empty();
+}
+} // namespace
+
+bool reloadLlmKnowledgeBase(const char *overridePath)
+{
+    std::string cfgPath;
+    {
+        std::lock_guard<std::mutex> lock(s_configMutex);
+        cfgPath = overridePath ? std::string(overridePath) : s_config.knowledgeBasePath;
+    }
+
+    std::vector<std::string> candidates;
+    if (!cfgPath.empty()) {
+        candidates.push_back(cfgPath);
+        candidates.push_back(pathInRootDir(cfgPath.c_str()));
+    }
+    candidates.push_back(pathInRootDir("docs\\features\\swos_1996_97_european_football_knowledge_base.md"));
+    candidates.push_back("docs\\features\\swos_1996_97_european_football_knowledge_base.md");
+    candidates.push_back(pathInRootDir("swos_1996_97_european_football_knowledge_base.md"));
+
+    std::string loaded;
+    std::string foundAt;
+    for (const auto& c : candidates) {
+        if (!c.empty() && readFileToStringBounded(c, loaded)) {
+            foundAt = c;
+            break;
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(s_configMutex);
+        s_knowledgeBaseText = std::move(loaded);
+    }
+
+    if (!foundAt.empty()) {
+        logInfo("Loaded 1996/97 LLM knowledge base (%zu bytes) from %s", s_knowledgeBaseText.size(), foundAt.c_str());
+        return true;
+    }
+    logWarn("1996/97 LLM knowledge base file not found (searched %s)", cfgPath.c_str());
+    return false;
+}
+
+const std::string& getLoadedLlmKnowledgeBase()
+{
+    std::lock_guard<std::mutex> lock(s_configMutex);
+    return s_knowledgeBaseText;
 }
 
 bool saveLlmConfig(const char *iniPath /* = nullptr */)
@@ -664,7 +751,24 @@ std::string buildLlmChatPayload(const LlmConfig& cfg, const std::string& systemP
         json += "\"max_tokens\":" + std::to_string(cfg.maxTokens) + ",\"temperature\":" + numBuf + ",";
     }
     std::string effectiveLang = cfg.language.empty() ? "English" : cfg.language;
-    std::string effectiveSystem = systemPrompt;
+    std::string effectiveSystem;
+    if (cfg.useKnowledgeBase) {
+        std::string kbCopy;
+        {
+            std::lock_guard<std::mutex> lock(s_configMutex);
+            kbCopy = s_knowledgeBaseText;
+        }
+        if (!kbCopy.empty()) {
+            // Placed first as a stable KV-cache prefix so Ollama evaluates the 1996/97 world bible once and reuses it across calls!
+            effectiveSystem += "=== 1996/97 EUROPEAN FOOTBALL WORLD KNOWLEDGE BASE ===\n";
+            effectiveSystem += "Fully embrace this 1996/97 European football world in your voice, tactical vocabulary, club/player references, and banter. "
+                               "Never reference events, tactics, or players from after May 1997. "
+                               "Always keep the live match telemetry and career save facts in the user prompt 100% accurate and never confuse historical clubs/scorers with the current match's actual teams/scorers.\n\n";
+            effectiveSystem += kbCopy;
+            effectiveSystem += "\n=== END 1996/97 KNOWLEDGE BASE ===\n\n";
+        }
+    }
+    effectiveSystem += systemPrompt;
     if (!cfg.systemInstruction.empty())
         effectiveSystem += " " + cfg.systemInstruction;
     effectiveSystem += " Always reply strictly in " + effectiveLang + ".";

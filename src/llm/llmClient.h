@@ -58,6 +58,8 @@ struct LlmConfig {
     int maxTokens = 1200;
     float temperature = 0.85f;
     bool think = false;
+    bool useKnowledgeBase = true;
+    std::string knowledgeBasePath = "docs\\features\\swos_1996_97_european_football_knowledge_base.md";
     LlmFeaturesConfig features;
     LlmTelemetryConfig telemetry;
     LlmVoiceConfig voice;
@@ -75,6 +77,8 @@ void initLlmClient();
 void shutdownLlmClient();
 bool loadLlmConfig(const char *iniPath = nullptr);
 bool saveLlmConfig(const char *iniPath = nullptr);
+bool reloadLlmKnowledgeBase(const char *overridePath = nullptr);
+const std::string& getLoadedLlmKnowledgeBase();
 void updateLlmConfig(const LlmConfig& cfg);
 const LlmConfig& getLlmConfig();
 void setLlmConfigForTest(const LlmConfig& cfg);
