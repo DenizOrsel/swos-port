@@ -1703,6 +1703,26 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
             resetGoalToaster();
             assertFalse(isGoalToasterActive());
         }
+
+        // Press conference LLM CP parser regression: prefixed deltas ("CP +6") and positive tags with 0 must award CP!
+        {
+            PressMatchContext pctx;
+            pctx.phase = PressPhase::kPostMatch;
+            pctx.clubName = "BRIGHTON";
+            pctx.opponentName = "IPSWICH";
+            pctx.clubGoals = 3;
+            pctx.opponentGoals = 0;
+
+            auto evPrefixed = parseLlmFreeTextEvaluation(
+                "TACTICAL|CP +6|TACTICAL|Sharp tactical breakdown of the midfield press.",
+                "We pressed high in midfield and exploited the flanks well.", pctx);
+            assertEqual(static_cast<int>(evPrefixed.charismaDelta), 6);
+
+            auto evZeroPraise = parseLlmFreeTextEvaluation(
+                "TACTICAL|0|TACTICAL|Reporters praised your tactical adjustments.",
+                "We switched our pressing shape at half-time and controlled the match.", pctx);
+            assertTrue(evZeroPraise.charismaDelta >= 4);
+        }
     }
 
     setLlmTransportForTest(nullptr);

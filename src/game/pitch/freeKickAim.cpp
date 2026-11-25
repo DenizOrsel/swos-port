@@ -46,11 +46,15 @@ static bool isFreeKickGameState(GameState state)
         state == GameState::kFoul;
 }
 
-static void resetAimForBallPosition()
+static void resetAimForBallPosition(const TeamGeneralInfo *team)
 {
     float bx = swos.ballSprite.x.asFloat();
     float by = swos.ballSprite.y.asFloat();
-    bool attackingTop = (swos.cameraDirection == Direction::kTop) || (by <= kPitchCenterY);
+    // In SWOS, topTeamData ALWAYS attacks the bottom goal (Y=769) and bottomTeamData ALWAYS attacks the top goal (Y=129);
+    // SWOS swaps topTeamData/bottomTeamData automatically at half-time, so this is exact in both 1st and 2nd half!
+    bool attackingTop = team ? (team != &swos.topTeamData)
+                             : (swos.lastTeamPlayedBeforeBreak ? (swos.lastTeamPlayedBeforeBreak != &swos.topTeamData)
+                                                               : (swos.cameraDirection == Direction::kTop));
     float targetX = 334.0f;
     float targetY = attackingTop ? 129.0f : 769.0f;
 
@@ -108,7 +112,7 @@ void updateFreeKickAimInput(TeamGeneralInfo *team, GameControlEvents events)
 
     if (!m_aimInitialized || m_lastState != swos.gameState ||
         m_lastFoulX != swos.foulXCoordinate || m_lastFoulY != swos.foulYCoordinate) {
-        resetAimForBallPosition();
+        resetAimForBallPosition(team);
         m_lastState = swos.gameState;
         m_lastFoulX = swos.foulXCoordinate;
         m_lastFoulY = swos.foulYCoordinate;

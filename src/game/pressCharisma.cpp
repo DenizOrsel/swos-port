@@ -1642,11 +1642,50 @@ PressFreeTextEvaluation parseLlmFreeTextEvaluation(const std::string& rawLlmRepl
         out.detectedStance = parseStanceString(parts[0]);
         if (out.detectedStance == ManagerialStance::kNone)
             out.detectedStance = fallback.detectedStance;
-        int rawDelta = std::atoi(parts[1].c_str());
-        out.charismaDelta = static_cast<int8_t>(std::clamp(rawDelta, -12, 10));
+
+        // Parse first signed integer anywhere in parts[1] (handles "+6", "CP +6", "DELTA: +5", "-4", etc.)
+        int rawDelta = 0;
+        bool parsedInt = false;
+        const std::string& dStr = parts[1];
+        for (size_t i = 0; i < dStr.size(); ++i) {
+            char ch = dStr[i];
+            if (std::isdigit(static_cast<unsigned char>(ch)) ||
+                ((ch == '+' || ch == '-') && i + 1 < dStr.size() && std::isdigit(static_cast<unsigned char>(dStr[i + 1])))) {
+                rawDelta = std::atoi(dStr.c_str() + i);
+                parsedInt = true;
+                break;
+            }
+        }
         out.verdictTag = toUpperStr(sanitizePressField(parts[2], 18));
         if (out.verdictTag.empty())
             out.verdictTag = fallback.verdictTag;
+
+        // Guarantee praised replies never award 0 CP (and negative verdicts never silently become 0 CP)
+        auto isPositiveTag = [](const std::string& t) {
+            return t.find("TACTIC") != std::string::npos || t.find("CLASSY") != std::string::npos ||
+                   t.find("WITTY") != std::string::npos || t.find("INSPIR") != std::string::npos ||
+                   t.find("SHARP") != std::string::npos || t.find("SMART") != std::string::npos ||
+                   t.find("BRILLIANT") != std::string::npos || t.find("BOLD") != std::string::npos ||
+                   t.find("COMPOS") != std::string::npos || t.find("PASSION") != std::string::npos ||
+                   t.find("PRAIS") != std::string::npos || t.find("CLEVER") != std::string::npos;
+        };
+        auto isNegativeTag = [](const std::string& t) {
+            return t.find("DELUSION") != std::string::npos || t.find("HOSTIL") != std::string::npos ||
+                   t.find("RUDE") != std::string::npos || t.find("ARROG") != std::string::npos ||
+                   t.find("ABUS") != std::string::npos;
+        };
+        if (!parsedInt || (rawDelta == 0 && isPositiveTag(out.verdictTag))) {
+            if (isPositiveTag(out.verdictTag))
+                rawDelta = std::max<int>(4, fallback.charismaDelta);
+            else if (isNegativeTag(out.verdictTag))
+                rawDelta = std::min<int>(-4, fallback.charismaDelta);
+            else if (!parsedInt)
+                rawDelta = fallback.charismaDelta;
+        } else if (rawDelta == 0 && isNegativeTag(out.verdictTag)) {
+            rawDelta = std::min<int>(-4, fallback.charismaDelta);
+        }
+
+        out.charismaDelta = static_cast<int8_t>(std::clamp(rawDelta, -12, 10));
         out.mediaReaction = sanitizePressField(parts[3], 140);
         if (out.mediaReaction.empty())
             out.mediaReaction = fallback.mediaReaction;

@@ -1080,15 +1080,13 @@ void onMatchFinishedPreMatchAssistant()
                              static_cast<size_t>(cand.careerSlot) * HotseatInternal::kPlayerFileSize;
                 if (ofs + HotseatInternal::kPlayerFileSize <= CareerOffsets::kCareerTeam + kCareerTeamBufferSize) {
                     auto *pf = reinterpret_cast<PlayerFile *>(&SwosVM::g_memByte[ofs]);
-                    std::string oldVal = formatSwosPriceTier(pf->price);
                     if (pf->price < 48)
                         ++pf->price;
-                    std::string newVal = formatSwosPriceTier(pf->price);
                     std::string line = "SHOP WINDOW SUCCESS: " + toUpperAscii(cand.shortName) +
                                        " shone (" + std::to_string(perf.goals) + "G " + std::to_string(perf.assists) +
                                        "A, rating " + std::to_string(static_cast<int>(perf.rating)) + "." +
                                        std::to_string(static_cast<int>(std::round(perf.rating * 10.0)) % 10) +
-                                       ")! Market Value jumped " + oldVal + " -> " + newVal + "!";
+                                       ")! Market Value rose +1 SWOS tier!";
                     s_session.postMatchPayoffLines.push_back(line);
                     logInfo("%s", line.c_str());
 
