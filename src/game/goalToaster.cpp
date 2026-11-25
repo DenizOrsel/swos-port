@@ -4,7 +4,9 @@
 #include "gameTime.h"
 #include "llmClient.h"
 #include "log.h"
+#include "playerNameDisplay.h"
 #include "render.h"
+#include "stats.h"
 #include "swos.h"
 
 #include <algorithm>
@@ -500,7 +502,9 @@ void drawMatchScorebugToaster(float cameraXOffset, float cameraYOffset)
     int curMin = static_cast<int>(gameTimeInMinutes());
     std::string timeStr = swos.playingPenalties ? "PEN" : (std::to_string(curMin) + "'");
 
-    float pillH = std::max(18.0f, 15.0f * px);
+    float scoreRowH = std::max(18.0f, 15.0f * px);
+    float possRowH = std::max(11.0f, 9.0f * px);
+    float pillH = scoreRowH + possRowH;
     float padX = 4.0f * px;
     float pipW = 3.0f * px;
     float tagW = 22.0f * px;
@@ -508,11 +512,20 @@ void drawMatchScorebugToaster(float cameraXOffset, float cameraYOffset)
     float timeBoxW = std::max(24.0f * px, static_cast<float>(measureCompactTextUnits(timeStr)) * (px * 0.92f) + 8.0f * px);
     float pillW = padX + pipW + 2.0f * px + tagW + 3.0f * px + scoreBoxW + 3.0f * px + tagW + 2.0f * px + pipW + 3.0f * px + timeBoxW;
 
+    // Check active ball carrier so we can include the sub-toaster height in auto-ghost bounds
+    bool carrierIsTop = true;
+    int carrierNum = 0;
+    std::string carrierName;
+    bool hasCarrier = getCurrentBallCarrierInfo(carrierIsTop, carrierNum, carrierName);
+    float carrierGap = std::max(2.0f, 2.0f * px);
+    float carrierH = std::max(15.0f, 12.0f * px);
+    float totalHudH = pillH + (hasCarrier ? (carrierGap + carrierH) : 0.0f);
+
     float margin = 6.0f * px;
     float cardX = margin;
     float cardY = margin;
 
-    // Auto-ghost subtly if the live ball passes underneath the top-left scorebug
+    // Auto-ghost subtly if the live ball passes underneath the top-left scorebug or ball-carrier toaster
     float ghostMult = 1.0f;
     if (swos.gameStatePl == GameState::kInProgress) {
         float gameScale = std::max(1.0f, getGameScale());
@@ -521,7 +534,7 @@ void drawMatchScorebugToaster(float cameraXOffset, float cameraYOffset)
         float bx = offX + (swos.ballSprite.x.asFloat() - cameraXOffset) * gameScale;
         float by = offY + (swos.ballSprite.y.asFloat() - cameraYOffset) * gameScale;
         if (bx >= cardX - 18.0f && bx <= cardX + pillW + 18.0f &&
-            by >= cardY - 18.0f && by <= cardY + pillH + 18.0f) {
+            by >= cardY - 18.0f && by <= cardY + totalHudH + 18.0f) {
             ghostMult = 0.30f;
         }
     }
@@ -535,6 +548,7 @@ void drawMatchScorebugToaster(float cameraXOffset, float cameraYOffset)
     SDL_Color borderCol = flashing ? SDL_Color{ 255, 226, 86, uiAlpha } : SDL_Color{ 234, 198, 72, static_cast<Uint8>(200.0f * ghostMult) };
     SDL_Color whiteCol{ 248, 250, 252, uiAlpha };
     SDL_Color goldCol{ 255, 222, 76, uiAlpha };
+    SDL_Color mutedCol{ 178, 194, 214, uiAlpha };
     SDL_Color darkInk{ 16, 18, 24, uiAlpha };
     SDL_Color col1 = kitAccentRgb(static_cast<uint8_t>(swos.topTeamInGame.prShirtCol));
     SDL_Color col2 = kitAccentRgb(static_cast<uint8_t>(swos.bottomTeamInGame.prShirtCol));
@@ -548,32 +562,123 @@ void drawMatchScorebugToaster(float cameraXOffset, float cameraYOffset)
     drawRectF(r, cardX, cardY, pillW, pillH, borderCol);
 
     float cx = cardX + padX * 0.5f;
-    float textY = cardY + (pillH - 8.0f * px * 0.92f) * 0.5f;
+    float textY = cardY + (scoreRowH - 8.0f * px * 0.92f) * 0.5f;
 
     // Team 1 kit pip + 3-letter code
-    fillRectF(r, cx, cardY + 2.5f * px, pipW, pillH - 5.0f * px, col1);
+    fillRectF(r, cx, cardY + 2.5f * px, pipW, scoreRowH - 5.0f * px, col1);
     cx += pipW + 2.0f * px;
     drawCompactTextCentered(r, atlas, cx + tagW * 0.5f, textY, px * 0.92f, tag1, whiteCol, uiAlpha, true);
     cx += tagW + 3.0f * px;
 
     // Center score inset box
-    fillRectF(r, cx, cardY + 1.5f * px, scoreBoxW, pillH - 3.0f * px, { 26, 34, 48, static_cast<Uint8>(240.0f * ghostMult) });
-    drawRectF(r, cx, cardY + 1.5f * px, scoreBoxW, pillH - 3.0f * px, { 92, 110, 134, static_cast<Uint8>(170.0f * ghostMult) });
+    fillRectF(r, cx, cardY + 1.5f * px, scoreBoxW, scoreRowH - 3.0f * px, { 26, 34, 48, static_cast<Uint8>(240.0f * ghostMult) });
+    drawRectF(r, cx, cardY + 1.5f * px, scoreBoxW, scoreRowH - 3.0f * px, { 92, 110, 134, static_cast<Uint8>(170.0f * ghostMult) });
     drawCompactTextCentered(r, atlas, cx + scoreBoxW * 0.5f, textY - 0.5f, px * 0.96f, scoreStr, goldCol, uiAlpha, true);
     cx += scoreBoxW + 3.0f * px;
 
     // Team 2 3-letter code + kit pip
     drawCompactTextCentered(r, atlas, cx + tagW * 0.5f, textY, px * 0.92f, tag2, whiteCol, uiAlpha, true);
     cx += tagW + 2.0f * px;
-    fillRectF(r, cx, cardY + 2.5f * px, pipW, pillH - 5.0f * px, col2);
+    fillRectF(r, cx, cardY + 2.5f * px, pipW, scoreRowH - 5.0f * px, col2);
     cx += pipW + 3.0f * px;
 
-    // Right gold/crimson minute badge
+    // Right gold/crimson minute badge (spans score row)
     float remW = std::max(10.0f, (cardX + pillW) - cx);
-    fillRectF(r, cx, cardY + 1.0f, remW - 1.0f, pillH - 2.0f,
+    fillRectF(r, cx, cardY + 1.0f, remW - 1.0f, scoreRowH - 1.0f,
         swos.playingPenalties ? SDL_Color{ 182, 34, 40, uiAlpha } : SDL_Color{ 230, 178, 32, uiAlpha });
     drawCompactTextCentered(r, atlas, cx + remW * 0.5f, textY, px * 0.92f, timeStr,
         swos.playingPenalties ? whiteCol : darkInk, uiAlpha, true);
+
+    // Live Possession strip (bottom row of the Scorebug)
+    const GameStats matchStats = getStats();
+    int totalPoss = matchStats.team1.ballPossession + matchStats.team2.ballPossession;
+    int poss1Pct = (totalPoss > 0) ? (100 * matchStats.team1.ballPossession) / totalPoss : 50;
+    int poss2Pct = 100 - poss1Pct;
+
+    float possY = cardY + scoreRowH;
+    fillRectF(r, cardX + 1.0f, possY, pillW - 2.0f, possRowH - 1.0f, { 10, 14, 22, static_cast<Uint8>(232.0f * ghostMult) });
+    fillRectF(r, cardX + 1.0f, possY, pillW - 2.0f, 1.0f, { 64, 78, 98, static_cast<Uint8>(165.0f * ghostMult) });
+
+    float possPx = std::max(0.75f, px * 0.64f);
+    float possTextY = possY + (possRowH - 8.0f * possPx) * 0.5f;
+    std::string p1Str = std::to_string(poss1Pct) + "%";
+    std::string p2Str = std::to_string(poss2Pct) + "%";
+    std::string possLabel = "POSS";
+
+    float p1W = static_cast<float>(measureCompactTextUnits(p1Str)) * possPx;
+    float p2W = static_cast<float>(measureCompactTextUnits(p2Str)) * possPx;
+    float lblW = static_cast<float>(measureCompactTextUnits(possLabel)) * possPx;
+    float innerPad = 4.0f * px;
+
+    drawCompactText(r, atlas, cardX + innerPad, possTextY, possPx, possLabel, mutedCol, uiAlpha, false);
+    float p1X = cardX + innerPad + lblW + 3.0f * px;
+    drawCompactText(r, atlas, p1X, possTextY, possPx, p1Str, whiteCol, uiAlpha, true);
+    float p2X = cardX + pillW - innerPad - p2W;
+    drawCompactText(r, atlas, p2X, possTextY, possPx, p2Str, whiteCol, uiAlpha, true);
+
+    float barX = p1X + p1W + 3.5f * px;
+    float barRight = p2X - 3.5f * px;
+    float barW = barRight - barX;
+    if (barW >= 12.0f) {
+        float barH = std::max(3.0f, 3.0f * px);
+        float barY = possY + (possRowH - barH) * 0.5f;
+        float splitW = barW * (static_cast<float>(poss1Pct) / 100.0f);
+        fillRectF(r, barX, barY, barW, barH, { 24, 30, 42, uiAlpha });
+        if (splitW > 0.5f)
+            fillRectF(r, barX, barY, splitW, barH, col1);
+        if (barW - splitW > 0.5f)
+            fillRectF(r, barX + splitW, barY, barW - splitW, barH, col2);
+        drawRectF(r, barX, barY, barW, barH, { 92, 110, 134, static_cast<Uint8>(160.0f * ghostMult) });
+    }
+
+    // Distinct Ball-Carrier Toaster directly beneath the Scorebug (replaces legacy white top-left player text)
+    if (hasCarrier) {
+        float cY = cardY + pillH + carrierGap;
+        SDL_Color carrierKit = carrierIsTop ? col1 : col2;
+        const std::string& carrierTeamTag = carrierIsTop ? tag1 : tag2;
+        std::string numStr = "#" + std::to_string(carrierNum);
+        std::string upperName = toUpperAscii(carrierName);
+
+        float namePx = std::max(0.85f, px * 0.78f);
+        float tagPx = std::max(0.70f, px * 0.62f);
+        float numBoxW = std::max(18.0f * px, static_cast<float>(measureCompactTextUnits(numStr)) * namePx + 5.0f * px);
+        float teamTagW = static_cast<float>(measureCompactTextUnits(carrierTeamTag)) * tagPx + 5.0f * px;
+        float nameW = static_cast<float>(measureCompactTextUnits(upperName)) * namePx;
+        float carrierW = std::min(pillW, std::max(pillW * 0.66f, pipW + 3.0f * px + numBoxW + 4.0f * px + nameW + 5.0f * px + teamTagW + 4.0f * px));
+
+        // Slightly different deep teal-navy palette so it visually separates from the scorebug above
+        SDL_Color cBg{ 16, 30, 42, static_cast<Uint8>(224.0f * ghostMult) };
+        SDL_Color cBorder{ 84, 198, 232, static_cast<Uint8>(205.0f * ghostMult) };
+        SDL_Color cCyan{ 126, 234, 250, uiAlpha };
+
+        fillRectF(r, cardX + 2.0f, cY + 2.0f, carrierW, carrierH, { 0, 0, 0, static_cast<Uint8>(120.0f * ghostMult) });
+        fillRectF(r, cardX, cY, carrierW, carrierH, cBg);
+        fillRectF(r, cardX + 2.0f, cY + 1.0f, carrierW - 4.0f, 1.0f, { 130, 224, 255, static_cast<Uint8>(48.0f * ghostMult) });
+        drawRectF(r, cardX, cY, carrierW, carrierH, cBorder);
+
+        // Left kit-color vertical bar
+        fillRectF(r, cardX + 1.0f, cY + 1.0f, pipW, carrierH - 2.0f, carrierKit);
+
+        // Jersey number badge
+        float nx = cardX + 1.0f + pipW + 2.5f * px;
+        float nBadgeH = carrierH - 3.0f * px;
+        float nBadgeY = cY + 1.5f * px;
+        fillRectF(r, nx, nBadgeY, numBoxW, nBadgeH, { 26, 48, 66, static_cast<Uint8>(235.0f * ghostMult) });
+        drawRectF(r, nx, nBadgeY, numBoxW, nBadgeH, { 94, 178, 208, static_cast<Uint8>(170.0f * ghostMult) });
+        float cTextY = cY + (carrierH - 8.0f * namePx) * 0.5f;
+        drawCompactTextCentered(r, atlas, nx + numBoxW * 0.5f, cTextY, namePx, numStr, cCyan, uiAlpha, true);
+
+        // Player surname (auto-fit if very long)
+        float nameX = nx + numBoxW + 3.5f * px;
+        float maxNameW = std::max(12.0f, (cardX + carrierW - teamTagW - 3.5f * px) - nameX);
+        float fitNamePx = (nameW > maxNameW && nameW > 0.0f) ? std::max(0.65f, namePx * (maxNameW / nameW)) : namePx;
+        float fitNameY = cY + (carrierH - 8.0f * fitNamePx) * 0.5f;
+        drawCompactText(r, atlas, nameX, fitNameY, fitNamePx, upperName, whiteCol, uiAlpha, true);
+
+        // Right team 3-letter tag
+        float tTextY = cY + (carrierH - 8.0f * tagPx) * 0.5f;
+        drawCompactTextCentered(r, atlas, cardX + carrierW - teamTagW * 0.5f - 1.5f * px, tTextY, tagPx, carrierTeamTag, mutedCol, uiAlpha, false);
+    }
 
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
     SDL_RenderSetScale(r, origSX, origSY);

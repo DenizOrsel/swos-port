@@ -57,6 +57,11 @@ void updateCurrentPlayerName()
 
 void drawPlayerName()
 {
+    // During regular matches, the ball carrier is rendered in our modern broadcast toaster
+    // directly under the top-left scorebug (goalToaster.cpp). Keep legacy text only in training.
+    if (!swos.g_trainingGame)
+        return;
+
     if (m_playerOrdinal >= 0) {
         assert(m_playerOrdinal >= 0 && m_playerOrdinal <= 16);
 
@@ -68,6 +73,26 @@ void drawPlayerName()
 
         drawText(kPlayerNameX, kPlayerNameY, nameBuf);
     }
+}
+
+bool getCurrentBallCarrierInfo(bool& outIsTopTeam, int& outShirtNumber, std::string& outPlayerName)
+{
+    if (m_playerOrdinal < 0 || m_playerOrdinal > 16)
+        return false;
+
+    auto team = m_topTeam ? swos.topTeamPtr : swos.bottomTeamPtr;
+    if (!team)
+        return false;
+
+    const auto& player = team->players[m_playerOrdinal];
+    outIsTopTeam = m_topTeam;
+    outShirtNumber = player.shirtNumber;
+
+    A0 = player.shortName;
+    D0 = 0x4000 | 14;   // copy surname only, 14 characters max
+    ExtractSurname();
+    outPlayerName = A0.asPtr() ? A0.asPtr() : "";
+    return !outPlayerName.empty();
 }
 
 #ifdef SWOS_TEST
