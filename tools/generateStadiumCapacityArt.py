@@ -95,11 +95,11 @@ LEVELS: list[tuple[str, str]] = [
     ),
     (
         "capacity_9",
-        "Towering three-story triple-decker sci-fi anti-gravity hover-box football stadium grandstand on a solid grey concrete base (seats only, no pitch): "
-        "three distinct vertically stacked stadium seating decks (lower, middle, and upper tiers) of dark carbon-fiber seats with glowing cyan trim, "
-        "crowned by a detached floating anti-gravity luxury glass VIP skybox pod hovering visibly in mid-air above the top deck via glowing blue plasma thruster nodes underneath, "
-        "translucent hexagonal cyan energy barrier shields along the upper viewing decks, "
-        "docked robotic camera drones on the roof pylons, and twin vertical glowing cyan plasma light spires rising from the rear corners.",
+        "Single-sided cutaway three-story sci-fi anti-gravity football stadium grandstand section facing front-left on a square grey concrete base (one-sided stand only, sloped side profile visible on the right, NOT four-sided, NOT wrap-around): "
+        "three towering vertically stacked cantilevered stadium tiers (lower, middle, and upper decks), each deck built as steeply sloped stepped risers of dark carbon-fiber seats with glowing cyan trim rising sharply from front-left to back-right for clear match sightlines, "
+        "crowned at the top by a detached floating anti-gravity luxury glass VIP skybox pod hovering in mid-air above the upper seating tier via glowing blue plasma thruster nodes underneath, "
+        "translucent hexagonal cyan energy barrier panels along the upper tier edges, "
+        "docked robotic camera drones on the roof pylons, and twin vertical glowing cyan plasma light spires on the two rear corners.",
     ),
     (
         "capacity_10",
