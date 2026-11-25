@@ -630,9 +630,17 @@ static TabloidNewspaperEdition buildCurrentPlayedMatchTabloidMeta()
         meta.briefingBullets.push_back(sc);
     }
     std::string pressNote = formatPressContextForNewspaper();
-    if (!pressNote.empty() && meta.briefingBullets.size() < 3) {
-        if (pressNote.size() > 86) pressNote.resize(86);
+    if (!pressNote.empty() && meta.briefingBullets.size() < 4) {
+        if (pressNote.size() > 92) pressNote.resize(92);
         meta.briefingBullets.push_back(pressNote);
+    }
+    if (meta.briefingBullets.size() < 4) {
+        std::string statBullet = "Match Stats: Shots " + std::to_string(stats.team1.goalAttempts) + "-" +
+            std::to_string(stats.team2.goalAttempts) + " (On Target " +
+            std::to_string(stats.team1.onTarget) + "-" + std::to_string(stats.team2.onTarget) +
+            "), Possession " + std::to_string(poss1Pct) + "%-" + std::to_string(poss2Pct) +
+            "%, Corners " + std::to_string(stats.team1.cornersWon) + "-" + std::to_string(stats.team2.cornersWon) + ".";
+        meta.briefingBullets.push_back(statBullet);
     }
     return meta;
 }
@@ -686,12 +694,12 @@ void beginPostMatchNewspaperRequest()
     std::string pressNote = formatPressContextForNewspaper();
     if (!pressNote.empty())
         prompt += "\n" + pressNote;
-    prompt += "\nWrite a punchy 1996/97 British tabloid sports back page strictly in these 5 tagged lines:\n"
+    prompt += "\nWrite a rich, full 1996/97 British tabloid sports back page strictly in these 5 tagged lines:\n"
               "HEADLINE: <screaming 3-7 word tabloid banner headline referencing the actual result/hero>\n"
-              "SUBHEAD: <1 crisp sentence sub-headline under 90 chars>\n"
-              "CAPTION: <1 short 8-14 word newspaper caption describing the action photo moment above>\n"
-              "STORY: <3-4 vivid sentences summarizing the match using real scorers, shots, possession, and MOTM. Do NOT invent players, goals, or weather.>\n"
-              "CHAIRMAN: <1-2 expressive sentences in character from the human club's chairman reacting strictly to the actual WIN/LOSS/DRAW.>\n"
+              "SUBHEAD: <1 crisp sentence sub-headline under 95 chars>\n"
+              "CAPTION: <1 vivid 10-16 word newspaper caption describing the action photo moment above>\n"
+              "STORY: <6-7 vivid, meaty tabloid sentences filling the back-page column: cover the match tempo, tactical battle, key goals/scorers, shots and possession balance, the Man of the Match's influence, and what this result means for the season ahead. Do NOT invent players, goals, or weather.>\n"
+              "CHAIRMAN: <2-3 expressive, characterful sentences from the human club's chairman reacting strictly to the actual WIN/LOSS/DRAW, crowd mood, and club ambition.>\n"
               "Plain text only, no markdown, no bullet points.";
 
     const std::string sys = "You are a witty, atmospheric 1996/97 British football back-page tabloid editor and expressive club chairman. "

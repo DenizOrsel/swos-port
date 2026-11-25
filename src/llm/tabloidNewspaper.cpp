@@ -34,6 +34,50 @@ namespace {
 constexpr int kPhotoWidth = 224;
 constexpr int kPhotoHeight = 140;
 
+#ifndef SWOS_TEST
+static SDL_Texture *getMotmPortraitTexture(SDL_Renderer *r, const TabloidMotmCard& motm)
+{
+    static SDL_Texture *s_portraits[4] = {};
+    static bool s_attempted[4] = {};
+    static SDL_Renderer *s_cachedRenderer = nullptr;
+    if (s_cachedRenderer != r) {
+        for (int i = 0; i < 4; ++i) {
+            if (s_portraits[i]) {
+                SDL_DestroyTexture(s_portraits[i]);
+                s_portraits[i] = nullptr;
+            }
+            s_attempted[i] = false;
+        }
+        s_cachedRenderer = r;
+    }
+
+    int idx = 0;
+    if (motm.pos == "GK") {
+        idx = 3; // motm_4.png = retro goalkeeper bust
+    } else {
+        uint32_t h = 2166136261u;
+        for (unsigned char c : motm.name)
+            h = (h ^ c) * 16777619u;
+        idx = static_cast<int>(h % 3u); // motm_1..3.png = varied 90s outfielder portraits
+    }
+
+    if (s_attempted[idx])
+        return s_portraits[idx];
+    s_attempted[idx] = true;
+
+    std::string rel = "assets/newspaper/motm_" + std::to_string(idx + 1) + ".png";
+    std::string full = pathInRootDir(rel.c_str());
+    SDL_Texture *tex = IMG_LoadTexture(r, full.c_str());
+    if (!tex)
+        tex = IMG_LoadTexture(r, rel.c_str());
+    if (tex) {
+        SDL_SetTextureScaleMode(tex, SDL_ScaleModeNearest);
+        s_portraits[idx] = tex;
+    }
+    return s_portraits[idx];
+}
+#endif
+
 struct CapturedMatchPhoto {
     bool valid = false;
     int priority = 0;
@@ -1223,8 +1267,8 @@ void showTabloidNewspaperModal(const TabloidNewspaperEdition& edition)
         float rightCurY = curY;
 
         // Reserve bottom space for Star Man Card + Briefing Strip
-        float motmH = edition.motm.valid ? std::max(34.0f, 25.0f * px) : 0.0f;
-        float briefH = edition.briefingBullets.empty() ? 0.0f : std::max(32.0f, (static_cast<float>(std::min<size_t>(3, edition.briefingBullets.size())) * 10.5f + 12.0f) * px * 0.82f);
+        float motmH = edition.motm.valid ? std::max(46.0f, 32.0f * px) : 0.0f;
+        float briefH = edition.briefingBullets.empty() ? 0.0f : std::max(36.0f, (static_cast<float>(std::min<size_t>(4, edition.briefingBullets.size())) * 10.2f + 12.0f) * px * 0.82f);
         float reservedBottom = (motmH > 0 ? motmH + 4.0f : 0.0f) + (briefH > 0 ? briefH + 4.0f : 0.0f);
         float storyMaxBottom = curY + bodyH - reservedBottom;
 
@@ -1277,7 +1321,7 @@ void showTabloidNewspaperModal(const TabloidNewspaperEdition& edition)
 #ifdef _WIN32
             if (rebuildSerif) {
                 std::string joined;
-                for (size_t i = 0; i < edition.briefingBullets.size() && i < 3; ++i) {
+                for (size_t i = 0; i < edition.briefingBullets.size() && i < 4; ++i) {
                     if (!joined.empty()) joined += "\n";
                     joined += "- " + edition.briefingBullets[i];
                 }
@@ -1293,7 +1337,7 @@ void showTabloidNewspaperModal(const TabloidNewspaperEdition& edition)
 #endif
             {
                 float bPx = px * 0.76f;
-                for (size_t i = 0; i < edition.briefingBullets.size() && i < 3; ++i) {
+                for (size_t i = 0; i < edition.briefingBullets.size() && i < 4; ++i) {
                     std::string bullet = "* " + edition.briefingBullets[i];
                     drawCompactText(r, atlas, rightX + 5.0f, lineY,
                         fitPx(bullet, bPx, rightW - 10.0f), bullet, inkCharcoal, 255, false);
@@ -1308,11 +1352,24 @@ void showTabloidNewspaperModal(const TabloidNewspaperEdition& edition)
             fillRectF(r, rightX, mY, rightW, motmH, motmBg);
             drawRectF(r, rightX, mY, rightW, motmH, inkBlack);
 
-            // Pixel SWOS footballer sprite on left of card
-            float sprUnit = std::max(1.0f, (motmH - 6.0f) / 16.0f);
-            drawPixelSwosPlayerSprite(r, rightX + 5.0f, mY + 3.0f, sprUnit, edition.motm.kit, true);
+            // SWOS-style pixel-art MOTM portrait bust (fallback to procedural SWOS kit sprite if PNG missing)
+            float portraitSize = std::max(28.0f, motmH - 6.0f);
+            float portraitX = rightX + 4.0f;
+            float portraitY = mY + 3.0f;
+            float textX = portraitX + portraitSize + 6.0f;
+#ifndef SWOS_TEST
+            if (SDL_Texture *motmTex = getMotmPortraitTexture(r, edition.motm)) {
+                SDL_FRect pDst{ portraitX, portraitY, portraitSize, portraitSize };
+                fillRectF(r, portraitX - 1.0f, portraitY - 1.0f, portraitSize + 2.0f, portraitSize + 2.0f, inkBlack);
+                SDL_RenderCopyF(r, motmTex, nullptr, &pDst);
+            } else
+#endif
+            {
+                float sprUnit = std::max(1.0f, (motmH - 6.0f) / 16.0f);
+                drawPixelSwosPlayerSprite(r, rightX + 5.0f, mY + 3.0f, sprUnit, edition.motm.kit, true);
+                textX = rightX + 10.0f + 12.0f * sprUnit;
+            }
 
-            float textX = rightX + 10.0f + 12.0f * sprUnit;
             float textMaxW = std::max(30.0f, (rightX + rightW - 6.0f) - textX);
             drawCompactText(r, atlas, textX, mY + 3.5f, px * 0.76f, "STAR MAN (MOTM)", tabloidRedDark, 255, true);
 

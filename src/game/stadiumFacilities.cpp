@@ -1626,6 +1626,28 @@ static SDL_Texture *getFacilityArtTexture(SDL_Renderer *r, StadiumModuleType mod
     }
     return s_cache[mi][ti];
 }
+
+static SDL_Texture *getConstructionAnimFrame(SDL_Renderer *r, int frameIdx)
+{
+    constexpr int kNumFrames = 8;
+    static SDL_Texture *s_frames[kNumFrames] = {};
+    static bool s_attempted[kNumFrames] = {};
+    int idx = std::clamp(frameIdx, 0, kNumFrames - 1);
+    if (s_attempted[idx])
+        return s_frames[idx];
+    s_attempted[idx] = true;
+
+    std::string rel = "assets/facilities/construction_" + std::to_string(idx) + ".png";
+    std::string full = pathInRootDir(rel.c_str());
+    SDL_Texture *tex = IMG_LoadTexture(r, full.c_str());
+    if (!tex)
+        tex = IMG_LoadTexture(r, rel.c_str());
+    if (tex) {
+        SDL_SetTextureScaleMode(tex, SDL_ScaleModeNearest);
+        s_frames[idx] = tex;
+    }
+    return s_frames[idx];
+}
 #endif
 
 static void drawFacilityPixelArt(
@@ -1685,15 +1707,25 @@ static void drawFacilityPixelArt(
             }
         }
         SDL_SetTextureBlendMode(artTex, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureAlphaMod(artTex, isBuilding ? 155 : 255);
         SDL_RenderCopyF(r, artTex, nullptr, &dst);
+        SDL_SetTextureAlphaMod(artTex, 255);
 
         if (isBuilding) {
-            pxRect(19, 1.5f, 1.2f, 10.5f, 244, 196, 36);
-            pxRect(12, 1.5f, 12, 1.2f, 244, 196, 36);
-            pxRect(14, 2.7f, 0.8f, 3.5f, 42, 44, 48);
-            pxRect(13, 6.0f, 2.8f, 1.6f, 234, 144, 34);
-            if (((SDL_GetTicks() / 350) & 1) == 0)
-                pxRect(18.8f, 0.5f, 1.8f, 1.4f, 255, 76, 56);
+            int animFrame = static_cast<int>((SDL_GetTicks() / 150) % 8);
+            if (SDL_Texture *cTex = getConstructionAnimFrame(r, animFrame)) {
+                SDL_FRect cDst = dst;
+                SDL_SetTextureBlendMode(cTex, SDL_BLENDMODE_BLEND);
+                SDL_RenderCopyF(r, cTex, nullptr, &cDst);
+            } else {
+                // Fallback procedural crane if animation PNGs are absent
+                pxRect(19, 1.5f, 1.2f, 10.5f, 244, 196, 36);
+                pxRect(12, 1.5f, 12, 1.2f, 244, 196, 36);
+                pxRect(14, 2.7f, 0.8f, 3.5f, 42, 44, 48);
+                pxRect(13, 6.0f, 2.8f, 1.6f, 234, 144, 34);
+                if (((SDL_GetTicks() / 350) & 1) == 0)
+                    pxRect(18.8f, 0.5f, 1.8f, 1.4f, 255, 76, 56);
+            }
         }
 
         SDL_Color borderCol = isBuilding
