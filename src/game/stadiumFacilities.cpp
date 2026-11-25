@@ -37,6 +37,7 @@ using namespace StadiumFacilitiesMenu;
 namespace {
 
 constexpr uint8_t kMaxCapacityLevel = 10;
+constexpr uint8_t kMaxCommercialLevel = 10;
 constexpr uint8_t kMaxFacilityLevel = 5;
 
 constexpr std::array<uint32_t, 10> kCapacityByLevel = {
@@ -48,14 +49,22 @@ constexpr std::array<int32_t, 9> kCapacityUpgradeCosts = {
     200000, 450000, 900000, 1600000, 2600000, 4000000, 6000000, 8500000, 12000000
 };
 
-// Target level 2..5 upgrade cost in GBP for Pitch, Training, Medical, Commercial
+// Target level 2..10 upgrade cost in GBP for Commercial & VIP (10 distinct tiers)
+constexpr std::array<int32_t, 9> kCommercialUpgradeCosts = {
+    125000, 275000, 550000, 1100000, 1900000, 3000000, 4500000, 6500000, 9500000
+};
+
+// Target level 2..5 upgrade cost in GBP for Pitch, Training, Medical
 constexpr std::array<int32_t, 4> kFacilityUpgradeCosts = {
     125000, 275000, 550000, 1100000
 };
 
-// Realistic build duration (matches): Capacity L2..L10 (10..28 matches), Facilities L2..L5 (8..18 matches)
+// Realistic build duration (matches): Capacity/Commercial L2..L10, Facilities L2..L5
 constexpr std::array<uint8_t, 9> kCapacityBuildMatchesByTarget = {
     10, 12, 14, 16, 18, 20, 22, 25, 28
+};
+constexpr std::array<uint8_t, 9> kCommercialBuildMatchesByTarget = {
+    8, 10, 14, 18, 20, 22, 24, 26, 28
 };
 constexpr std::array<uint8_t, 4> kFacilityBuildMatchesByTarget = {
     8, 10, 14, 18
@@ -66,14 +75,14 @@ constexpr std::array<int32_t, 10> kStandUpkeepByLevel = {
     2000, 4500, 9500, 18000, 30000, 48000, 68000, 90000, 115000, 140000
 };
 
-// Guaranteed flat VIP corporate box baseline per home match (Div 4 base; scaled by division tier)
-constexpr std::array<int32_t, 5> kVipBaseBoxIncome = {
-    1500, 4000, 8000, 14000, 22000
+// Guaranteed flat VIP corporate box baseline per home match (Div 4 base; scaled by division tier, L1..L10)
+constexpr std::array<int32_t, 10> kVipBaseBoxIncome = {
+    1500, 4000, 8000, 14000, 22000, 32000, 44000, 58000, 75000, 95000
 };
 
-// Commercial/VIP bonus % applied on top of Career Sponsor Challenge & Contract payouts (L1..L5)
-constexpr std::array<int, 5> kCommercialSponsorBonusPct = {
-    0, 8, 15, 22, 30
+// Commercial/VIP bonus % applied on top of Career Sponsor Challenge & Contract payouts (L1..L10)
+constexpr std::array<int, 10> kCommercialSponsorBonusPct = {
+    0, 8, 15, 22, 30, 38, 46, 54, 62, 70
 };
 
 // Medical Center injury prevention % (new knocks turned into 0-match minor knocks) & weekly rehab boost % (L1..L5)
@@ -279,7 +288,7 @@ void setModuleLevel(StadiumData& s, StadiumModuleType mod, uint8_t lvl)
         s.medicalLevel = std::clamp<uint8_t>(lvl, 1, kMaxFacilityLevel);
         break;
     case StadiumModuleType::kCommercial:
-        s.commercialLevel = std::clamp<uint8_t>(lvl, 1, kMaxFacilityLevel);
+        s.commercialLevel = std::clamp<uint8_t>(lvl, 1, kMaxCommercialLevel);
         break;
     default:
         break;
@@ -518,7 +527,7 @@ void stadiumRecordMatchForm(StadiumData& stadium, int clubGoals, int opponentGoa
 
 int32_t getStadiumVipBoxIncome(uint8_t commercialLevel, int divisionTier)
 {
-    int idx = std::clamp<int>(static_cast<int>(commercialLevel) - 1, 0, 4);
+    int idx = std::clamp<int>(static_cast<int>(commercialLevel) - 1, 0, 9);
     int div = std::clamp(divisionTier, 0, 3);
     static constexpr double kDivScale[4] = { 3.2, 2.0, 1.3, 1.0 };
     double raw = static_cast<double>(kVipBaseBoxIncome[static_cast<size_t>(idx)]) * kDivScale[div];
@@ -528,7 +537,7 @@ int32_t getStadiumVipBoxIncome(uint8_t commercialLevel, int divisionTier)
 
 int getStadiumCommercialSponsorBonusPct(uint8_t commercialLevel)
 {
-    int idx = std::clamp<int>(static_cast<int>(commercialLevel) - 1, 0, 4);
+    int idx = std::clamp<int>(static_cast<int>(commercialLevel) - 1, 0, 9);
     return kCommercialSponsorBonusPct[static_cast<size_t>(idx)];
 }
 
@@ -652,7 +661,9 @@ StadiumUpgradeQuote stadiumGetUpgradeQuote(const StadiumData& stadium, StadiumMo
     StadiumUpgradeQuote q;
     q.module = module;
     q.currentLevel = getModuleLevel(stadium, module);
-    uint8_t maxLvl = (module == StadiumModuleType::kCapacity) ? kMaxCapacityLevel : kMaxFacilityLevel;
+    uint8_t maxLvl = (module == StadiumModuleType::kCapacity) ? kMaxCapacityLevel
+                   : (module == StadiumModuleType::kCommercial) ? kMaxCommercialLevel
+                   : kMaxFacilityLevel;
 
     if (q.currentLevel >= maxLvl) {
         q.status = StadiumUpgradeStatus::kMaxLevel;
@@ -667,6 +678,14 @@ StadiumUpgradeQuote stadiumGetUpgradeQuote(const StadiumData& stadium, StadiumMo
         q.cost = kCapacityUpgradeCosts[static_cast<size_t>(std::clamp(costIdx, 0, 8))];
         q.buildMatches = kCapacityBuildMatchesByTarget[static_cast<size_t>(std::clamp(costIdx, 0, 8))];
         q.previewText = formatNumberCommas(getStadiumCapacityForLevel(q.targetLevel)) + " seats";
+    } else if (module == StadiumModuleType::kCommercial) {
+        q.cost = kCommercialUpgradeCosts[static_cast<size_t>(std::clamp(costIdx, 0, 8))];
+        q.buildMatches = kCommercialBuildMatchesByTarget[static_cast<size_t>(std::clamp(costIdx, 0, 8))];
+        int div = readVmDivisionTier();
+        int32_t vip = getStadiumVipBoxIncome(q.targetLevel, div);
+        int sponPct = getStadiumCommercialSponsorBonusPct(q.targetLevel);
+        q.previewText = formatPoundsShort(vip) + " VIP boxes + " + std::to_string(q.targetLevel * 10) +
+                        "% merch + +" + std::to_string(sponPct) + "% Sponsors";
     } else {
         q.cost = kFacilityUpgradeCosts[static_cast<size_t>(std::clamp(costIdx, 0, 3))];
         q.buildMatches = kFacilityBuildMatchesByTarget[static_cast<size_t>(std::clamp(costIdx, 0, 3))];
@@ -683,14 +702,6 @@ StadiumUpgradeQuote stadiumGetUpgradeQuote(const StadiumData& stadium, StadiumMo
             int rehabPct = getMedicalRecoveryBoostPct(q.targetLevel);
             q.previewText = std::to_string(prevPct) + "% prevent, -" + std::to_string(q.targetLevel * 10) + "% time" +
                             (rehabPct > 0 ? (", " + std::to_string(rehabPct) + "% rehab") : "");
-            break;
-        }
-        case StadiumModuleType::kCommercial: {
-            int div = readVmDivisionTier();
-            int32_t vip = getStadiumVipBoxIncome(q.targetLevel, div);
-            int sponPct = getStadiumCommercialSponsorBonusPct(q.targetLevel);
-            q.previewText = formatPoundsShort(vip) + " VIP boxes + " + std::to_string(q.targetLevel * 10) +
-                            "% merch + +" + std::to_string(sponPct) + "% Sponsors";
             break;
         }
         default:
@@ -802,7 +813,7 @@ StadiumMatchdayReport stadiumCalculateMatchday(
         rep.transferBuzzLabel = stadium.transferBuzzLabel;
     rep.ticketPrice = getEffectiveStadiumTicketPrice(stadium, divisionTier);
     rep.ticketRevenue = static_cast<int64_t>(rep.attendance) * static_cast<int64_t>(rep.ticketPrice);
-    rep.commercialBonusPct = std::clamp<int>(static_cast<int>(stadium.commercialLevel), 1, 5) * 10;
+    rep.commercialBonusPct = std::clamp<int>(static_cast<int>(stadium.commercialLevel), 1, 10) * 10;
     rep.vipBoxRevenue = static_cast<int64_t>(getStadiumVipBoxIncome(stadium.commercialLevel, divisionTier));
     rep.merchRevenue = static_cast<int64_t>(std::llround(
         static_cast<double>(rep.ticketRevenue) * (static_cast<double>(rep.commercialBonusPct) / 100.0)));
@@ -1408,7 +1419,7 @@ bool loadStadiumSidecar(const std::string& path)
     d.pitchLevel = static_cast<uint8_t>(std::clamp(ini.GetLongValue("stadium", "pitchLevel", 1), 1L, 5L));
     d.trainingLevel = static_cast<uint8_t>(std::clamp(ini.GetLongValue("stadium", "trainingLevel", 1), 1L, 5L));
     d.medicalLevel = static_cast<uint8_t>(std::clamp(ini.GetLongValue("stadium", "medicalLevel", 1), 1L, 5L));
-    d.commercialLevel = static_cast<uint8_t>(std::clamp(ini.GetLongValue("stadium", "commercialLevel", 1), 1L, 5L));
+    d.commercialLevel = static_cast<uint8_t>(std::clamp(ini.GetLongValue("stadium", "commercialLevel", 1), 1L, 10L));
     d.ticketPolicy = static_cast<TicketPolicy>(std::clamp(ini.GetLongValue("stadium", "ticketPolicy", 1), 0L, 2L));
     d.ticketPrice = static_cast<int32_t>(std::clamp(ini.GetLongValue("stadium", "ticketPrice", 10), 1L, 100L));
     const char *formStr = ini.GetValue("stadium", "recentForm", "");
@@ -1629,7 +1640,7 @@ static SDL_Texture *getFacilityArtTexture(SDL_Renderer *r, StadiumModuleType mod
     static SDL_Texture *s_cache[5][10] = {};
     static bool s_attempted[5][10] = {};
     int mi = static_cast<int>(mod);
-    int maxTier = (mod == StadiumModuleType::kCapacity) ? 10 : 5;
+    int maxTier = (mod == StadiumModuleType::kCapacity || mod == StadiumModuleType::kCommercial) ? 10 : 5;
     int ti = std::clamp<int>(tier, 1, maxTier) - 1;
     if (mi < 0 || mi >= 5)
         return nullptr;
@@ -1676,13 +1687,14 @@ static void drawFacilityPixelArt(
 
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
 
-    uint8_t tier = (mod == StadiumModuleType::kCapacity)
+    bool isTenLevel = (mod == StadiumModuleType::kCapacity || mod == StadiumModuleType::kCommercial);
+    uint8_t tier = isTenLevel
         ? static_cast<uint8_t>(std::clamp<int>((level + 1) / 2, 1, 5))
         : static_cast<uint8_t>(std::clamp<int>(level, 1, 5));
-    uint8_t artLevel = (mod == StadiumModuleType::kCapacity)
+    uint8_t artLevel = isTenLevel
         ? static_cast<uint8_t>(std::clamp<int>(level, 1, 10))
         : tier;
-    uint8_t maxArtLevel = (mod == StadiumModuleType::kCapacity) ? 10 : 5;
+    uint8_t maxArtLevel = isTenLevel ? 10 : 5;
 
 #ifndef SWOS_TEST
     if (SDL_Texture *artTex = getFacilityArtTexture(r, mod, artLevel)) {
@@ -2155,7 +2167,9 @@ static void drawStadiumFacilitiesMenu()
         for (int i = 0; i < 5; ++i) {
             auto mod = static_cast<StadiumModuleType>(i);
             uint8_t curLvl = getModuleLevel(s_stadium, mod);
-            uint8_t maxLvl = (mod == StadiumModuleType::kCapacity) ? kMaxCapacityLevel : kMaxFacilityLevel;
+            uint8_t maxLvl = (mod == StadiumModuleType::kCapacity) ? kMaxCapacityLevel
+                           : (mod == StadiumModuleType::kCommercial) ? kMaxCommercialLevel
+                           : kMaxFacilityLevel;
             StadiumUpgradeQuote q = stadiumGetUpgradeQuote(s_stadium, mod, cash);
             bool isBuildingThis = (s_stadium.activeProject.isActive && s_stadium.activeProject.module == mod);
 
@@ -2186,7 +2200,7 @@ static void drawStadiumFacilitiesMenu()
                           std::to_string(curLvl * 10) + "% INJ)";
                 break;
             case StadiumModuleType::kCommercial:
-                curStat = "LVL " + std::to_string(curLvl) + "/5 (" +
+                curStat = "LVL " + std::to_string(curLvl) + "/10 (" +
                           formatPoundsShort(getStadiumVipBoxIncome(curLvl, div)) + " VIP, +" +
                           std::to_string(getStadiumCommercialSponsorBonusPct(curLvl)) + "% SPON)";
                 break;
@@ -2423,7 +2437,7 @@ std::string formatStadiumContextForTelemetry()
                       std::to_string(s_stadium.pitchLevel) + "/5 [" + getPitchQualityLabel(s_stadium.pitchLevel) + "]; " +
                       "Training Lvl " + std::to_string(s_stadium.trainingLevel) + "/5, Medical Lvl " +
                       std::to_string(s_stadium.medicalLevel) + "/5, Commercial VIP Lvl " +
-                      std::to_string(s_stadium.commercialLevel) + "/5). ";
+                      std::to_string(s_stadium.commercialLevel) + "/10). ";
 
     out += "Ticket Policy: " + std::string(getTicketPolicyName(s_stadium.ticketPolicy)) +
            " (effective GBP " + std::to_string(s_stadium.ticketPrice) + ")";

@@ -45,7 +45,7 @@ struct StadiumData {
     uint8_t pitchLevel = 1;          // 1..5
     uint8_t trainingLevel = 1;       // 1..5
     uint8_t medicalLevel = 1;        // 1..5
-    uint8_t commercialLevel = 1;     // 1..5
+    uint8_t commercialLevel = 1;     // 1..10
     TicketPolicy ticketPolicy = TicketPolicy::kStandard;
     int32_t ticketPrice = 10;
     ConstructionProject activeProject;
