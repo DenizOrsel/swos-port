@@ -87,19 +87,19 @@ LEVELS: list[tuple[str, str]] = [
     ),
     (
         "capacity_8",
-        "Sleek near-future smart-glass cyber football stadium grandstand on a concrete base: "
-        "tiered rows of dark carbon-fiber ergonomic pod seats with glowing cyan accent trim, "
-        "a seamless curved dark-tinted smart-glass VIP pavilion with neon cyan and gold edge lighting, "
-        "glowing cyan holographic stat-projector emitters along the railing, "
-        "and sleek brushed silver-titanium armor paneling across the exterior frame.",
+        "Towering three-story triple-decker near-future smart-glass cyber football stadium grandstand on a grey concrete base: "
+        "three distinct vertically stacked cantilevered seating decks (lower, middle, and upper tiers) filled with dark carbon-fiber ergonomic pod seats with glowing cyan accent trim, "
+        "a seamless curved dark-tinted smart-glass cyber VIP lounge pavilion built into the upper concourse with neon cyan and gold edge lighting, "
+        "glowing cyan holographic stat-projector emitters along the tiered railings, "
+        "and sleek brushed silver-titanium armor paneling framing all three decks.",
     ),
     (
         "capacity_9",
-        "Sci-fi anti-gravity hover-box stadium seating grandstand section on a solid grey concrete base (seats only, no pitch): "
-        "six stepped lower rows of dark carbon-fiber stadium seats with glowing cyan accent trim filling the front of the base, "
-        "a detached floating anti-gravity luxury glass VIP skybox pod hovering clearly in mid-air above the upper tier via glowing blue plasma thruster nodes underneath, "
-        "a translucent hexagonal cyan energy barrier shield framing the upper viewing deck, "
-        "small docked robotic camera drones on the roof pylons, and twin vertical glowing cyan plasma light spires on the rear corners.",
+        "Towering three-story triple-decker sci-fi anti-gravity hover-box football stadium grandstand on a solid grey concrete base (seats only, no pitch): "
+        "three distinct vertically stacked stadium seating decks (lower, middle, and upper tiers) of dark carbon-fiber seats with glowing cyan trim, "
+        "crowned by a detached floating anti-gravity luxury glass VIP skybox pod hovering visibly in mid-air above the top deck via glowing blue plasma thruster nodes underneath, "
+        "translucent hexagonal cyan energy barrier shields along the upper viewing decks, "
+        "docked robotic camera drones on the roof pylons, and twin vertical glowing cyan plasma light spires rising from the rear corners.",
     ),
     (
         "capacity_10",
