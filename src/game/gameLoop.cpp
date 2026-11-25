@@ -382,9 +382,9 @@ static void drawFrame(bool recordingEnabled)
     drawGameTime();
     drawLivePunditTicker();
     drawSupporterStreamOverlay(xOffset, yOffset);
-    updateAndDrawGoalToaster(xOffset, yOffset);
     drawStatsIfNeeded();
     drawResult();
+    updateAndDrawGoalToaster(xOffset, yOffset);
     drawSpinningLogo();
 }
 

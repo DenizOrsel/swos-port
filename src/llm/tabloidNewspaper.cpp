@@ -657,7 +657,8 @@ void captureTabloidMatchPhotoIfPending(float cameraXOffset, float cameraYOffset)
         return;
     }
 
-    // 2. If a highlight event (e.g. GOAL) was requested, snapshot the pre-event ring buffer + begin post-capture!
+    // 2. If a highlight event (e.g. GOAL) was requested, begin capturing post-event celebration/replay frames
+    //    (ZERO SDL_RenderReadPixels during active kInProgress gameplay so framerate stays locked at 60 FPS!)
     if (s_capturePending) {
         if (s_pendingDelayFrames > 0) {
             --s_pendingDelayFrames;
@@ -665,12 +666,6 @@ void captureTabloidMatchPhotoIfPending(float cameraXOffset, float cameraYOffset)
         }
         s_capturePending = false;
         s_clipWorkFrames.clear();
-        if (!s_ringFrames.empty()) {
-            size_t cnt = s_ringFrames.size();
-            size_t start = (cnt < kClipPreFrames) ? 0 : s_ringHead;
-            for (size_t i = 0; i < cnt; ++i)
-                s_clipWorkFrames.push_back(s_ringFrames[(start + i) % cnt]);
-        }
         std::vector<uint8_t> nowFrame;
         if (grabScaledPitchFrame(cameraXOffset, cameraYOffset, nowFrame))
             s_clipWorkFrames.push_back(std::move(nowFrame));
@@ -691,22 +686,6 @@ void captureTabloidMatchPhotoIfPending(float cameraXOffset, float cameraYOffset)
         s_clipPostRemaining = kClipPostFrames;
         s_clipPostStrideCounter = 0;
         return;
-    }
-
-    // 3. Maintain rolling pre-event ring buffer during active play (1 sample every ~7 frames = ~8.5 FPS)
-    if (swos.gameStatePl == GameState::kInProgress) {
-        if (++s_ringTickCounter >= kClipSampleStride) {
-            s_ringTickCounter = 0;
-            std::vector<uint8_t> fr;
-            if (grabScaledPitchFrame(cameraXOffset, cameraYOffset, fr)) {
-                if (s_ringFrames.size() < kClipPreFrames) {
-                    s_ringFrames.push_back(std::move(fr));
-                } else {
-                    s_ringFrames[s_ringHead] = std::move(fr);
-                    s_ringHead = (s_ringHead + 1) % kClipPreFrames;
-                }
-            }
-        }
     }
 #endif
 }

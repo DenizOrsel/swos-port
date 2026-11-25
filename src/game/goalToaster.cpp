@@ -2,6 +2,7 @@
 #include "compactFont.h"
 #include "gameFieldMapping.h"
 #include "llmClient.h"
+#include "log.h"
 #include "render.h"
 #include "swos.h"
 
@@ -227,6 +228,8 @@ void triggerGoalToaster(const GoalToasterEvent& ev)
     uint32_t seed = static_cast<uint32_t>(s_toaster.startTick ^ (ev.minute * 131u + ev.scorerMatchGoals * 17u));
     s_toaster.comment = buildOfflineScorerComment(ev, seed);
     s_toaster.llmReqId = 0;
+    logInfo("Goal Toaster triggered: %d' %s (%s) - \"%s\"",
+        ev.minute, ev.scorerName.c_str(), ev.teamName.c_str(), s_toaster.comment.c_str());
 
 #ifndef SWOS_TEST
     // Optional fast async LLM first-person quote from the scorer (updates seamlessly if it arrives before fade-out)
@@ -300,8 +303,8 @@ void updateAndDrawGoalToaster(float cameraXOffset, float cameraYOffset)
     if (!r || !atlas)
         return;
 
-    int outW = 0, outH = 0;
-    if (SDL_GetRendererOutputSize(r, &outW, &outH) != 0 || outW < 200 || outH < 120)
+    SDL_Rect vp = getViewport();
+    if (vp.w < 160 || vp.h < 100)
         return;
 
     float origSX = 1.0f, origSY = 1.0f;
@@ -309,22 +312,25 @@ void updateAndDrawGoalToaster(float cameraXOffset, float cameraYOffset)
     SDL_RenderSetScale(r, 1.0f, 1.0f);
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
 
-    float gameScale = std::max(1.0f, getGameScale());
-    float px = std::clamp(std::floor(static_cast<float>(outH) / 360.0f + 0.5f), 1.0f, 3.0f);
-    if (outH < 520) px = std::max(1.0f, static_cast<float>(outH) / 380.0f);
+    float px = 1.0f;
+    if (vp.h >= 900)
+        px = std::clamp(std::floor(static_cast<float>(vp.h) / 480.0f + 0.5f), 2.0f, 4.0f);
+    else if (vp.h >= 540)
+        px = 1.5f;
 
-    // Toaster dimensions: sleek bottom-center broadcast lower-third card
-    float cardW = std::min(static_cast<float>(outW) * 0.78f, std::max(260.0f, 228.0f * px));
-    float cardH = std::max(44.0f, 34.0f * px);
-    float marginBottom = std::max(10.0f, static_cast<float>(outH) * 0.032f);
-    float targetY = static_cast<float>(outH) - marginBottom - cardH;
-    float hiddenY = static_cast<float>(outH) + 8.0f;
-    float cardX = std::floor((static_cast<float>(outW) - cardW) * 0.5f);
+    // Toaster dimensions in active viewport coordinates (matches supporterStream.cpp coordinate space!)
+    float cardW = std::min(static_cast<float>(vp.w) * 0.80f, std::max(240.0f, 232.0f * px));
+    float cardH = std::max(40.0f, 35.0f * px);
+    float marginBottom = std::max(8.0f, static_cast<float>(vp.h) * 0.035f);
+    float targetY = static_cast<float>(vp.h) - marginBottom - cardH;
+    float hiddenY = static_cast<float>(vp.h) + 8.0f;
+    float cardX = std::floor((static_cast<float>(vp.w) - cardW) * 0.5f);
     float cardY = std::floor(hiddenY + (targetY - hiddenY) * animProgress);
 
     // Auto-ghost subtly if the live ball passes directly underneath the toaster
     float ghostMult = 1.0f;
     if (swos.gameStatePl == GameState::kInProgress) {
+        float gameScale = std::max(1.0f, getGameScale());
         float offX = getGameScreenOffsetX();
         float offY = getGameScreenOffsetY();
         float bx = offX + (swos.ballSprite.x.asFloat() - cameraXOffset) * gameScale;
