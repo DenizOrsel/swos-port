@@ -1,5 +1,6 @@
 #include "stadiumFacilities.h"
 #include "achievements.h"
+#include "file.h"
 #include "compactFont.h"
 #include "controls.h"
 #include "darkRectangle.h"
@@ -18,6 +19,9 @@
 #include "stadiumFacilities.mnu.h"
 
 #include <SimpleIni.h>
+#ifndef SWOS_TEST
+#include <SDL_image.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -1619,6 +1623,34 @@ static void closeStadiumFacilitiesMenu()
     SetExitMenuFlag();
 }
 
+#ifndef SWOS_TEST
+static SDL_Texture *getFacilityArtTexture(SDL_Renderer *r, StadiumModuleType mod, uint8_t tier)
+{
+    static SDL_Texture *s_cache[5][5] = {};
+    static bool s_attempted[5][5] = {};
+    int mi = static_cast<int>(mod);
+    int ti = std::clamp<int>(tier, 1, 5) - 1;
+    if (mi < 0 || mi >= 5)
+        return nullptr;
+    if (s_attempted[mi][ti])
+        return s_cache[mi][ti];
+    s_attempted[mi][ti] = true;
+
+    static const char *const kModNames[5] = { "capacity", "pitch", "training", "medical", "commercial" };
+    std::string rel = std::string("assets/facilities/") + kModNames[mi] + "_" + std::to_string(ti + 1) + ".png";
+    std::string full = pathInRootDir(rel.c_str());
+
+    SDL_Texture *tex = IMG_LoadTexture(r, full.c_str());
+    if (!tex)
+        tex = IMG_LoadTexture(r, rel.c_str());
+    if (tex) {
+        SDL_SetTextureScaleMode(tex, SDL_ScaleModeNearest);
+        s_cache[mi][ti] = tex;
+    }
+    return s_cache[mi][ti];
+}
+#endif
+
 static void drawFacilityPixelArt(
     SDL_Renderer *r,
     float x,
@@ -1643,10 +1675,36 @@ static void drawFacilityPixelArt(
 
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
 
-    // Sky backdrop (richer/brighter twilight sky as facilities upgrade)
     uint8_t tier = (mod == StadiumModuleType::kCapacity)
         ? static_cast<uint8_t>(std::clamp<int>((level + 1) / 2, 1, 5))
         : static_cast<uint8_t>(std::clamp<int>(level, 1, 5));
+
+#ifndef SWOS_TEST
+    if (SDL_Texture *artTex = getFacilityArtTexture(r, mod, tier)) {
+        SDL_FRect dst{ x, y, w, h };
+        SDL_RenderCopyF(r, artTex, nullptr, &dst);
+
+        if (isBuilding) {
+            pxRect(19, 1.5f, 1.2f, 10.5f, 244, 196, 36);
+            pxRect(12, 1.5f, 12, 1.2f, 244, 196, 36);
+            pxRect(14, 2.7f, 0.8f, 3.5f, 42, 44, 48);
+            pxRect(13, 6.0f, 2.8f, 1.6f, 234, 144, 34);
+            if (((SDL_GetTicks() / 350) & 1) == 0)
+                pxRect(18.8f, 0.5f, 1.8f, 1.4f, 255, 76, 56);
+        }
+
+        SDL_Color borderCol = isBuilding
+            ? SDL_Color{ 118, 238, 248, 235 }
+            : (tier >= 5 ? SDL_Color{ 255, 224, 86, 235 } : SDL_Color{ 156, 170, 188, 210 });
+        SDL_SetRenderDrawColor(r, borderCol.r, borderCol.g, borderCol.b, borderCol.a);
+        SDL_FRect frame{ x, y, w, h };
+        SDL_RenderDrawRectF(r, &frame);
+        SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+        return;
+    }
+#endif
+
+    // Sky backdrop (procedural fallback if PNG not present)
 
     if (mod != StadiumModuleType::kPitch) {
         pxRect(0, 0, 26, 10,

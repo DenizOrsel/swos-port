@@ -215,6 +215,10 @@ def collectEngineFiles(args: argparse.Namespace, files: dict[str, PackageFile]) 
     if kbFile.is_file():
         addFile(files, kbFile, "docs/features/swos_1996_97_european_football_knowledge_base.md")
 
+    facilitiesArtDir = ROOT / "assets" / "facilities"
+    if facilitiesArtDir.is_dir():
+        addTree(files, facilitiesArtDir, "assets/facilities")
+
     if args.includeSymbols:
         pdb = exe.with_suffix(".pdb")
         addFile(files, requireFile(pdb, "Release symbols"), pdb.name)

@@ -34,3 +34,5 @@ swos.log
 
 /original
 /3rd-party/whisper/
+.env.local
+env.local
