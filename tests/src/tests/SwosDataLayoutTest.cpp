@@ -1089,7 +1089,7 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
         StadiumData maxed = fb;
         maxed.capacityLevel = 10;
         maxed.maxCapacity = getStadiumCapacityForLevel(10);
-        maxed.pitchLevel = 5;
+        maxed.pitchLevel = 10;
         assertEqual(maxed.maxCapacity, uint32_t{ 85000 });
         assertTrue(stadiumGetUpgradeQuote(maxed, StadiumModuleType::kCapacity, 99999999).status == StadiumUpgradeStatus::kMaxLevel);
         assertTrue(stadiumGetUpgradeQuote(maxed, StadiumModuleType::kPitch, 99999999).status == StadiumUpgradeStatus::kMaxLevel);

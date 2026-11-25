@@ -39,6 +39,7 @@ namespace {
 constexpr uint8_t kMaxCapacityLevel = 10;
 constexpr uint8_t kMaxCommercialLevel = 10;
 constexpr uint8_t kMaxMedicalLevel = 10;
+constexpr uint8_t kMaxPitchLevel = 10;
 constexpr uint8_t kMaxFacilityLevel = 5;
 
 constexpr std::array<uint32_t, 10> kCapacityByLevel = {
@@ -283,7 +284,7 @@ void setModuleLevel(StadiumData& s, StadiumModuleType mod, uint8_t lvl)
         s.maxCapacity = getStadiumCapacityForLevel(s.capacityLevel);
         break;
     case StadiumModuleType::kPitch:
-        s.pitchLevel = std::clamp<uint8_t>(lvl, 1, kMaxFacilityLevel);
+        s.pitchLevel = std::clamp<uint8_t>(lvl, 1, kMaxPitchLevel);
         break;
     case StadiumModuleType::kTraining:
         s.trainingLevel = std::clamp<uint8_t>(lvl, 1, kMaxFacilityLevel);
@@ -609,13 +610,18 @@ const char *getTicketPolicyName(TicketPolicy policy)
 
 const char *getPitchQualityLabel(uint8_t pitchLevel)
 {
-    switch (std::clamp<int>(pitchLevel, 1, 5)) {
-    case 1: return "MUDDY TURF";
-    case 2: return "BASIC GRASS";
-    case 3: return "GOOD TURF";
-    case 4: return "DRAINED PRO";
-    case 5: return "PRISTINE TURF";
-    default: return "GOOD TURF";
+    switch (std::clamp<int>(pitchLevel, 1, 10)) {
+    case 1:  return "MUDDY SANDLOT";
+    case 2:  return "MEADOW GRASS";
+    case 3:  return "STRIPED TURF";
+    case 4:  return "HEATED LAWN";
+    case 5:  return "HYBRID PRO";
+    case 6:  return "ARENA TURF";
+    case 7:  return "SMART TURF";
+    case 8:  return "NANO-TURF";
+    case 9:  return "HOVER-FIELD";
+    case 10: return "GALACTIC ARENA";
+    default: return "STRIPED TURF";
     }
 }
 
@@ -674,6 +680,7 @@ StadiumUpgradeQuote stadiumGetUpgradeQuote(const StadiumData& stadium, StadiumMo
     uint8_t maxLvl = (module == StadiumModuleType::kCapacity) ? kMaxCapacityLevel
                    : (module == StadiumModuleType::kCommercial) ? kMaxCommercialLevel
                    : (module == StadiumModuleType::kMedical) ? kMaxMedicalLevel
+                   : (module == StadiumModuleType::kPitch) ? kMaxPitchLevel
                    : kMaxFacilityLevel;
 
     if (q.currentLevel >= maxLvl) {
@@ -705,14 +712,15 @@ StadiumUpgradeQuote stadiumGetUpgradeQuote(const StadiumData& stadium, StadiumMo
         int redPct = getMedicalInjuryTimeReductionPct(q.targetLevel);
         q.previewText = std::to_string(prevPct) + "% prevent, -" + std::to_string(redPct) + "% time" +
                         (rehabPct > 0 ? (", " + std::to_string(rehabPct) + "% rehab") : "");
+    } else if (module == StadiumModuleType::kPitch) {
+        q.cost = kCommercialUpgradeCosts[static_cast<size_t>(std::clamp(costIdx, 0, 8))];
+        q.buildMatches = kCommercialBuildMatchesByTarget[static_cast<size_t>(std::clamp(costIdx, 0, 8))];
+        q.previewText = std::string(getPitchQualityLabel(q.targetLevel)) +
+                        (q.targetLevel >= 4 ? " (No Mud/Wet)" : "");
     } else {
         q.cost = kFacilityUpgradeCosts[static_cast<size_t>(std::clamp(costIdx, 0, 3))];
         q.buildMatches = kFacilityBuildMatchesByTarget[static_cast<size_t>(std::clamp(costIdx, 0, 3))];
         switch (module) {
-        case StadiumModuleType::kPitch:
-            q.previewText = std::string(getPitchQualityLabel(q.targetLevel)) +
-                            (q.targetLevel >= 4 ? " (No Mud/Wet)" : "");
-            break;
         case StadiumModuleType::kTraining:
             q.previewText = "+" + std::to_string(q.targetLevel * 5) + "% annual skill growth";
             break;
@@ -1428,7 +1436,7 @@ bool loadStadiumSidecar(const std::string& path)
     d.teamId = static_cast<int16_t>(ini.GetLongValue("stadium", "teamId", -1));
     d.capacityLevel = static_cast<uint8_t>(std::clamp(ini.GetLongValue("stadium", "capacityLevel", 1), 1L, 10L));
     d.maxCapacity = getStadiumCapacityForLevel(d.capacityLevel);
-    d.pitchLevel = static_cast<uint8_t>(std::clamp(ini.GetLongValue("stadium", "pitchLevel", 1), 1L, 5L));
+    d.pitchLevel = static_cast<uint8_t>(std::clamp(ini.GetLongValue("stadium", "pitchLevel", 1), 1L, 10L));
     d.trainingLevel = static_cast<uint8_t>(std::clamp(ini.GetLongValue("stadium", "trainingLevel", 1), 1L, 5L));
     d.medicalLevel = static_cast<uint8_t>(std::clamp(ini.GetLongValue("stadium", "medicalLevel", 1), 1L, 10L));
     d.commercialLevel = static_cast<uint8_t>(std::clamp(ini.GetLongValue("stadium", "commercialLevel", 1), 1L, 10L));
@@ -1652,7 +1660,7 @@ static SDL_Texture *getFacilityArtTexture(SDL_Renderer *r, StadiumModuleType mod
     static SDL_Texture *s_cache[5][10] = {};
     static bool s_attempted[5][10] = {};
     int mi = static_cast<int>(mod);
-    int maxTier = (mod == StadiumModuleType::kCapacity || mod == StadiumModuleType::kCommercial || mod == StadiumModuleType::kMedical) ? 10 : 5;
+    int maxTier = (mod == StadiumModuleType::kTraining) ? 5 : 10;
     int ti = std::clamp<int>(tier, 1, maxTier) - 1;
     if (mi < 0 || mi >= 5)
         return nullptr;
@@ -1699,7 +1707,7 @@ static void drawFacilityPixelArt(
 
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
 
-    bool isTenLevel = (mod == StadiumModuleType::kCapacity || mod == StadiumModuleType::kCommercial || mod == StadiumModuleType::kMedical);
+    bool isTenLevel = (mod != StadiumModuleType::kTraining);
     uint8_t tier = isTenLevel
         ? static_cast<uint8_t>(std::clamp<int>((level + 1) / 2, 1, 5))
         : static_cast<uint8_t>(std::clamp<int>(level, 1, 5));
@@ -2182,6 +2190,7 @@ static void drawStadiumFacilitiesMenu()
             uint8_t maxLvl = (mod == StadiumModuleType::kCapacity) ? kMaxCapacityLevel
                            : (mod == StadiumModuleType::kCommercial) ? kMaxCommercialLevel
                            : (mod == StadiumModuleType::kMedical) ? kMaxMedicalLevel
+                           : (mod == StadiumModuleType::kPitch) ? kMaxPitchLevel
                            : kMaxFacilityLevel;
             StadiumUpgradeQuote q = stadiumGetUpgradeQuote(s_stadium, mod, cash);
             bool isBuildingThis = (s_stadium.activeProject.isActive && s_stadium.activeProject.module == mod);
@@ -2202,7 +2211,7 @@ static void drawStadiumFacilitiesMenu()
                 curStat = "LVL " + std::to_string(curLvl) + "/10 (" + formatNumberCommas(s_stadium.maxCapacity) + " SEATS)";
                 break;
             case StadiumModuleType::kPitch:
-                curStat = "LVL " + std::to_string(curLvl) + "/5 (" + getPitchQualityLabel(curLvl) + ")";
+                curStat = "LVL " + std::to_string(curLvl) + "/10 (" + getPitchQualityLabel(curLvl) + ")";
                 break;
             case StadiumModuleType::kTraining:
                 curStat = "LVL " + std::to_string(curLvl) + "/5 (+" + std::to_string(curLvl * 5) + "% GROWTH)";
@@ -2447,7 +2456,7 @@ std::string formatStadiumContextForTelemetry()
     std::string out = "Club Stadium & Facilities: " + std::string(s_stadium.stadiumName) +
                       " (Capacity Lvl " + std::to_string(s_stadium.capacityLevel) + "/10, " +
                       formatNumberCommas(s_stadium.maxCapacity) + " seats; Pitch Lvl " +
-                      std::to_string(s_stadium.pitchLevel) + "/5 [" + getPitchQualityLabel(s_stadium.pitchLevel) + "]; " +
+                      std::to_string(s_stadium.pitchLevel) + "/10 [" + getPitchQualityLabel(s_stadium.pitchLevel) + "]; " +
                       "Training Lvl " + std::to_string(s_stadium.trainingLevel) + "/5, Medical Lvl " +
                       std::to_string(s_stadium.medicalLevel) + "/10, Commercial VIP Lvl " +
                       std::to_string(s_stadium.commercialLevel) + "/10). ";
