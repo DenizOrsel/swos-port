@@ -4,11 +4,11 @@
 #include "render.h"
 #include "util.h"
 
-constexpr int kWindowWidth = 1920;
-constexpr int kWindowHeight = 1080;
+constexpr int kWindowWidth = 3840;
+constexpr int kWindowHeight = 2160;
 
-constexpr int kDefaultFullScreenWidth = 1920;
-constexpr int kDefaultFullScreenHeight = 1080;
+constexpr int kDefaultFullScreenWidth = 3840;
+constexpr int kDefaultFullScreenHeight = 2160;
 
 constexpr int kMinimumWindowWidth = 640;
 constexpr int kMinimumWindowHeight = 400;

@@ -205,7 +205,7 @@ static void bulkSaveOptions(const std::array<OptionAccessor<T>, N>& options, F f
 
 static void setDefaultOptions()
 {
-    swos.g_autoReplays = 1;
+    swos.g_autoReplays = 0;
     swos.g_autoSaveHighlights = 1;
     swos.g_pitchType = -2;
     swos.pitchTypeOrSeason = 1;
