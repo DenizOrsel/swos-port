@@ -9,6 +9,7 @@
 #include "hotseatCareer.h"
 #include "hotseat/hotseatInternal.h"
 #include "stadiumFacilities.h"
+#include "telemetryBrowser.h"
 
 // SWOS introduced limit
 constexpr int kMaxMenuEntries = 115;
@@ -378,12 +379,42 @@ void unpackMenu(const void *src, char *dst /* = swos.g_currentMenu */)
     if (dstEntry == &templateEntry)
         dstEntry = savedEntry;
 
-    // Inject native STADIUM button into the main Career Hub (contestMenu, offset 482233) button grid
+    // Inject native STADIUM and TELEMETRY buttons into the main Career Hub (contestMenu, offset 482233) button grid
     if (src && SwosVM::isSwosPtr(src) && SwosVM::ptrToOffset(src) == 482233 &&
-        swos.g_gameType == kGameTypeCareer && !HotseatInternal::isVmNationalSelector() &&
-        numEntries == 48) {
+        swos.g_gameType == kGameTypeCareer && numEntries == 48) {
+        auto *entries = reinterpret_cast<MenuEntry *>(dst + sizeof(Menu));
+
+        if (!HotseatInternal::isVmNationalSelector()) {
+            initMenuEntry(*dstEntry);
+            dstEntry->x = 202 + 8;
+            dstEntry->y = 148;
+            dstEntry->width = 100;
+            dstEntry->height = 12;
+            dstEntry->background = kEntryFrameAndBackColor;
+            dstEntry->bg.entryColor = 8; // classic SWOS club-management blue with gray outer frame
+            dstEntry->type = kEntryString;
+            dstEntry->stringFlags = 0;   // white small centered font
+            dstEntry->fg.string.set(kSentinel);
+            dstEntry->controlMask = kShortFireMask;
+            dstEntry->onSelect.set(SwosVM::registerProc(showStadiumFacilitiesMenu));
+            dstEntry->leftEntry = 7;     // PLAY MATCH
+            dstEntry->rightEntry = -1;
+            dstEntry->upEntry = 14;      // scroll down arrow
+            dstEntry->downEntry = 10;    // NEXT MATCH
+            dstEntry->downEntryDis = 10;
+            dstEntry->downDirection = 3; // if NEXT MATCH disabled, skip down to VIEW COMPETITIONS (11)
+            dstEntry->ordinal = numEntries++;
+            dstEntry++;
+            assert(reinterpret_cast<char *>(dstEntry) < swos.g_currentMenu + sizeof(swos.g_currentMenu));
+
+            // Wire NEXT MATCH (10) Up -> STADIUM (48)
+            entries[10].upEntry = 48;
+        }
+
+        // Inject native TELEMETRY button symmetrically on the left column above TRANSFERS (4)
+        const int telemetryOrdinal = numEntries;
         initMenuEntry(*dstEntry);
-        dstEntry->x = 202 + 8;
+        dstEntry->x = 0 + 8;
         dstEntry->y = 148;
         dstEntry->width = 100;
         dstEntry->height = 12;
@@ -393,20 +424,19 @@ void unpackMenu(const void *src, char *dst /* = swos.g_currentMenu */)
         dstEntry->stringFlags = 0;   // white small centered font
         dstEntry->fg.string.set(kSentinel);
         dstEntry->controlMask = kShortFireMask;
-        dstEntry->onSelect.set(SwosVM::registerProc(showStadiumFacilitiesMenu));
-        dstEntry->leftEntry = 7;     // PLAY MATCH
-        dstEntry->rightEntry = -1;
+        dstEntry->onSelect.set(SwosVM::registerProc(showTelemetryBrowserMenu));
+        dstEntry->leftEntry = -1;
+        dstEntry->rightEntry = 7;    // PLAY MATCH
         dstEntry->upEntry = 14;      // scroll down arrow
-        dstEntry->downEntry = 10;    // NEXT MATCH
-        dstEntry->downEntryDis = 10;
-        dstEntry->downDirection = 3; // if NEXT MATCH disabled, skip down to VIEW COMPETITIONS (11)
+        dstEntry->downEntry = 4;     // TRANSFERS
+        dstEntry->downEntryDis = 4;
+        dstEntry->downDirection = 3;
         dstEntry->ordinal = numEntries++;
         dstEntry++;
         assert(reinterpret_cast<char *>(dstEntry) < swos.g_currentMenu + sizeof(swos.g_currentMenu));
 
-        // Wire NEXT MATCH (10) Up -> STADIUM (48) so the full grid is seamlessly navigable
-        auto *entries = reinterpret_cast<MenuEntry *>(dst + sizeof(Menu));
-        entries[10].upEntry = 48;
+        // Wire TRANSFERS (4) Up -> TELEMETRY
+        entries[4].upEntry = static_cast<int8_t>(telemetryOrdinal);
     }
 
     finalizeMenu(dstMenu, reinterpret_cast<char *>(dstEntry), numEntries);

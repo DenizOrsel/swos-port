@@ -505,15 +505,19 @@ static void drawStringMenuItem(MenuEntry *entry, const char *string)
     }
 
     static char stadiumBtnBuf[32];
-    if (offset == 482233 && entry->ordinal == 48 &&
-        swos.g_gameType == kGameTypeCareer && !HotseatInternal::isVmNationalSelector()) {
-        const auto& stad = getCurrentCareerStadium();
-        if (stad.initialized && stad.activeProject.isActive) {
-            snprintf(stadiumBtnBuf, sizeof(stadiumBtnBuf), "STADIUM (%uM)",
-                     static_cast<unsigned>(stad.activeProject.matchesRemaining));
-            string = stadiumBtnBuf;
-        } else {
-            string = "STADIUM";
+    if (offset == 482233 && swos.g_gameType == kGameTypeCareer) {
+        bool isNat = HotseatInternal::isVmNationalSelector();
+        if (!isNat && entry->ordinal == 48) {
+            const auto& stad = getCurrentCareerStadium();
+            if (stad.initialized && stad.activeProject.isActive) {
+                snprintf(stadiumBtnBuf, sizeof(stadiumBtnBuf), "STADIUM (%uM)",
+                         static_cast<unsigned>(stad.activeProject.matchesRemaining));
+                string = stadiumBtnBuf;
+            } else {
+                string = "STADIUM";
+            }
+        } else if ((!isNat && entry->ordinal == 49) || (isNat && entry->ordinal == 48)) {
+            string = "TELEMETRY";
         }
     }
 

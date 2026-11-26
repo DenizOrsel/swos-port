@@ -207,6 +207,10 @@ def collectEngineFiles(args: argparse.Namespace, files: dict[str, PackageFile]) 
     for name in VC_RUNTIME_FILES:
         addFile(files, vcRuntimeDir / name, name)
 
+    webviewLoader = ROOT / "3rd-party" / "WebView2" / "lib" / "win64" / "WebView2Loader.dll"
+    if webviewLoader.is_file():
+        addFile(files, webviewLoader, "WebView2Loader.dll")
+
     whisperDir = ROOT / "3rd-party" / "whisper"
     if whisperDir.is_dir():
         addTree(files, whisperDir, "whisper")

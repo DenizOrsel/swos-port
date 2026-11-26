@@ -6,6 +6,7 @@ enum WindowMode
 };
 
 SDL_Window *createWindow();
+SDL_Window *getWindow();
 void destroyWindow();
 void initWindow();
 void deinitWindow();

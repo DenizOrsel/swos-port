@@ -49,6 +49,7 @@ thirdPartyIncludeDirs = include_directories([
     '3rd-party' / 'zlib-ng' / 'include',
     '3rd-party' / 'SimpleIni',
     '3rd-party' / 'dirent',
+    '3rd-party' / 'WebView2' / 'include',
 ], is_system: true)
 
 cppCompiler = meson.get_compiler('cpp')
@@ -74,6 +75,7 @@ commonLibraries = [
     cppCompiler.find_library('SDL2_image', dirs: sdlImageDir),
     cppCompiler.find_library('winmm'),
     cppCompiler.find_library('winhttp'),
+    cppCompiler.find_library('ole32'),
     cppCompiler.find_library('gdi32'),
     cppCompiler.find_library('user32'),
 ]
