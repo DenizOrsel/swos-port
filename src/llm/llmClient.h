@@ -32,7 +32,7 @@ struct LlmFeaturesConfig {
 
 struct LlmTelemetryConfig {
     bool enabled = true;
-    bool exportMatchJson = false;
+    bool exportMatchJson = true;
     int streamUpdateSeconds = 18;
     int maxVisibleTweets = 5;
     int streamBoxHeightPct = 62;
