@@ -223,6 +223,10 @@ def collectEngineFiles(args: argparse.Namespace, files: dict[str, PackageFile]) 
     if newspaperArtDir.is_dir():
         addTree(files, newspaperArtDir, "assets/newspaper")
 
+    logosArtDir = ROOT / "assets" / "logos"
+    if logosArtDir.is_dir():
+        addTree(files, logosArtDir, "assets/logos")
+
     if args.includeSymbols:
         pdb = exe.with_suffix(".pdb")
         addFile(files, requireFile(pdb, "Release symbols"), pdb.name)

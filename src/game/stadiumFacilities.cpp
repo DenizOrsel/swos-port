@@ -1,5 +1,6 @@
 #include "stadiumFacilities.h"
 #include "achievements.h"
+#include "clubLogo.h"
 #include "file.h"
 #include "compactFont.h"
 #include "controls.h"
@@ -2151,14 +2152,25 @@ static void drawStadiumFacilitiesMenu()
         int div = readVmDivisionTier();
         int64_t cash = readVmClubCash();
 
-        // Top stadium & bank bar
+        // Top stadium & bank bar with club crest (left) and league logo (right)
+        float headerLogoSz = 10.5f * gameScale;
+        float stTextX = offX + 10.0f * gameScale;
+        std::string clubNm = readCurrentCareerClubName();
+        if (drawClubLogo(r, clubNm.c_str(), stTextX, offY + 18.0f * gameScale, headerLogoSz, 255)) {
+            stTextX += headerLogoSz + 3.0f * gameScale;
+        }
         std::string stLabel = std::string("GROUND: ") + s_stadium.stadiumName;
-        drawCompactText(r, atlas, offX + 10.0f * gameScale, offY + 20.5f * gameScale,
-            fitPx(stLabel, px, 175.0f * gameScale), stLabel, cyanCol, 255, true);
+        drawCompactText(r, atlas, stTextX, offY + 20.5f * gameScale,
+            fitPx(stLabel, px, 162.0f * gameScale), stLabel, cyanCol, 255, true);
 
+        float bankRightX = offX + 310.0f * gameScale;
+        std::string leagueKey = resolveCurrentCareerLeagueLogoKey();
+        if (!leagueKey.empty() && drawLeagueLogo(r, leagueKey.c_str(), bankRightX - headerLogoSz, offY + 18.0f * gameScale, headerLogoSz, 255)) {
+            bankRightX -= headerLogoSz + 3.0f * gameScale;
+        }
         std::string bankLabel = "BANK: " + formatPoundsExact(cash);
-        drawCompactTextRightAligned(r, atlas, offX + 310.0f * gameScale, offY + 20.5f * gameScale,
-            fitPx(bankLabel, px, 125.0f * gameScale), bankLabel, (cash >= 0 ? yellowCol : redCol), 255, true);
+        drawCompactTextRightAligned(r, atlas, bankRightX, offY + 20.5f * gameScale,
+            fitPx(bankLabel, px, 118.0f * gameScale), bankLabel, (cash >= 0 ? yellowCol : redCol), 255, true);
 
         // 5 Module rows
         for (int i = 0; i < 5; ++i) {

@@ -36,3 +36,4 @@ swos.log
 /3rd-party/whisper/
 .env.local
 env.local
+/assets/logos/

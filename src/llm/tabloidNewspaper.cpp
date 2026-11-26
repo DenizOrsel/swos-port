@@ -1,4 +1,5 @@
 #include "tabloidNewspaper.h"
+#include "clubLogo.h"
 #include "compactFont.h"
 #include "controls.h"
 #include "file.h"
@@ -1065,9 +1066,23 @@ void showTabloidNewspaperModal(const TabloidNewspaperEdition& edition)
         drawCompactTextCentered(r, atlas, priceX + priceW * 0.5f, curY + mastH * 0.58f,
             fitPx("EST.1996 | 35p", px * 0.78f, priceW - 6.0f), "EST.1996 | 35p", inkBlack, 255, true);
 
-        // Center newspaper title
+        // Center newspaper title flanked by both clubs' crests + optional competition logo
         float titleAreaX = innerX + badgeW + 6.0f;
         float titleAreaW = std::max(40.0f, priceX - titleAreaX - 6.0f);
+        float mastCrestSz = std::max(18.0f, mastH * 0.82f);
+        float mastCrestY = curY + (mastH - mastCrestSz) * 0.5f;
+        if (drawClubLogo(r, edition.team1.c_str(), titleAreaX, mastCrestY, mastCrestSz, 255)) {
+            titleAreaX += mastCrestSz + 5.0f;
+            titleAreaW = std::max(40.0f, titleAreaW - (mastCrestSz + 5.0f));
+        }
+        if (drawClubLogo(r, edition.team2.c_str(), titleAreaX + titleAreaW - mastCrestSz, mastCrestY, mastCrestSz, 255)) {
+            titleAreaW = std::max(40.0f, titleAreaW - (mastCrestSz + 5.0f));
+        }
+        std::string paperLeagueKey = resolveCurrentMatchLeagueLogoKey();
+        if (!paperLeagueKey.empty()) {
+            float lSz = std::max(14.0f, mastH * 0.56f);
+            drawLeagueLogo(r, paperLeagueKey.c_str(), innerX + 3.0f, curY + (mastH - lSz) * 0.5f, lSz, 235);
+        }
         std::string paperTitle = "THE DAILY SOCCER ECHO";
 #ifdef _WIN32
         bool rebuildSerif = (serifCache.cachedOutW != outW || serifCache.cachedOutH != outH);

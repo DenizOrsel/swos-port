@@ -1,4 +1,5 @@
 #include "goalToaster.h"
+#include "clubLogo.h"
 #include "compactFont.h"
 #include "gameFieldMapping.h"
 #include "gameTime.h"
@@ -408,6 +409,10 @@ void updateAndDrawGoalToaster(float cameraXOffset, float cameraYOffset)
         scorerLine += "  [HEADER]";
 
     float nameX = textX + minBadgeW + 6.0f;
+    float crestSz = std::max(11.0f, minBadgeH + 2.0f);
+    if (drawClubLogo(r, s_toaster.ev.teamName.c_str(), nameX, topRowY - 2.0f, crestSz, uiAlpha)) {
+        nameX += crestSz + 4.0f;
+    }
     float nameMaxW = std::max(30.0f, (cardX + cardW - 10.0f) - nameX);
     float namePx = fitPx(scorerLine, px * 0.96f, nameMaxW);
     drawCompactText(r, atlas, nameX, topRowY, namePx, scorerLine, whiteCol, uiAlpha, true);
@@ -502,15 +507,24 @@ void drawMatchScorebugToaster(float cameraXOffset, float cameraYOffset)
     int curMin = static_cast<int>(gameTimeInMinutes());
     std::string timeStr = swos.playingPenalties ? "PEN" : (std::to_string(curMin) + "'");
 
+    std::string leagueKey = resolveCurrentMatchLeagueLogoKey();
+    bool hasLeagueLogo = (!leagueKey.empty() && getLeagueLogoTexture(r, leagueKey.c_str()) != nullptr);
+    bool hasLogo1 = (getClubLogoTexture(r, swos.topTeamInGame.teamName) != nullptr);
+    bool hasLogo2 = (getClubLogoTexture(r, swos.bottomTeamInGame.teamName) != nullptr);
+
     float scoreRowH = std::max(18.0f, 15.0f * px);
     float possRowH = std::max(11.0f, 9.0f * px);
     float pillH = scoreRowH + possRowH;
     float padX = 4.0f * px;
     float pipW = 3.0f * px;
+    float crestSz = std::max(12.0f, scoreRowH - 4.0f * px);
+    float leagueBoxW = hasLeagueLogo ? (crestSz + 5.0f * px) : 0.0f;
+    float icon1W = hasLogo1 ? crestSz : pipW;
+    float icon2W = hasLogo2 ? crestSz : pipW;
     float tagW = 22.0f * px;
     float scoreBoxW = std::max(26.0f * px, static_cast<float>(measureCompactTextUnits(scoreStr)) * (px * 0.96f) + 8.0f * px);
     float timeBoxW = std::max(24.0f * px, static_cast<float>(measureCompactTextUnits(timeStr)) * (px * 0.92f) + 8.0f * px);
-    float pillW = padX + pipW + 2.0f * px + tagW + 3.0f * px + scoreBoxW + 3.0f * px + tagW + 2.0f * px + pipW + 3.0f * px + timeBoxW;
+    float pillW = leagueBoxW + padX + icon1W + 2.0f * px + tagW + 3.0f * px + scoreBoxW + 3.0f * px + tagW + 2.0f * px + icon2W + 3.0f * px + timeBoxW;
 
     // Check active ball carrier so we can include the sub-toaster height in auto-ghost bounds
     bool carrierIsTop = true;
@@ -561,12 +575,25 @@ void drawMatchScorebugToaster(float cameraXOffset, float cameraYOffset)
     fillRectF(r, cardX + 2.0f, cardY + 1.0f, pillW - 4.0f, 1.0f, { 255, 255, 255, static_cast<Uint8>(44.0f * ghostMult) });
     drawRectF(r, cardX, cardY, pillW, pillH, borderCol);
 
-    float cx = cardX + padX * 0.5f;
+    float cx = cardX;
     float textY = cardY + (scoreRowH - 8.0f * px * 0.92f) * 0.5f;
 
-    // Team 1 kit pip + 3-letter code
-    fillRectF(r, cx, cardY + 2.5f * px, pipW, scoreRowH - 5.0f * px, col1);
-    cx += pipW + 2.0f * px;
+    // Optional left League / Competition Logo badge
+    if (hasLeagueLogo) {
+        fillRectF(r, cx + 1.0f, cardY + 1.0f, leagueBoxW - 1.0f, scoreRowH - 1.0f, { 22, 30, 44, static_cast<Uint8>(238.0f * ghostMult) });
+        fillRectF(r, cx + leagueBoxW, cardY + 1.0f, 1.0f, scoreRowH - 1.0f, { 78, 94, 118, static_cast<Uint8>(180.0f * ghostMult) });
+        drawLeagueLogo(r, leagueKey.c_str(), cx + (leagueBoxW - crestSz) * 0.5f, cardY + (scoreRowH - crestSz) * 0.5f, crestSz, uiAlpha);
+        cx += leagueBoxW;
+    }
+    cx += padX * 0.5f;
+
+    // Team 1 club crest (or kit-color pip fallback) + 3-letter code
+    if (hasLogo1) {
+        drawClubLogo(r, swos.topTeamInGame.teamName, cx, cardY + (scoreRowH - crestSz) * 0.5f, crestSz, uiAlpha);
+    } else {
+        fillRectF(r, cx, cardY + 2.5f * px, pipW, scoreRowH - 5.0f * px, col1);
+    }
+    cx += icon1W + 2.0f * px;
     drawCompactTextCentered(r, atlas, cx + tagW * 0.5f, textY, px * 0.92f, tag1, whiteCol, uiAlpha, true);
     cx += tagW + 3.0f * px;
 
@@ -576,11 +603,15 @@ void drawMatchScorebugToaster(float cameraXOffset, float cameraYOffset)
     drawCompactTextCentered(r, atlas, cx + scoreBoxW * 0.5f, textY - 0.5f, px * 0.96f, scoreStr, goldCol, uiAlpha, true);
     cx += scoreBoxW + 3.0f * px;
 
-    // Team 2 3-letter code + kit pip
+    // Team 2 3-letter code + club crest (or kit-color pip fallback)
     drawCompactTextCentered(r, atlas, cx + tagW * 0.5f, textY, px * 0.92f, tag2, whiteCol, uiAlpha, true);
     cx += tagW + 2.0f * px;
-    fillRectF(r, cx, cardY + 2.5f * px, pipW, scoreRowH - 5.0f * px, col2);
-    cx += pipW + 3.0f * px;
+    if (hasLogo2) {
+        drawClubLogo(r, swos.bottomTeamInGame.teamName, cx, cardY + (scoreRowH - crestSz) * 0.5f, crestSz, uiAlpha);
+    } else {
+        fillRectF(r, cx, cardY + 2.5f * px, pipW, scoreRowH - 5.0f * px, col2);
+    }
+    cx += icon2W + 3.0f * px;
 
     // Right gold/crimson minute badge (spans score row)
     float remW = std::max(10.0f, (cardX + pillW) - cx);
@@ -675,9 +706,13 @@ void drawMatchScorebugToaster(float cameraXOffset, float cameraYOffset)
         float fitNameY = cY + (carrierH - 8.0f * fitNamePx) * 0.5f;
         drawCompactText(r, atlas, nameX, fitNameY, fitNamePx, upperName, whiteCol, uiAlpha, true);
 
-        // Right team 3-letter tag
-        float tTextY = cY + (carrierH - 8.0f * tagPx) * 0.5f;
-        drawCompactTextCentered(r, atlas, cardX + carrierW - teamTagW * 0.5f - 1.5f * px, tTextY, tagPx, carrierTeamTag, mutedCol, uiAlpha, false);
+        // Right team club crest (or 3-letter team tag fallback)
+        const char *carrierTeamFull = carrierIsTop ? swos.topTeamInGame.teamName : swos.bottomTeamInGame.teamName;
+        float cLogoSz = std::max(10.0f, carrierH - 3.0f * px);
+        if (!drawClubLogo(r, carrierTeamFull, cardX + carrierW - cLogoSz - 2.5f * px, cY + (carrierH - cLogoSz) * 0.5f, cLogoSz, uiAlpha)) {
+            float tTextY = cY + (carrierH - 8.0f * tagPx) * 0.5f;
+            drawCompactTextCentered(r, atlas, cardX + carrierW - teamTagW * 0.5f - 1.5f * px, tTextY, tagPx, carrierTeamTag, mutedCol, uiAlpha, false);
+        }
     }
 
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);

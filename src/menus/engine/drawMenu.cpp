@@ -10,6 +10,7 @@
 #include "timer.h"
 #include "hotseatCareer.h"
 #include "stadiumFacilities.h"
+#include "clubLogo.h"
 #include "hotseat/hotseatInternal.h"
 
 constexpr int kTooSmallHeightForFrame = 8;
@@ -119,6 +120,39 @@ void drawMenu(bool updateScreen /* = true */)
 
     drawSelectedFrame();
     drawCareerHubStadiumButton();
+#ifndef SWOS_TEST
+    {
+        auto packed = getCurrentPackedMenu();
+        if (packed && SwosVM::isSwosPtr(packed) && SwosVM::ptrToOffset(packed) == 482233 &&
+            (swos.g_gameType == kGameTypeCareer || swos.g_gameType == kGameTypeSeason)) {
+            SDL_Renderer *r = getRenderer();
+            if (r) {
+                float gameScale = getGameScale();
+                float offX = getGameScreenOffsetX();
+                float offY = getGameScreenOffsetY();
+                float origSX = 1.0f, origSY = 1.0f;
+                SDL_RenderGetScale(r, &origSX, &origSY);
+                SDL_RenderSetScale(r, 1.0f, 1.0f);
+                SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+
+                float badgeSz = 11.0f * gameScale;
+                const auto *hdr = reinterpret_cast<const TeamFileHeader *>(&SwosVM::g_memByte[CareerOffsets::kCareerTeam]);
+                if (hdr && hdr->teamName[0]) {
+                    // Left edge of Entry 1 (team name header box: x=99..221, y=0..14)
+                    drawClubLogo(r, hdr->teamName, offX + 101.0f * gameScale, offY + 1.5f * gameScale, badgeSz, 255);
+                }
+                std::string lKey = resolveCurrentCareerLeagueLogoKey();
+                if (!lKey.empty()) {
+                    // Right edge of Entry 2 (season year header box: x=222..312, y=0..14)
+                    drawLeagueLogo(r, lKey.c_str(), offX + 299.0f * gameScale, offY + 1.5f * gameScale, badgeSz, 255);
+                }
+
+                SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+                SDL_RenderSetScale(r, origSX, origSY);
+            }
+        }
+    }
+#endif
     if (updateScreen)
         flipInMenu();
 
