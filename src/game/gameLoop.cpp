@@ -236,6 +236,10 @@ void gameLoop(TeamGame *topTeam, TeamGame *bottomTeam)
         showPostMatchPressConferenceIfReady();
         onCareerMatchFinishedTransferImpact();
         onCareerMatchCompletedLlm(swos.statsTeam1Goals, swos.statsTeam2Goals);
+    } else {
+        // Match was aborted/canceled before finishing — discard any pending pre/post-match LLM state
+        resetPostMatchNewspaper();
+        resetPreMatchAssistantState();
     }
 }
 
@@ -251,9 +255,11 @@ void showStadiumScreenAndFadeOutMusic(TeamGame *topTeam, TeamGame *bottomTeam, i
             beginSponsorChallengeGeneration(topTeam, bottomTeam);
             beginPreMatchPressConference(topTeam, bottomTeam);
         });
-        showPreMatchAssistantMenuIfReady();
-        showPreMatchSponsorChallengeMenuIfReady();
-        showPreMatchPressConferenceIfReady();
+        if (!swos.gameCanceled) {
+            showPreMatchAssistantMenuIfReady();
+            showPreMatchSponsorChallengeMenuIfReady();
+            showPreMatchPressConferenceIfReady();
+        }
     } else {
         initMatch(topTeam, bottomTeam, true);
         applyPendingDressingRoomEffectsForMatch(topTeam, bottomTeam);
@@ -262,9 +268,11 @@ void showStadiumScreenAndFadeOutMusic(TeamGame *topTeam, TeamGame *bottomTeam, i
         beginPreMatchAssistantBriefing(topTeam, bottomTeam);
         beginSponsorChallengeGeneration(topTeam, bottomTeam);
         beginPreMatchPressConference(topTeam, bottomTeam);
-        showPreMatchAssistantMenuIfReady();
-        showPreMatchSponsorChallengeMenuIfReady();
-        showPreMatchPressConferenceIfReady();
+        if (!swos.gameCanceled) {
+            showPreMatchAssistantMenuIfReady();
+            showPreMatchSponsorChallengeMenuIfReady();
+            showPreMatchPressConferenceIfReady();
+        }
     }
 
     waitForMusicToFadeOut();

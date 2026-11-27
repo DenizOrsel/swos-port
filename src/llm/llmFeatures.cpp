@@ -771,7 +771,7 @@ void onViewResultMatchCompletedLlm()
         s_handledMatchInGameLoop = false;
         return;
     }
-    if (swos.g_trainingGame)
+    if (swos.g_trainingGame || swos.gameCanceled || swos.g_exitGameFlag != 0)
         return;
 
     const auto *t1File = swos.playMatchTeam1Ptr.asAligned();

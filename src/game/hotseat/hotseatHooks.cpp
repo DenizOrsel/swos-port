@@ -163,8 +163,10 @@ void Hotseat_OnAfterProcessCareerFile()
 void Hotseat_OnAfterPlayMatch()
 {
     HotseatCareerManager::get().onAfterPlayMatch();
-    applyPendingMatchdayGateReceiptsCharismaBonus();
-    onViewResultMatchCompletedLlm();
+    if (!swos.gameCanceled && swos.g_exitGameFlag == 0) {
+        applyPendingMatchdayGateReceiptsCharismaBonus();
+        onViewResultMatchCompletedLlm();
+    }
 }
 
 void InitializeNewSeason_OnEnter()
