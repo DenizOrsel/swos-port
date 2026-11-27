@@ -1468,13 +1468,20 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
         assertTrue(footSameSpotXg > headerXg);
         assertTrue(screamerXg >= 0.01 && screamerXg < 0.15);
 
-        // Player ratings: hat-trick hero near 10.0, red-card offender drops low, clean-sheet GK rewarded
-        double heroRating = computePlayerMatchRating(3, 1, 4, 1, 20, 1, 2, 0, 0, false, 0, 0, true, false);
-        double redRating = computePlayerMatchRating(0, 0, 0, 2, 4, 5, 0, 0, 0, false, 1, 1, false, true);
-        double gkHero = computePlayerMatchRating(0, 0, 0, 0, 12, 0, 0, 6, 0, true, 0, 0, true, false);
+        // Player ratings: hat-trick hero near 10.0, red-card offender drops low, clean-sheet GK rewarded,
+        // and position-balanced DEF (clean sheet + tackles) & MID (passes + tackles) can hit 7.5+ / 8.2+
+        double heroRating = computePlayerMatchRating(3, 1, 4, 1, 20, 1, 2, 0, 0, false, 0, 0, true, false, PlayerRatingRole::kAttacker);
+        double redRating = computePlayerMatchRating(0, 0, 0, 2, 4, 5, 0, 0, 0, false, 1, 1, false, true, PlayerRatingRole::kAttacker);
+        double gkHero = computePlayerMatchRating(0, 0, 0, 0, 12, 0, 0, 6, 0, true, 0, 0, true, false, PlayerRatingRole::kGoalkeeper);
+        double defWall = computePlayerMatchRating(0, 0, 0, 0, 6, 1, 3, 0, 0, false, 0, 0, true, false, PlayerRatingRole::kDefender);
+        double defScorer = computePlayerMatchRating(1, 0, 1, 0, 6, 1, 3, 0, 0, false, 0, 0, true, false, PlayerRatingRole::kDefender);
+        double midMaestro = computePlayerMatchRating(0, 0, 0, 0, 12, 1, 2, 0, 0, false, 0, 0, true, false, PlayerRatingRole::kMidfielder);
+        double midAssister = computePlayerMatchRating(0, 1, 1, 0, 12, 1, 2, 0, 0, false, 0, 0, true, false, PlayerRatingRole::kMidfielder);
         assertTrue(heroRating >= 9.5 && heroRating <= 10.0);
         assertTrue(redRating <= 4.5 && redRating >= 3.0);
         assertTrue(gkHero >= 8.5 && gkHero <= 10.0);
+        assertTrue(defWall >= 7.5 && defScorer >= 8.5);
+        assertTrue(midMaestro >= 7.5 && midAssister >= 8.2);
 
         // Telemetry V2 JSON file export structure check
         resetMatchTelemetry();

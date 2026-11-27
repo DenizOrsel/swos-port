@@ -1770,21 +1770,52 @@ double computeSwosShotXg(
     return std::clamp(xg, 0.01, 0.92);
 }
 
+static PlayerRatingRole ratingRoleForPlayer(int lineupIdx, PlayerPosition pos)
+{
+    if (lineupIdx == 0 || pos == PlayerPosition::kGoalkeeper)
+        return PlayerRatingRole::kGoalkeeper;
+    if (pos == PlayerPosition::kDefender || pos == PlayerPosition::kRightBack || pos == PlayerPosition::kLeftBack)
+        return PlayerRatingRole::kDefender;
+    if (pos == PlayerPosition::kMidfielder || pos == PlayerPosition::kRightWing || pos == PlayerPosition::kLeftWing)
+        return PlayerRatingRole::kMidfielder;
+    return PlayerRatingRole::kAttacker;
+}
+
 double computePlayerMatchRating(
     int goals, int assists, int shotsOnTarget, int shotsOffTarget,
     int passesCompleted, int turnovers, int tacklesWon,
     int gkSaves, int goalsConcededByGk, bool isGk,
-    int yellowCards, int redCards, bool wonMatch, bool lostMatch)
+    int yellowCards, int redCards, bool wonMatch, bool lostMatch,
+    PlayerRatingRole role)
 {
+    if (isGk)
+        role = PlayerRatingRole::kGoalkeeper;
+
+    // All positions receive full goal, assist, and shot-on-target credit
     double r = 6.0;
     r += static_cast<double>(goals) * 1.15;
     r += static_cast<double>(assists) * 0.65;
     r += static_cast<double>(shotsOnTarget) * 0.18;
     r -= static_cast<double>(shotsOffTarget) * 0.05;
-    r += std::min(1.0, static_cast<double>(passesCompleted) * 0.03);
-    r += std::min(1.1, static_cast<double>(tacklesWon) * 0.22);
+
+    // Role-balanced passing, tackling, and defensive clean-sheet credit
+    if (role == PlayerRatingRole::kDefender) {
+        r += std::min(1.10, static_cast<double>(passesCompleted) * 0.04);
+        r += std::min(1.60, static_cast<double>(tacklesWon) * 0.35);
+        if (goalsConcededByGk == 0)
+            r += 0.65;
+        else if (goalsConcededByGk >= 3)
+            r -= 0.20;
+    } else if (role == PlayerRatingRole::kMidfielder) {
+        r += std::min(1.50, static_cast<double>(passesCompleted) * 0.08);
+        r += std::min(1.40, static_cast<double>(tacklesWon) * 0.28);
+    } else {
+        r += std::min(1.00, static_cast<double>(passesCompleted) * 0.03);
+        r += std::min(1.10, static_cast<double>(tacklesWon) * 0.22);
+    }
+
     r -= std::min(1.2, static_cast<double>(turnovers) * 0.08);
-    if (isGk) {
+    if (role == PlayerRatingRole::kGoalkeeper) {
         r += std::min(2.2, static_cast<double>(gkSaves) * 0.35);
         r -= static_cast<double>(goalsConcededByGk) * 0.30;
         if (goalsConcededByGk == 0)
@@ -1824,7 +1855,8 @@ MatchMotmSummary getMatchManOfTheMatch()
             double rating = computePlayerMatchRating(
                 goals, pa.assists, sot, std::max(0, shots - sot),
                 pa.passesCompleted, pa.turnovers, pa.tacklesWon,
-                pa.gkSaves, oppGoals, isGk, pa.yellowCards, pa.redCards, won, lost);
+                pa.gkSaves, oppGoals, isGk, pa.yellowCards, pa.redCards, won, lost,
+                ratingRoleForPlayer(i, pl.position));
             if (!best.valid || rating > best.rating ||
                 (rating == best.rating && (goals + pa.assists) > (best.goals + best.assists))) {
                 best.valid = true;
@@ -1886,7 +1918,8 @@ PlayerTelemetryPerformance getPlayerMatchPerformance(int teamNum, int shirtNumbe
         out.rating = computePlayerMatchRating(
             out.goals, out.assists, sot, std::max(0, shots - sot),
             pa.passesCompleted, pa.turnovers, pa.tacklesWon,
-            pa.gkSaves, oppGoals, isGk, out.yellowCards, out.redCards, won, lost);
+            pa.gkSaves, oppGoals, isGk, out.yellowCards, out.redCards, won, lost,
+            ratingRoleForPlayer(i, pl.position));
         break;
     }
     return out;
@@ -1996,7 +2029,8 @@ bool exportMatchTelemetryJsonToPath(const std::string& fullPath)
             row.rating = computePlayerMatchRating(
                 row.goals, row.assists, row.shotsOnTarget, std::max(0, row.shots - row.shotsOnTarget),
                 row.passesCompleted, row.turnovers, row.tacklesWon,
-                row.gkSaves, oppGoals, isGk, row.yellowCards, row.redCards, won, lost);
+                row.gkSaves, oppGoals, isGk, row.yellowCards, row.redCards, won, lost,
+                ratingRoleForPlayer(i, pl.position));
             builtPlayers.push_back(std::move(row));
         }
     };

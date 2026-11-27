@@ -898,6 +898,15 @@ void showPreMatchAssistantMenuIfReady()
             drawCompactText(r, atlas, spotRect.x + 4.0f, spotRect.y + 3.0f + 9.0f * px * 0.80f,
                 fitPx(spotWho, px * 0.74f, spotRect.w - 8.0f), spotWho, spotOn ? yellowCol : mutedCol, 250, true);
             std::string spotRule = "Goal/Ast/7.5+: +1 VALUE! (8.2+: +1 SKILL)";
+            if (spotOn) {
+                const std::string& p = s_session.spotlightCandidates[s_session.plan.spotlightCandidateIndex].pos;
+                if (p == "DEF" || p == "RB" || p == "LB")
+                    spotRule = "G/A or CleanSheet+Tkl (7.5+ VAL / 8.2+ SKL)";
+                else if (p == "MID" || p == "RW" || p == "LW")
+                    spotRule = "G/A or Passes+Tackles (7.5+ VAL / 8.2+ SKL)";
+                else if (p == "GK")
+                    spotRule = "G/A or Saves+CleanSht (7.5+ VAL / 8.2+ SKL)";
+            }
             drawCompactText(r, atlas, spotRect.x + 4.0f, spotRect.y + 3.0f + 18.0f * px * 0.78f,
                 fitPx(spotRule, px * 0.68f, spotRect.w - 8.0f), spotRule, greenCol, 235, false);
         } else {

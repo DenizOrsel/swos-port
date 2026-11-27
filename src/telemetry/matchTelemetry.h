@@ -103,11 +103,19 @@ double computeSwosShotXg(
     bool isHeader, bool isPenalty, bool isFreeKick, bool isVolley,
     float& outDistYards, float& outAngleDeg);
 
+enum class PlayerRatingRole {
+    kAttacker = 0,
+    kMidfielder = 1,
+    kDefender = 2,
+    kGoalkeeper = 3,
+};
+
 double computePlayerMatchRating(
     int goals, int assists, int shotsOnTarget, int shotsOffTarget,
     int passesCompleted, int turnovers, int tacklesWon,
     int gkSaves, int goalsConcededByGk, bool isGk,
-    int yellowCards, int redCards, bool wonMatch, bool lostMatch);
+    int yellowCards, int redCards, bool wonMatch, bool lostMatch,
+    PlayerRatingRole role = PlayerRatingRole::kAttacker);
 
 struct MatchMotmSummary {
     bool valid = false;
