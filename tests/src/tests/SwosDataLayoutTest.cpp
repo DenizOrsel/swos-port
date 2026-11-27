@@ -1492,6 +1492,7 @@ void SwosDataLayoutTest::verifyLlmClientAndFeatures()
         std::string content((std::istreambuf_iterator<char>(jin)), std::istreambuf_iterator<char>());
         jin.close();
         assertTrue(content.find("\"schemaVersion\": 2") != std::string::npos);
+        assertTrue(content.find("\"careerSession\"") != std::string::npos);
         assertTrue(content.find("\"pitchDimensions\"") != std::string::npos);
         assertTrue(content.find("\"heatmaps\"") != std::string::npos);
         assertTrue(content.find("\"shots\"") != std::string::npos);

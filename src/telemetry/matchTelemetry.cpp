@@ -2050,6 +2050,55 @@ bool exportMatchTelemetryJsonToPath(const std::string& fullPath)
     f << "  \"matchId\": \"" << matchIdBuf << "\",\n";
     f << "  \"timestamp\": \"" << isoBuf << "\",\n";
     f << "  \"competition\": \"" << escapeLlmJson(snap.competition) << "\",\n";
+
+    // Top-level career & hotseat player identity for multi-player analytics filtering
+    {
+        bool isCareer = (swos.g_gameType == kGameTypeCareer);
+        const auto& mgr = HotseatCareerManager::get();
+        bool isHotseat = isCareer && mgr.isActive() && mgr.numPlayers() > 1 &&
+                         mgr.activePlayerIndex() >= 0 && mgr.activePlayerIndex() < mgr.numPlayers();
+        int playerIndex = 0;
+        int totalPlayers = 0;
+        int seasonNum = 0;
+        std::string managerName;
+        std::string clubName;
+        bool isHeadToHead = (snap.team1Human && snap.team2Human);
+
+        if (isHotseat) {
+            const auto& p = mgr.activePlayer();
+            playerIndex = mgr.activePlayerIndex() + 1;
+            totalPlayers = mgr.numPlayers();
+            managerName = p.managerName;
+            if (!p.managerSurname.empty()) {
+                if (!managerName.empty()) managerName += " ";
+                managerName += p.managerSurname;
+            }
+            clubName = p.teamName;
+            seasonNum = static_cast<int>(p.currentSeasonShowing) + 1;
+        } else if (isCareer) {
+            playerIndex = 1;
+            totalPlayers = 1;
+            std::string first = readBoundedAscii(&SwosVM::g_memByte[CareerOffsets::kManagerNameBuffer], 9);
+            std::string last = readBoundedAscii(&SwosVM::g_memByte[CareerOffsets::kManagerSurnameBuffer], 13);
+            managerName = first;
+            if (!last.empty()) {
+                if (!managerName.empty()) managerName += " ";
+                managerName += last;
+            }
+            clubName = snap.team1Human ? snap.team1 : (snap.team2Human ? snap.team2 : snap.team1);
+            seasonNum = static_cast<int>(*reinterpret_cast<const uint16_t *>(&SwosVM::g_memByte[CareerOffsets::kCurrentSeasonShowing])) + 1;
+        }
+
+        f << "  \"careerSession\": { \"isCareer\": " << (isCareer ? "true" : "false")
+          << ", \"isHotseat\": " << (isHotseat ? "true" : "false")
+          << ", \"playerIndex\": " << playerIndex
+          << ", \"totalPlayers\": " << totalPlayers
+          << ", \"managerName\": \"" << escapeLlmJson(managerName)
+          << "\", \"clubName\": \"" << escapeLlmJson(clubName)
+          << "\", \"season\": " << seasonNum
+          << ", \"isHeadToHead\": " << (isHeadToHead ? "true" : "false") << " },\n";
+    }
+
     f << "  \"pitch\": \"" << escapeLlmJson(snap.pitchCondition) << "\",\n";
     f << "  \"minute\": " << snap.minute << ",\n";
     f << "  \"half\": " << snap.half << ",\n";
