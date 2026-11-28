@@ -17,11 +17,17 @@ static bool isAbsolutePath(const char *path);
 static void traverseDirectory(DIR *dir, const char *extension, std::function<bool(const char *, int, const char *)> f);
 static bool isAnyExtensionAllowed(const char *ext, const char **allowedExtensions, int numAllowedExtensions);
 
-// Opens a file with consideration to SWOS root directory.
+// Opens a file with consideration to SWOS root directory (falling back to executable dir for bundled engine assets).
 SDL_RWops *openFile(const char *path, const char *mode /* = "rb" */)
 {
+    bool readOnly = (mode && mode[0] == 'r' && !strchr(mode, '+'));
 #ifdef _WIN32
     auto f = SDL_RWFromFile(isAbsolutePath(path) ? path : (m_rootDir + path).c_str(), mode);
+    if (!f && readOnly && !isAbsolutePath(path)) {
+        auto exe = exeDir();
+        if (!exe.empty() && exe != m_rootDir)
+            f = SDL_RWFromFile((exe + path).c_str(), mode);
+    }
 #else
     // convert every path to lower case and replace backslashes with forward slashes
     auto fullPath = isAbsolutePath(path) ? path : m_rootDir + path;
@@ -310,6 +316,36 @@ std::string pathInRootDir(const char *filename)
     return m_rootDir.empty() ? filename : m_rootDir + filename;
 }
 
+std::string exeDir()
+{
+#if defined(_WIN32) && !defined(SWOS_TEST)
+    static std::string s_exeDir;
+    static bool s_initialized = false;
+    if (!s_initialized) {
+        s_initialized = true;
+        char buf[MAX_PATH] = {};
+        DWORD len = ::GetModuleFileNameA(nullptr, buf, MAX_PATH);
+        if (len > 0 && len < MAX_PATH) {
+            std::string full(buf, len);
+            size_t slash = full.find_last_of("\\/");
+            if (slash != std::string::npos)
+                s_exeDir = full.substr(0, slash + 1);
+        }
+    }
+    return s_exeDir;
+#else
+    return {};
+#endif
+}
+
+std::string pathInExeDir(const char *filename)
+{
+    auto base = exeDir();
+    if (base.empty())
+        return pathInRootDir(filename);
+    return base + filename;
+}
+
 int pathCompare(const char *path1, const char *path2)
 {
     return isFileSystemCaseSensitive() ? strcmp(path1, path2) : _stricmp(path1, path2);
@@ -355,6 +391,30 @@ bool dirExists(const char *path)
 #else
 # error Please implement platform specific dirExists()
 #endif
+}
+
+std::string resolveModAssetPath(const char *relPath)
+{
+    if (!relPath || !relPath[0])
+        return {};
+    if (isAbsolutePath(relPath))
+        return relPath;
+
+    auto exe = exeDir();
+    if (!exe.empty()) {
+        std::string inExe = exe + relPath;
+        if (fileExists(inExe.c_str()) || dirExists(inExe.c_str()))
+            return inExe;
+    }
+
+    std::string inRoot = pathInRootDir(relPath);
+    if (fileExists(inRoot.c_str()) || dirExists(inRoot.c_str()))
+        return inRoot;
+
+    if (fileExists(relPath) || dirExists(relPath))
+        return relPath;
+
+    return !exe.empty() ? (exe + relPath) : inRoot;
 }
 
 bool createDir(const char *path)

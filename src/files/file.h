@@ -12,6 +12,9 @@ bool renameFile(const char *oldPath, const char *newPath);
 void setRootDir(const char *dir);
 std::string rootDir();
 std::string pathInRootDir(const char *filename);
+std::string exeDir();
+std::string pathInExeDir(const char *filename);
+std::string resolveModAssetPath(const char *relPath);
 
 #ifdef _WIN32
 # define DIR_SEPARATOR "\\"

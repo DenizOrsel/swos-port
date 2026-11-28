@@ -60,6 +60,12 @@ def parseArgs() -> argparse.Namespace:
         action="store_true",
         help="package existing outputs without building (intended for diagnostics only)",
     )
+    parser.add_argument(
+        "--no-logos",
+        dest="noLogos",
+        action="store_true",
+        help="exclude third-party club/league logos from assets/logos/",
+    )
     return parser.parse_args()
 
 
@@ -228,7 +234,7 @@ def collectEngineFiles(args: argparse.Namespace, files: dict[str, PackageFile]) 
         addTree(files, newspaperArtDir, "assets/newspaper")
 
     logosArtDir = ROOT / "assets" / "logos"
-    if logosArtDir.is_dir():
+    if not args.noLogos and logosArtDir.is_dir():
         addTree(files, logosArtDir, "assets/logos")
 
     crowdArtDir = ROOT / "assets" / "crowd"
@@ -374,18 +380,30 @@ def writeZip(
     }
 
     if engineOnly:
-        instructions = """SWOS port development demo - Windows x64 engine package
+        instructions = """SWOS-Port — Windows x64 Distribution (No Original SWOS Data Included)
 
-THIS IS A DEVELOPMENT DEMO. Its files and content are placeholders used to test
-the port. This archive is not the final game or a finished release.
+This package contains the SWOS-Port engine, custom HD spectator animations,
+stadium & facility artwork, club/league logos, and telemetry/AI features.
+It does NOT include any original copyrighted SWOS 96/97 game data, audio, or music.
 
-This archive does not contain original SWOS game data, commentary, sound effects,
-or music. Run it against an existing installation:
+HOW TO PLAY (Choose any option):
 
-    swos-port.exe --swos-dir=C:\\path\\to\\SWOS
+1. FIRST-LAUNCH FOLDER PICKER (Easiest):
+   Extract this zip and double-click swos-port.exe.
+   When prompted, select POOLPLYR.DAT (or any TEAM.* file) inside your original
+   SWOS 96/97 DATA folder. SWOS-Port saves the path to swos.ini automatically.
 
-For a self-contained package, run tools/packageWindows.py locally with --swos-dir.
-See docs/deployment.md for the required data layout.
+2. DROP-IN DATA FOLDER:
+   Copy your original SWOS 96/97 DATA folder directly into this swos-port folder
+   (alongside swos-port.exe) and double-click swos-port.exe.
+   Optional original files you can also copy for full audio & backdrops:
+     - CUSTOMS.EDT
+     - audio\\fx\\ and audio\\commentary.zip
+     - menu.mp3 / title.mp3
+     - assets\\{4k,hd,low-res}\\swtitle.* and stad.*
+
+3. COMMAND LINE:
+   swos-port.exe --swos-dir="C:\\path\\to\\your\\SWOS"
 """
     else:
         instructions = """SWOS port development demo - Windows x64 full package
@@ -427,13 +445,15 @@ dressingRoomVoices = true
 livePunditTicker = true
 supporterStream = true
 sponsorChallenges = true
+pressConferences = true
 cpuTacticalManager = false
 
 [telemetry]
 enabled = true
-exportMatchJson = false
+exportMatchJson = true
 streamUpdateSeconds = 18
 maxVisibleTweets = 5
+streamBoxHeightPct = 62
 
 [voice]
 enabled = true

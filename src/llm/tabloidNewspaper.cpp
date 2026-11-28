@@ -67,7 +67,7 @@ static SDL_Texture *getMotmPortraitTexture(SDL_Renderer *r, const TabloidMotmCar
     s_attempted[idx] = true;
 
     std::string rel = "assets/newspaper/motm_" + std::to_string(idx + 1) + ".png";
-    std::string full = pathInRootDir(rel.c_str());
+    std::string full = resolveModAssetPath(rel.c_str());
     SDL_Texture *tex = IMG_LoadTexture(r, full.c_str());
     if (!tex)
         tex = IMG_LoadTexture(r, rel.c_str());

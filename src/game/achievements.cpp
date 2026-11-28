@@ -201,7 +201,7 @@ std::string resolveProfilePath(const std::string& customPath)
 {
     if (!customPath.empty())
         return customPath;
-    return pathInRootDir(kDefaultProfileFilename);
+    return pathInExeDir(kDefaultProfileFilename);
 }
 
 void recomputeProfileTotalsLocked()

@@ -48,6 +48,8 @@ int main(int argc, char **argv)
     initLlmClient();
     initAchievements();
     parseCommandLine(argc, argv);   // parse command line options again to override ini settings
+    if (!ensureSwosDataDirectory())
+        return EXIT_SUCCESS;
     setSdlHints();
 
     auto flags = IMG_INIT_JPG | IMG_INIT_PNG;

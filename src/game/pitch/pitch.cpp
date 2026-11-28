@@ -265,7 +265,7 @@ static SDL_Texture *buildPixelLabCrowdAtlasForTeam(const TeamGame& team)
     constexpr int kNumTiles = 26;
 
     // Quick existence probe on the first tile so we fall back cleanly if assets/crowd is absent
-    std::string probePath = pathInRootDir(kCrowdTileFiles[0]);
+    std::string probePath = resolveModAssetPath(kCrowdTileFiles[0]);
     SDL_Surface *probe = IMG_Load(probePath.c_str());
     if (!probe)
         return nullptr;
@@ -286,7 +286,7 @@ static SDL_Texture *buildPixelLabCrowdAtlasForTeam(const TeamGame& team)
     auto *atlasPixels = static_cast<uint8_t *>(atlas->pixels);
 
     for (int t = 0; t < kNumTiles; ++t) {
-        std::string fullPath = pathInRootDir(kCrowdTileFiles[t]);
+        std::string fullPath = resolveModAssetPath(kCrowdTileFiles[t]);
         SDL_Surface *raw = IMG_Load(fullPath.c_str());
         if (!raw) {
             SDL_UnlockSurface(atlas);

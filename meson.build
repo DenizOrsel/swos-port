@@ -76,6 +76,7 @@ commonLibraries = [
     cppCompiler.find_library('winmm'),
     cppCompiler.find_library('winhttp'),
     cppCompiler.find_library('ole32'),
+    cppCompiler.find_library('comdlg32'),
     cppCompiler.find_library('gdi32'),
     cppCompiler.find_library('user32'),
 ]

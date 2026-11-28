@@ -80,7 +80,7 @@ void ensureManifestLoaded()
     s_cache.manifestLoaded = true;
 
     std::string rel = "assets/logos/manifest.txt";
-    std::string full = pathInRootDir(rel.c_str());
+    std::string full = resolveModAssetPath(rel.c_str());
     std::ifstream in(full);
     if (!in.is_open())
         in.open(rel);
@@ -103,7 +103,7 @@ void ensureManifestLoaded()
 SDL_Texture *loadLogoFile(SDL_Renderer *r, const std::string& relUnderLogos)
 {
     std::string rel = "assets/logos/" + relUnderLogos;
-    std::string full = pathInRootDir(rel.c_str());
+    std::string full = resolveModAssetPath(rel.c_str());
     SDL_Texture *tex = IMG_LoadTexture(r, full.c_str());
     if (!tex)
         tex = IMG_LoadTexture(r, rel.c_str());

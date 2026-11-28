@@ -431,7 +431,12 @@ void shutdownLlmClient()
 
 bool loadLlmConfig(const char *iniPath /* = nullptr */)
 {
-    std::string resolvedPath = iniPath ? std::string(iniPath) : pathInRootDir(kAiIniFilename);
+    std::string resolvedPath = iniPath ? std::string(iniPath) : pathInExeDir(kAiIniFilename);
+    if (!iniPath && !fileExists(resolvedPath.c_str())) {
+        std::string inRoot = pathInRootDir(kAiIniFilename);
+        if (fileExists(inRoot.c_str()))
+            resolvedPath = inRoot;
+    }
 
     std::unique_lock<std::mutex> lock(s_configMutex);
     s_config = LlmConfig{};
@@ -567,11 +572,14 @@ bool reloadLlmKnowledgeBase(const char *overridePath)
 
     std::vector<std::string> candidates;
     if (!cfgPath.empty()) {
+        candidates.push_back(resolveModAssetPath(cfgPath.c_str()));
         candidates.push_back(cfgPath);
         candidates.push_back(pathInRootDir(cfgPath.c_str()));
     }
+    candidates.push_back(resolveModAssetPath("docs\\features\\swos_1996_97_european_football_knowledge_base.md"));
     candidates.push_back(pathInRootDir("docs\\features\\swos_1996_97_european_football_knowledge_base.md"));
     candidates.push_back("docs\\features\\swos_1996_97_european_football_knowledge_base.md");
+    candidates.push_back(resolveModAssetPath("swos_1996_97_european_football_knowledge_base.md"));
     candidates.push_back(pathInRootDir("swos_1996_97_european_football_knowledge_base.md"));
 
     std::string loaded;
@@ -604,7 +612,12 @@ const std::string& getLoadedLlmKnowledgeBase()
 
 bool saveLlmConfig(const char *iniPath /* = nullptr */)
 {
-    std::string resolvedPath = iniPath ? std::string(iniPath) : pathInRootDir(kAiIniFilename);
+    std::string resolvedPath = iniPath ? std::string(iniPath) : pathInExeDir(kAiIniFilename);
+    if (!iniPath && !fileExists(resolvedPath.c_str())) {
+        std::string inRoot = pathInRootDir(kAiIniFilename);
+        if (fileExists(inRoot.c_str()))
+            resolvedPath = inRoot;
+    }
     LlmConfig copy;
     {
         std::lock_guard<std::mutex> lock(s_configMutex);

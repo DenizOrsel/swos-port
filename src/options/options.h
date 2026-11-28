@@ -7,6 +7,7 @@ enum GameStyle {
 
 void loadOptions();
 void saveOptions();
+bool ensureSwosDataDirectory();
 std::vector<LogItem> parseCommandLine(int argc, char **argv);
 void normalizeOptions();
 

@@ -176,11 +176,18 @@ static std::pair<Mix_Music *, std::string> loadMixMusicFile(const char *name)
 
     for (const auto ext : { "mp3", "ogg", "wav", "flac", "mid", }) {
         auto filename = nameStr + ext;
-        auto path = rootDir() + filename;
+        auto path = pathInRootDir(filename.c_str());
 
         auto music = Mix_LoadMUS(path.c_str());
         if (music)
             return { music, filename };
+
+        auto exePath = pathInExeDir(filename.c_str());
+        if (exePath != path) {
+            music = Mix_LoadMUS(exePath.c_str());
+            if (music)
+                return { music, filename };
+        }
     }
 
     return {};

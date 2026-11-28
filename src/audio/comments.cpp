@@ -299,7 +299,12 @@ static void loadZipComments()
     };
 
     const auto& relativePath = joinPaths("audio", "commentary.zip");
-    const auto& zipPath = pathInRootDir(relativePath.c_str());
+    auto zipPath = pathInRootDir(relativePath.c_str());
+    if (!fileExists(zipPath.c_str())) {
+        auto exeZip = pathInExeDir(relativePath.c_str());
+        if (fileExists(exeZip.c_str()))
+            zipPath = exeZip;
+    }
 
     logInfo("Loading zipped commentaries...");
     if (traverseZipFile(zipPath.c_str(), filterCustomComments, processCommentData))

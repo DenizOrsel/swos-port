@@ -2321,7 +2321,7 @@ void finalizeMatchTelemetry()
         return;
     }
 
-    std::string dir = pathInRootDir("telemetry");
+    std::string dir = pathInExeDir("telemetry");
     if (!dirExists(dir.c_str()))
         createDir(dir.c_str());
 

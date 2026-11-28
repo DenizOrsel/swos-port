@@ -41,11 +41,19 @@ void drawMenuBackground()
         SDL_FRect dst{ (viewPort.w - w) / 2, (viewPort.h - h) / 2, w, h };
         SDL_RenderCopyF(renderer, m_background, &src, &dst);
     } else {
-        // just fill it with black if no image
-        auto scale = getGameScale();
-        SDL_FRect dst{ getGameScreenOffsetX(), getGameScreenOffsetY(), scale * kVgaWidth, scale * kVgaHeight };
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-        SDL_RenderFillRectF(renderer, &dst);
+        // Sleek fallback stadium-navy gradient when swtitle/stad background image is not present
+        auto viewPort = getViewport();
+        constexpr int kBands = 16;
+        float bandH = static_cast<float>(viewPort.h) / static_cast<float>(kBands);
+        for (int b = 0; b < kBands; ++b) {
+            float t = static_cast<float>(b) / static_cast<float>(kBands - 1);
+            Uint8 rr = static_cast<Uint8>(10.0f + t * 8.0f);
+            Uint8 gg = static_cast<Uint8>(18.0f + t * 22.0f);
+            Uint8 bb = static_cast<Uint8>(34.0f - t * 6.0f);
+            SDL_SetRenderDrawColor(renderer, rr, gg, bb, 255);
+            SDL_FRect band{ 0.0f, std::floor(b * bandH), static_cast<float>(viewPort.w), std::ceil(bandH) + 1.0f };
+            SDL_RenderFillRectF(renderer, &band);
+        }
     }
 }
 
@@ -111,9 +119,15 @@ static void reloadMenuBackground(AssetResolution, AssetResolution)
 static SDL_RWops *openImageFile(const std::string& path)
 {
     for (auto ext : { "png", "jpg", "jpeg", "bmp", }) {
-        const auto& rootPath = pathInRootDir((path + '.' + ext).c_str());
+        const auto rel = path + '.' + ext;
+        const auto rootPath = pathInRootDir(rel.c_str());
         if (auto f = SDL_RWFromFile(rootPath.c_str(), "rb"))
             return f;
+        const auto exePath = pathInExeDir(rel.c_str());
+        if (exePath != rootPath) {
+            if (auto f = SDL_RWFromFile(exePath.c_str(), "rb"))
+                return f;
+        }
     }
 
     return nullptr;

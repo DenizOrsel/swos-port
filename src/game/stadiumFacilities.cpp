@@ -1616,7 +1616,7 @@ static SDL_Texture *getFacilityArtTexture(SDL_Renderer *r, StadiumModuleType mod
 
     static const char *const kModNames[5] = { "capacity", "pitch", "training", "medical", "commercial" };
     std::string rel = std::string("assets/facilities/") + kModNames[mi] + "_" + std::to_string(ti + 1) + ".png";
-    std::string full = pathInRootDir(rel.c_str());
+    std::string full = resolveModAssetPath(rel.c_str());
 
     SDL_Texture *tex = IMG_LoadTexture(r, full.c_str());
     if (!tex)
@@ -1639,7 +1639,7 @@ static SDL_Texture *getConstructionAnimFrame(SDL_Renderer *r, int frameIdx)
     s_attempted[idx] = true;
 
     std::string rel = "assets/facilities/construction_" + std::to_string(idx) + ".png";
-    std::string full = pathInRootDir(rel.c_str());
+    std::string full = resolveModAssetPath(rel.c_str());
     SDL_Texture *tex = IMG_LoadTexture(r, full.c_str());
     if (!tex)
         tex = IMG_LoadTexture(r, rel.c_str());

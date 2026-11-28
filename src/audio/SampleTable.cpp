@@ -64,7 +64,12 @@ void SampleTable::loadSamples(const std::string& baseDir)
     m_lastPlayedIndex = -1;
 
     const auto& dirPrefix = joinPaths(baseDir.c_str(), m_dir) + getDirSeparator();
-    const auto& dirFullPath = pathInRootDir(dirPrefix.c_str());
+    auto dirFullPath = pathInRootDir(dirPrefix.c_str());
+    if (!dirExists(dirFullPath.c_str())) {
+        auto exePath = pathInExeDir(dirPrefix.c_str());
+        if (dirExists(exePath.c_str()))
+            dirFullPath = exePath;
+    }
 
     traverseDirectory(dirFullPath.c_str(), nullptr, [&](const char *filename, int len, const char *) {
         auto samplePath = dirPrefix + filename;
