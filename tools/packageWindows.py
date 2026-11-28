@@ -231,6 +231,10 @@ def collectEngineFiles(args: argparse.Namespace, files: dict[str, PackageFile]) 
     if logosArtDir.is_dir():
         addTree(files, logosArtDir, "assets/logos")
 
+    crowdArtDir = ROOT / "assets" / "crowd"
+    if crowdArtDir.is_dir():
+        addTree(files, crowdArtDir, "assets/crowd")
+
     if args.includeSymbols:
         pdb = exe.with_suffix(".pdb")
         addFile(files, requireFile(pdb, "Release symbols"), pdb.name)

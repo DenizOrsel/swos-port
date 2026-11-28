@@ -15,6 +15,7 @@
 #include "crowdData.h"
 #include "color.h"
 #include "stadiumFacilities.h"
+#include <cmath>
 
 constexpr int kSwosPatternSize = 16;
 
@@ -47,6 +48,7 @@ static Uint32 m_lastZoomChangeTicks;
 static bool m_loadedWithWeatherGrading = false;
 static int m_loadedPitchType = -1;
 static std::array<SDL_Texture *, 2> m_crowdTextures = { nullptr, nullptr };
+static bool m_usingPixelLabCrowd = false;
 static int m_crowdCheerLevel[2] = { 0, 0 }; // 0=idle, 1=medium, 2=wild cheering
 static uint32_t m_crowdAnimTick = 0;
 
@@ -202,7 +204,140 @@ static void destroyCrowdTextures()
     }
 }
 
-static SDL_Texture *buildCrowdAtlasForTeam(const TeamGame& team)
+static void recolorCrowdPixelForTeam(uint8_t& r, uint8_t& g, uint8_t& b, const Color& primary, const Color& secondary)
+{
+    float rf = r / 255.0f;
+    float gf = g / 255.0f;
+    float bf = b / 255.0f;
+    float maxC = std::max({ rf, gf, bf });
+    float minC = std::min({ rf, gf, bf });
+    float delta = maxC - minC;
+    if (maxC < 0.16f || delta < 0.08f)
+        return;
+
+    float sat = delta / maxC;
+    float hue = 0.0f;
+    if (maxC == rf)
+        hue = 60.0f * std::fmod(((gf - bf) / delta) + 6.0f, 6.0f);
+    else if (maxC == gf)
+        hue = 60.0f * (((bf - rf) / delta) + 2.0f);
+    else
+        hue = 60.0f * (((rf - gf) / delta) + 4.0f);
+
+    auto applyTargetColor = [&](const Color& target) {
+        // Lift pure black kits slightly so shading folds remain legible
+        float tr = (target.r < 24 && target.g < 24 && target.b < 24) ? 46.0f : static_cast<float>(target.r);
+        float tg = (target.r < 24 && target.g < 24 && target.b < 24) ? 50.0f : static_cast<float>(target.g);
+        float tb = (target.r < 24 && target.g < 24 && target.b < 24) ? 58.0f : static_cast<float>(target.b);
+        float lum = 0.36f + 0.72f * maxC;
+        r = static_cast<uint8_t>(std::clamp(static_cast<int>(std::round(tr * lum)), 0, 255));
+        g = static_cast<uint8_t>(std::clamp(static_cast<int>(std::round(tg * lum)), 0, 255));
+        b = static_cast<uint8_t>(std::clamp(static_cast<int>(std::round(tb * lum)), 0, 255));
+    };
+
+    // Pure crimson red jerseys -> primary team shirt color (never touches warm peach skin H in [16..45])
+    if ((hue <= 13.5f || hue >= 336.0f) && sat >= 0.44f) {
+        applyTargetColor(primary);
+    } else if (hue >= 196.0f && hue <= 258.0f && sat >= 0.42f) {
+        // Pure cobalt blue scarves/caps -> secondary team color
+        applyTargetColor(secondary);
+    }
+}
+
+static SDL_Texture *buildPixelLabCrowdAtlasForTeam(const TeamGame& team)
+{
+    auto renderer = getRenderer();
+    if (!renderer)
+        return nullptr;
+
+    static const char *const kCrowdTileFiles[26] = {
+        "assets/crowd/top_a_0.png", "assets/crowd/top_a_1.png", "assets/crowd/top_a_2.png", "assets/crowd/top_a_3.png", "assets/crowd/top_a_4.png",
+        "assets/crowd/top_b_0.png", "assets/crowd/top_b_1.png", "assets/crowd/top_b_2.png", "assets/crowd/top_b_3.png", "assets/crowd/top_b_4.png",
+        "assets/crowd/top_stairs.png",
+        "assets/crowd/bot_front_0.png", "assets/crowd/bot_front_1.png", "assets/crowd/bot_front_2.png", "assets/crowd/bot_front_3.png", "assets/crowd/bot_front_4.png",
+        "assets/crowd/bot_a_0.png", "assets/crowd/bot_a_1.png", "assets/crowd/bot_a_2.png", "assets/crowd/bot_a_3.png", "assets/crowd/bot_a_4.png",
+        "assets/crowd/bot_b_0.png", "assets/crowd/bot_b_1.png", "assets/crowd/bot_b_2.png", "assets/crowd/bot_b_3.png", "assets/crowd/bot_b_4.png",
+    };
+
+    constexpr int kTileSize = 64;
+    constexpr int kPad = 2;
+    constexpr int kCellStride = kTileSize + kPad * 2;
+    constexpr int kNumTiles = 26;
+
+    // Quick existence probe on the first tile so we fall back cleanly if assets/crowd is absent
+    std::string probePath = pathInRootDir(kCrowdTileFiles[0]);
+    SDL_Surface *probe = IMG_Load(probePath.c_str());
+    if (!probe)
+        return nullptr;
+    SDL_FreeSurface(probe);
+
+    SDL_Surface *atlas = SDL_CreateRGBSurfaceWithFormat(0, kNumTiles * kCellStride, kCellStride, 32, SDL_PIXELFORMAT_RGBA32);
+    if (!atlas)
+        return nullptr;
+
+    const Color& primary = kGamePalette[team.prShirtCol & 0x0f];
+    uint8_t secIdx = team.prShortsCol & 0x0f;
+    if (team.prShirtType != 0 && (team.prStripesCol & 0x0f) != (team.prShirtCol & 0x0f))
+        secIdx = team.prStripesCol & 0x0f;
+    const Color& secondary = kGamePalette[secIdx];
+
+    SDL_LockSurface(atlas);
+    const int atlasPitch = atlas->pitch;
+    auto *atlasPixels = static_cast<uint8_t *>(atlas->pixels);
+
+    for (int t = 0; t < kNumTiles; ++t) {
+        std::string fullPath = pathInRootDir(kCrowdTileFiles[t]);
+        SDL_Surface *raw = IMG_Load(fullPath.c_str());
+        if (!raw) {
+            SDL_UnlockSurface(atlas);
+            SDL_FreeSurface(atlas);
+            return nullptr;
+        }
+        SDL_Surface *rgba = SDL_ConvertSurfaceFormat(raw, SDL_PIXELFORMAT_RGBA32, 0);
+        SDL_FreeSurface(raw);
+        if (!rgba) {
+            SDL_UnlockSurface(atlas);
+            SDL_FreeSurface(atlas);
+            return nullptr;
+        }
+
+        SDL_LockSurface(rgba);
+        const int sw = rgba->w;
+        const int sh = rgba->h;
+        const int srcPitch = rgba->pitch;
+        const auto *srcPixels = static_cast<const uint8_t *>(rgba->pixels);
+        const int baseX = t * kCellStride;
+
+        for (int cy = 0; cy < kCellStride; ++cy) {
+            int sy = std::clamp(cy - kPad, 0, kTileSize - 1);
+            int mappedY = (sy * sh) / kTileSize;
+            const auto *srcRow = reinterpret_cast<const uint32_t *>(srcPixels + mappedY * srcPitch);
+            auto *dstRow = reinterpret_cast<uint32_t *>(atlasPixels + cy * atlasPitch);
+            for (int cx = 0; cx < kCellStride; ++cx) {
+                int sx = std::clamp(cx - kPad, 0, kTileSize - 1);
+                int mappedX = (sx * sw) / kTileSize;
+                uint8_t r, g, b, a;
+                SDL_GetRGBA(srcRow[mappedX], rgba->format, &r, &g, &b, &a);
+                if (a > 0)
+                    recolorCrowdPixelForTeam(r, g, b, primary, secondary);
+                dstRow[baseX + cx] = SDL_MapRGBA(atlas->format, r, g, b, a);
+            }
+        }
+        SDL_UnlockSurface(rgba);
+        SDL_FreeSurface(rgba);
+    }
+
+    SDL_UnlockSurface(atlas);
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, atlas);
+    SDL_FreeSurface(atlas);
+    if (tex) {
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(tex, SDL_ScaleModeNearest);
+    }
+    return tex;
+}
+
+static SDL_Texture *buildLegacyCrowdAtlasForTeam(const TeamGame& team)
 {
     auto renderer = getRenderer();
     if (!renderer)
@@ -261,6 +396,7 @@ static SDL_Texture *buildCrowdAtlasForTeam(const TeamGame& team)
 static void loadCrowdTextures()
 {
     destroyCrowdTextures();
+    m_usingPixelLabCrowd = false;
     m_crowdCheerLevel[0] = 0;
     m_crowdCheerLevel[1] = 0;
     m_crowdAnimTick = 0;
@@ -268,8 +404,20 @@ static void loadCrowdTextures()
     if (swos.g_trainingGame)
         return;
 
-    m_crowdTextures[0] = buildCrowdAtlasForTeam(swos.topTeamInGame);
-    m_crowdTextures[1] = buildCrowdAtlasForTeam(swos.bottomTeamInGame);
+    SDL_Texture *hdTop = buildPixelLabCrowdAtlasForTeam(swos.topTeamInGame);
+    SDL_Texture *hdBot = hdTop ? buildPixelLabCrowdAtlasForTeam(swos.bottomTeamInGame) : nullptr;
+    if (hdTop && hdBot) {
+        m_crowdTextures[0] = hdTop;
+        m_crowdTextures[1] = hdBot;
+        m_usingPixelLabCrowd = true;
+        logInfo("Loaded HD PixelLab animated stadium spectators (64x64, 5 frames)");
+        return;
+    }
+    if (hdTop) SDL_DestroyTexture(hdTop);
+    if (hdBot) SDL_DestroyTexture(hdBot);
+
+    m_crowdTextures[0] = buildLegacyCrowdAtlasForTeam(swos.topTeamInGame);
+    m_crowdTextures[1] = buildLegacyCrowdAtlasForTeam(swos.bottomTeamInGame);
 }
 
 void loadPitch()
@@ -613,16 +761,51 @@ static void drawPitch(float xOfs, float yOfs, int row, int column, int numPatter
             if (crowdBase >= 0) {
                 int standIdx = (i <= 2) ? 0 : 1;
                 int cheer = m_crowdCheerLevel[standIdx];
-                bool wave = false;
-                if (cheer == 2) {
-                    wave = (((m_crowdAnimTick / 6) + static_cast<uint32_t>(i * 3 + j)) & 1) != 0;
-                } else if (cheer == 1) {
-                    wave = (((m_crowdAnimTick / 10) + static_cast<uint32_t>(i * 5 + j * 7)) % 3) == 0;
+                SDL_Rect srcRect{};
+                if (m_usingPixelLabCrowd) {
+                    int cellIdx = 0;
+                    if (standIdx == 0 && (crowdBase == 8 || crowdBase == 10)) {
+                        cellIdx = 10; // top concrete stairway aisle
+                    } else {
+                        int frame = 0;
+                        static constexpr int kWaveSeq[8] = { 0, 1, 2, 3, 4, 3, 2, 1 };
+                        if (cheer == 2) {
+                            // Goal eruption: rapid full 5-frame cheering bounce rippled across stand
+                            uint32_t phase = ((m_crowdAnimTick / 4) + static_cast<uint32_t>(i * 2 + j)) % 8u;
+                            frame = kWaveSeq[phase];
+                        } else if (cheer == 1) {
+                            // Intro / post-goal ripple: rhythmic Mexican wave
+                            uint32_t phase = ((m_crowdAnimTick / 7) + static_cast<uint32_t>(i * 3 + j)) % 10u;
+                            frame = (phase < 5u) ? static_cast<int>(phase) : (phase < 8u ? static_cast<int>(8u - phase) : 0);
+                        } else {
+                            // Calm live play: mostly seated/idle with subtle organic rustle
+                            uint32_t slot = ((m_crowdAnimTick / 16) + static_cast<uint32_t>(i * 7 + j * 11)) % 13u;
+                            frame = (slot == 0u) ? 1 : ((slot == 1u) ? 2 : 0);
+                        }
+
+                        if (standIdx == 0) {
+                            int base = (((i + j) & 1) == 0) ? 0 : 5; // top_a / top_b
+                            cellIdx = base + frame;
+                        } else if (i == 50) {
+                            cellIdx = 11 + frame; // bot_front (transparent top edge over real pitch grass)
+                        } else {
+                            int base = (((i + j) & 1) == 0) ? 16 : 21; // bot_a / bot_b
+                            cellIdx = base + frame;
+                        }
+                    }
+                    srcRect = { cellIdx * 68 + 2, 2, 64, 64 };
                 } else {
-                    wave = (((m_crowdAnimTick / 18) + static_cast<uint32_t>(i * 11 + j * 13)) % 11) == 0;
+                    bool wave = false;
+                    if (cheer == 2) {
+                        wave = (((m_crowdAnimTick / 6) + static_cast<uint32_t>(i * 3 + j)) & 1) != 0;
+                    } else if (cheer == 1) {
+                        wave = (((m_crowdAnimTick / 10) + static_cast<uint32_t>(i * 5 + j * 7)) % 3) == 0;
+                    } else {
+                        wave = (((m_crowdAnimTick / 18) + static_cast<uint32_t>(i * 11 + j * 13)) % 11) == 0;
+                    }
+                    int tileIdx = crowdBase + (wave ? 1 : 0);
+                    srcRect = { tileIdx * 20 + 2, 2, 16, 16 };
                 }
-                int tileIdx = crowdBase + (wave ? 1 : 0);
-                SDL_Rect srcRect{ tileIdx * 20 + 2, 2, 16, 16 };
                 SDL_FRect dstRect{ currentXOfs, currentYOfs, destPatternSize, destPatternSize };
                 renderPatterns[numPatterns++] = { srcRect, dstRect, m_crowdTextures[standIdx], static_cast<int8_t>(16 + standIdx) };
             }
