@@ -1099,8 +1099,16 @@ std::string computeTimePressureTag(int minute, int goals1, int goals2, bool play
     return "OPEN PLAY";
 }
 
+static bool s_matchForfeitedEarly = false;
+
+void markMatchForfeitedEarly()
+{
+    s_matchForfeitedEarly = true;
+}
+
 void resetMatchTelemetry()
 {
+    s_matchForfeitedEarly = false;
     resetGoalToaster();
     s_frameCounter = 0;
     s_lastCornerFrame = 0;
@@ -2307,6 +2315,11 @@ void finalizeMatchTelemetry()
     const auto& cfg = getLlmConfig();
     if (!cfg.telemetry.enabled || !cfg.telemetry.exportMatchJson || swos.g_trainingGame)
         return;
+
+    if (s_matchForfeitedEarly) {
+        logInfo("Skipping Telemetry V2 JSON export: match was forfeited/aborted early");
+        return;
+    }
 
     std::string dir = pathInRootDir("telemetry");
     if (!dirExists(dir.c_str()))

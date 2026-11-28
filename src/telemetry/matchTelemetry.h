@@ -75,6 +75,7 @@ struct MatchTelemetrySnapshot {
 };
 
 void resetMatchTelemetry();
+void markMatchForfeitedEarly();
 void updateMatchTelemetry();
 void recordTelemetryMatchEvent(const char *eventType, bool isGoalEvent = false);
 void finalizeMatchTelemetry();

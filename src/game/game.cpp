@@ -16,6 +16,7 @@
 #include "util.h"
 #include "replays.h"
 #include "supporterStream.h"
+#include "matchTelemetry.h"
 #include "pitch.h"
 #include "pitchConstants.h"
 #include "goalNet.h"
@@ -716,6 +717,7 @@ static void restoreTeams()
 
 static void rigTheScoreForPlayerToLose(int playerNo)
 {
+    markMatchForfeitedEarly();
     bool team1Player = playerNo == 1;
     auto& loserTotalGoals = team1Player ? swos.team1TotalGoals : swos.team2TotalGoals;
     auto& loserStatGoals = team1Player ? swos.statsTeam1Goals : swos.statsTeam1Goals;

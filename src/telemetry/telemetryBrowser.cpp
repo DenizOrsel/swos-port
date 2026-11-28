@@ -22,9 +22,12 @@
 
 namespace {
 
-constexpr const char *kDefaultTelemetryHost = "localhost";
-constexpr uint16_t kDefaultTelemetryPort = 3000;
-constexpr const char *kDefaultTelemetryUrl = "http://localhost:3000";
+constexpr const char *kDefaultTelemetryHost = "swosalytics.vercel.app";
+constexpr uint16_t kDefaultTelemetryPort = 443;
+constexpr bool kDefaultTelemetryUseHttps = true;
+constexpr const char *kDefaultTelemetryUrl = "https://swosalytics.vercel.app/";
+constexpr const char *kDefaultTelemetryDisplayUrl = "HTTPS://SWOSALYTICS.VERCEL.APP";
+constexpr int kDefaultTelemetryTimeoutMs = 2500;
 
 #ifndef SWOS_TEST
 
@@ -354,12 +357,13 @@ struct WebViewSession {
 
 } // namespace
 
-bool isTelemetryServerReachable(const std::string& host, uint16_t port, int timeoutMs)
+bool isTelemetryServerReachable(const std::string& host, uint16_t port, int timeoutMs, bool useHttps)
 {
 #ifdef SWOS_TEST
     (void)host;
     (void)port;
     (void)timeoutMs;
+    (void)useHttps;
     return false;
 #else
     std::wstring wHost = utf8ToWide(host);
@@ -367,7 +371,7 @@ bool isTelemetryServerReachable(const std::string& host, uint16_t port, int time
         return false;
 
     HINTERNET hSession = WinHttpOpen(L"SWOS-Port-Telemetry/1.0",
-        WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+        WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!hSession)
         return false;
 
@@ -376,8 +380,9 @@ bool isTelemetryServerReachable(const std::string& host, uint16_t port, int time
     bool reachable = false;
     HINTERNET hConnect = WinHttpConnect(hSession, wHost.c_str(), static_cast<INTERNET_PORT>(port), 0);
     if (hConnect) {
-        HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", L"/",
-            nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
+        DWORD flags = useHttps ? WINHTTP_FLAG_SECURE : 0;
+        HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"HEAD", L"/",
+            nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
         if (hRequest) {
             if (WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                     WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
@@ -431,7 +436,8 @@ void showTelemetryBrowserMenu()
     std::string urlStr = kDefaultTelemetryUrl;
     std::wstring urlWide = utf8ToWide(urlStr);
 
-    bool serverOnline = isTelemetryServerReachable(kDefaultTelemetryHost, kDefaultTelemetryPort, 650);
+    bool serverOnline = isTelemetryServerReachable(
+        kDefaultTelemetryHost, kDefaultTelemetryPort, kDefaultTelemetryTimeoutMs, kDefaultTelemetryUseHttps);
     WebViewSession session;
     if (serverOnline && hwnd) {
         session.start(hwnd, kTopBarH, urlWide);
@@ -444,7 +450,8 @@ void showTelemetryBrowserMenu()
     SDL_FRect btnOfflineBackRect{ 0, 0, 0, 0 };
 
     auto triggerRetry = [&]() {
-        serverOnline = isTelemetryServerReachable(kDefaultTelemetryHost, kDefaultTelemetryPort, 650);
+        serverOnline = isTelemetryServerReachable(
+            kDefaultTelemetryHost, kDefaultTelemetryPort, kDefaultTelemetryTimeoutMs, kDefaultTelemetryUseHttps);
         if (serverOnline && hwnd) {
             session.start(hwnd, kTopBarH, urlWide);
         } else {
@@ -546,7 +553,7 @@ void showTelemetryBrowserMenu()
             ? SDL_Color{ 64, 214, 112, 255 }
             : SDL_Color{ 226, 62, 68, 255 };
         tbFillRectF(r, 150.0f, 17.0f, 8.0f, 8.0f, dotCol);
-        drawCompactText(r, atlas, 166.0f, 14.0f, 1.6f, "HTTP://LOCALHOST:3000", { 190, 206, 226, 255 }, 255, false);
+        drawCompactText(r, atlas, 166.0f, 14.0f, 1.6f, kDefaultTelemetryDisplayUrl, { 190, 206, 226, 255 }, 255, false);
 
         // Right buttons: [RELOAD] and [ESC BACK]
         float backW = 112.0f;
@@ -595,7 +602,7 @@ void showTelemetryBrowserMenu()
                 drawCompactTextCentered(r, atlas, cardX + cardW * 0.5f, cardY + 68.0f, 2.2f,
                     "TELEMETRY SERVER IS OFFLINE", { 255, 222, 76, 255 }, 255, true);
                 drawCompactTextCentered(r, atlas, cardX + cardW * 0.5f, cardY + 104.0f, 1.4f,
-                    "START YOUR NEXT.JS APP ON HTTP://LOCALHOST:3000", { 176, 194, 216, 255 }, 255, false);
+                    "UNABLE TO REACH HTTPS://SWOSALYTICS.VERCEL.APP", { 176, 194, 216, 255 }, 255, false);
 
                 float bW = 186.0f, bH = 34.0f, gap = 16.0f;
                 float startX = cardX + (cardW - (bW * 2.0f + gap)) * 0.5f;
@@ -631,7 +638,7 @@ void showTelemetryBrowserMenu()
                 drawCompactTextCentered(r, atlas, cardX + cardW * 0.5f, cardY + 86.0f, 2.0f,
                     "CONNECTING TO TELEMETRY...", { 255, 222, 76, 255 }, 255, true);
                 drawCompactTextCentered(r, atlas, cardX + cardW * 0.5f, cardY + 122.0f, 1.4f,
-                    "LOADING HTTP://LOCALHOST:3000", { 176, 194, 216, 255 }, 255, false);
+                    "LOADING HTTPS://SWOSALYTICS.VERCEL.APP", { 176, 194, 216, 255 }, 255, false);
             }
         }
 
